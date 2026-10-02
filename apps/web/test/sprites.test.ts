@@ -1,7 +1,7 @@
 import { APIError, type Sprite } from '@fly/sprites';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { forwardChat, installRuntime, isNotFound, runtimeEnvFile, spriteName } from '@/lib/sprites';
+import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, spriteName } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
@@ -32,6 +32,42 @@ describe('isNotFound', () => {
     expect(isNotFound(new Error('agenthub-0404-aaaa failed'))).toBe(false);
     expect(isNotFound(new Error('Sprite not found'))).toBe(true);
     expect(isNotFound(new Error('notfound'))).toBe(false);
+  });
+});
+
+describe('errorText', () => {
+  it('APIError 帶錯誤物件時取出 API 訊息與狀態碼，不顯示 [object Object]', () => {
+    const e = new APIError('[object Object]', { statusCode: 500, errorCode: { code: 'internal_error', message: 'Internal server error.' } as never });
+    expect(errorText(e)).toBe('Sprites API 500：Internal server error.');
+    expect(errorText(new APIError('sprite not found', { statusCode: 404 }))).toBe('Sprites API 404：sprite not found');
+    expect(errorText(new Error('一般錯誤'))).toBe('一般錯誤');
+    expect(errorText('字串')).toBe('字串');
+  });
+});
+
+describe('retryTransient', () => {
+  it('Sprites API 5xx 時重試，成功就回傳', async () => {
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new APIError('x', { statusCode: 500 }))
+      .mockRejectedValueOnce(new APIError('x', { statusCode: 503 }))
+      .mockResolvedValue('ok');
+    await expect(retryTransient(fn, 0)).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('4xx 與一般錯誤不重試', async () => {
+    const notFound = vi.fn().mockRejectedValue(new APIError('nope', { statusCode: 404 }));
+    await expect(retryTransient(notFound, 0)).rejects.toThrow('nope');
+    expect(notFound).toHaveBeenCalledTimes(1);
+    const plain = vi.fn().mockRejectedValue(new Error('boom'));
+    await expect(retryTransient(plain, 0)).rejects.toThrow('boom');
+    expect(plain).toHaveBeenCalledTimes(1);
+  });
+
+  it('連續失敗到上限就丟出最後的錯誤', async () => {
+    const fn = vi.fn().mockRejectedValue(new APIError('down', { statusCode: 500 }));
+    await expect(retryTransient(fn, 0, 3)).rejects.toThrow('down');
+    expect(fn).toHaveBeenCalledTimes(3);
   });
 });
 

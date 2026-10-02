@@ -9,8 +9,30 @@ const SERVICE = 'runtime';
 const HEALTH_TIMEOUT_MS = 90_000;
 const RETRYABLE = new Set([502, 503, 504]);
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** SDK 的 APIError 會把 API 回傳的錯誤物件當成 message（變成 "[object Object]"），改取裡面的訊息與狀態碼。 */
+export function errorText(e: unknown): string {
+  if (e instanceof APIError) {
+    const detail = e.errorCode as unknown;
+    const message = detail && typeof detail === 'object' && 'message' in detail ? String(detail.message) : e.message;
+    return e.statusCode ? `Sprites API ${e.statusCode}：${message}` : message;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Sprites API 偶爾回 5xx（例如 internal_error），稍後重試通常就會成功。 */
+export async function retryTransient<T>(fn: () => Promise<T>, delayMs = 2000, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const transient = e instanceof APIError && e.statusCode !== undefined && e.statusCode >= 500;
+      if (!transient || attempt >= attempts) throw e;
+      await sleep(delayMs);
+    }
+  }
+}
 
 /** Sprites API 回 404 時 SDK 一律丟出帶 statusCode 的 APIError；訊息比對只作為保守的備援（不比對 "404"，UUID 可能含這三個字）。 */
 export function isNotFound(e: unknown): boolean {
@@ -94,7 +116,7 @@ export async function provisionProject(db: Db, projectId: string): Promise<void>
   const name = spriteName(projectId);
   try {
     await setSpriteState(db, projectId, { sprite_status: 'provisioning', sprite_error: null, sprite_name: name });
-    const sprite = await getOrCreateSprite(name);
+    const sprite = await retryTransient(() => getOrCreateSprite(name));
     if (!sprite.url) throw new Error('agent 環境沒有對外網址');
     await installRuntime(db, sprite, projectId);
     await waitForHealth(sprite.url, projectId);
