@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readUIMessageStream } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
-import { buildConsultant } from '../src/agents/build';
+import { buildConsultant, buildManager } from '../src/agents/build';
 import type { Db } from '../src/db';
-import { buildConsultantInstructions } from '../src/agents/prompts';
+import { buildConsultantInstructions, buildManagerInstructions, SUMMARY_HEADINGS } from '../src/agents/prompts';
+import type { ConsultantRunner } from '../src/consultant';
 import { usageRow } from '../src/usage';
 import type { AgentInstance } from '../src/types';
-import { seedConsultant, seedProject, seedUser, testDb, tmpRoots } from './helpers';
+import { seedConsultant, seedManager, seedProject, seedUser, testDb, tmpRoots } from './helpers';
 import { mockModel, promptText, textTurn } from './mock-model';
 
 // 包一層 connectMcpServers，記錄 MCP 連線有沒有被關閉
@@ -125,5 +126,50 @@ describe('buildConsultant', () => {
       secrets: {},
     })).rejects.toThrow('資料庫掛了');
     expect(mcpCloses.count).toBe(before + 1);
+  });
+});
+
+describe('buildManagerInstructions', () => {
+  it('列出顧問名稱、id、介紹，說明分工方式與總結格式', () => {
+    const text = buildManagerInstructions({
+      consultants: [
+        instance({ id: 'c-1', name: '法務顧問', description: '契約與法遵' }),
+        instance({ id: 'c-2', name: '工程顧問', description: '' }),
+      ],
+      memories: [],
+      sharedRoot: '/shared',
+      sharedFiles: ['需求.md'],
+    });
+    expect(text).toContain('- 法務顧問（id: c-1）：契約與法遵');
+    expect(text).toContain('- 工程顧問（id: c-2）：（沒有介紹）');
+    expect(text).toContain('assign_task');
+    expect(text).toContain('convene_discussion');
+    for (const h of SUMMARY_HEADINGS) expect(text).toContain(h);
+    expect(text).toContain('/shared/需求.md');
+    expect(text).toContain('（目前沒有記憶）');
+  });
+});
+
+describe('buildManager', () => {
+  it('主管只有 read_file、remember、recall、assign_task、convene_discussion', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const managerId = await seedManager(db, projectId);
+    const roots = await tmpRoots();
+    const model = mockModel(textTurn('好的'));
+    const runner: ConsultantRunner = async function* () {};
+    const built = await buildManager({
+      db, model,
+      config: { PROJECT_ID: projectId, SHARED_ROOT: roots.sharedRoot },
+      manager: instance({ id: managerId, project_id: projectId, role: 'manager', name: '主管' }),
+      consultants: [instance({ id: 'c-1', name: 'A' }), instance({ id: 'c-2', name: 'B' })],
+      sharedFiles: [],
+      runner,
+      record: async () => {},
+    });
+    for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '嗨' }] }) })) { /* drain */ }
+    expect(model.doStreamCalls[0].tools?.map((t) => t.name).sort()).toEqual([
+      'assign_task', 'convene_discussion', 'read_file', 'recall', 'remember',
+    ]);
+    expect(promptText(model)).toContain('（id: c-1）');
   });
 });

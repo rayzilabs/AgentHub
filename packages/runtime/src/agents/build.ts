@@ -13,7 +13,10 @@ import { readFileTool, writeFileTool } from '../tools/files';
 import { loadMemories, memoryTools } from '../tools/memory';
 import type { AgentInstance } from '../types';
 import type { StepLike } from '../usage';
-import { buildConsultantInstructions } from './prompts';
+import type { ConsultantRunner, RecordSpeech } from '../consultant';
+import { assignTaskTool } from '../tools/delegate';
+import { conveneDiscussionTool } from '../tools/discuss';
+import { buildConsultantInstructions, buildManagerInstructions } from './prompts';
 
 export const MAX_STEPS = 30;
 
@@ -63,6 +66,24 @@ function withWarnings(stream: ReadableStream<UIMessageChunk>, warnings: string[]
   );
 }
 
+type StreamableAgent = {
+  stream(o: { messages: ModelMessage[]; abortSignal?: AbortSignal }): PromiseLike<{
+    toUIMessageStream(o: { generateMessageId: () => string; onError: (e: unknown) => string }): ReadableStream<UIMessageChunk>;
+  }>;
+};
+
+function wrapAgent(agent: StreamableAgent, instructions: string, warnings: string[], close: () => Promise<void>): BuiltAgent {
+  return {
+    instructions,
+    warnings,
+    close,
+    streamUI: async ({ messages, abortSignal }) => {
+      const result = await agent.stream({ messages, abortSignal });
+      return withWarnings(result.toUIMessageStream({ generateMessageId: generateId, onError: errorText }), warnings);
+    },
+  };
+}
+
 export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgent> {
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
@@ -97,18 +118,47 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       onStepEnd: ctx.onStepEnd,
     });
 
-    return {
-      instructions,
-      warnings: mcp.warnings,
-      close: mcp.close,
-      streamUI: async ({ messages, abortSignal }) => {
-        const result = await agent.stream({ messages, abortSignal });
-        return withWarnings(result.toUIMessageStream({ generateMessageId: generateId, onError: errorText }), mcp.warnings);
-      },
-    };
+    return wrapAgent(agent, instructions, mcp.warnings, mcp.close);
   } catch (e) {
     // 組裝失敗時 MCP 連線（含 stdio 子行程）沒有人會關，先關掉再往上丟
     await mcp.close();
     throw e;
   }
+}
+
+export type ManagerContext = {
+  db: Db;
+  model: LanguageModel;
+  config: Pick<Config, 'PROJECT_ID' | 'SHARED_ROOT'>;
+  manager: AgentInstance;
+  consultants: AgentInstance[];
+  sharedFiles: string[];
+  runner: ConsultantRunner;
+  record: RecordSpeech;
+  onStepEnd?: (step: StepLike) => Promise<void> | void;
+};
+
+export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
+  const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id);
+  const instructions = buildManagerInstructions({
+    consultants: ctx.consultants,
+    memories,
+    sharedRoot: ctx.config.SHARED_ROOT,
+    sharedFiles: ctx.sharedFiles,
+  });
+  const tools: ToolSet = {
+    read_file: readFileTool(ctx.config.SHARED_ROOT),
+    ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id),
+    assign_task: assignTaskTool({ consultants: ctx.consultants, run: ctx.runner, record: ctx.record }),
+    convene_discussion: conveneDiscussionTool({ consultants: ctx.consultants, run: ctx.runner, record: ctx.record }),
+  };
+  const agent = new ToolLoopAgent({
+    model: ctx.model,
+    instructions,
+    tools,
+    stopWhen: stepCountIs(MAX_STEPS),
+    maxRetries: 3,
+    onStepEnd: ctx.onStepEnd,
+  });
+  return wrapAgent(agent, instructions, [], async () => {});
 }
