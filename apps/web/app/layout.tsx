@@ -15,8 +15,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-Hant-TW" className={`${wenkai.variable} ${noto.variable}`}>
       <body className="min-h-screen">
+        <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2 focus:text-brand">跳到主要內容</a>
         <Nav />
-        <main className="mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6">{children}</main>
+        <main id="main" className="mx-auto w-full min-w-0 max-w-6xl px-4 pb-16 sm:px-6">{children}</main>
       </body>
     </html>
   );

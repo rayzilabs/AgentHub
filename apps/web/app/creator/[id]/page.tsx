@@ -14,7 +14,6 @@ export default async function EditTemplatePage({ params }: { params: Promise<{ i
   if (!template) notFound();
   return (
     <div className="mx-auto max-w-3xl py-10">
-      <h1 className="mb-6 font-display text-[28px]">編輯顧問</h1>
       <TemplateEditor initial={template} />
     </div>
   );

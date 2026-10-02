@@ -20,10 +20,10 @@ export function NewTemplateButton() {
   }
   return (
     <div>
-      <button onClick={create} disabled={busy} className="rounded bg-brand px-4 py-2 text-white disabled:opacity-60">
+      <button onClick={create} disabled={busy} className="btn btn-primary">
         {busy ? '建立中…' : '做一位新顧問'}
       </button>
-      {error && <p role="alert" className="mt-2 text-sm text-seal">{error}</p>}
+      {error && <p role="alert" className="notice notice-error mt-2">{error}</p>}
     </div>
   );
 }

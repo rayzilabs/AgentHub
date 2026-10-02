@@ -38,29 +38,29 @@ export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refr
 
   return (
     <section aria-labelledby="memory-title">
-      <h2 id="memory-title" className="font-display text-lg">記憶</h2>
-      <p className="text-xs text-muted">顧問記下你說過的事實與偏好，你可以修改或刪除。</p>
-      {error && <p role="alert" className="mt-1 text-xs text-seal">{error}</p>}
+      <h2 id="memory-title" className="font-display text-xl">記憶</h2>
+      <p className="text-sm text-muted">顧問記下你說過的事實與偏好，你可以修改或刪除。</p>
+      {error && <p role="alert" className="notice notice-error mt-2">{error}</p>}
       <ul className="mt-2 space-y-2 text-sm">
-        {memories.length === 0 && <li className="text-xs text-muted">還沒有記憶。</li>}
+        {memories.length === 0 && <li className="text-sm text-muted">還沒有記憶。</li>}
         {memories.map((m) => (
           <li key={m.id} className="border-l-2 border-line pl-2">
-            <div className="text-xs text-muted">{m.agent_name ? `${m.agent_name}（私有）` : '整個專案共用'}</div>
+            <div className="text-sm text-muted">{m.agent_name ? `${m.agent_name}（私有）` : '整個專案共用'}</div>
             {editing?.id === m.id ? (
               <div className="mt-1 space-y-1">
-                <textarea className="w-full rounded border border-line bg-surface px-2 py-1" rows={2} value={editing.content}
+                <textarea className="field mt-0 text-sm" rows={3} value={editing.content}
                   onChange={(e) => setEditing({ id: m.id, content: e.target.value })} />
-                <div className="flex gap-2 text-xs">
-                  <button onClick={save} className="text-brand underline">儲存</button>
-                  <button onClick={() => setEditing(null)} className="text-muted underline">取消</button>
+                <div className="flex gap-3">
+                  <button onClick={save} className="link py-1 text-sm">儲存</button>
+                  <button onClick={() => setEditing(null)} className="link py-1 text-sm text-muted hover:text-ink">取消</button>
                 </div>
               </div>
             ) : (
               <>
                 <p>{m.content}</p>
-                <div className="flex gap-2 text-xs">
-                  <button onClick={() => setEditing({ id: m.id, content: m.content })} className="text-brand underline">修改</button>
-                  <button onClick={() => remove(m.id)} className="text-seal underline">刪除</button>
+                <div className="flex gap-3">
+                  <button onClick={() => setEditing({ id: m.id, content: m.content })} className="link py-1 text-sm">修改</button>
+                  <button onClick={() => remove(m.id)} className="link py-1 text-sm text-seal hover:text-seal">刪除</button>
                 </div>
               </>
             )}

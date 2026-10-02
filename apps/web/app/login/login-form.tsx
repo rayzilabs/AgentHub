@@ -15,21 +15,21 @@ export function LoginForm({ next }: { next: string }) {
     <form className="space-y-4">
       <input type="hidden" name="next" value={next} />
       <label className="block">
-        <span className="text-sm text-muted">Email</span>
+        <span className="label">Email</span>
         <input name="email" type="email" required autoComplete="email"
-          className="mt-1 w-full rounded border border-line bg-surface px-3 py-2" />
+          className="field" />
       </label>
       <label className="block">
-        <span className="text-sm text-muted">密碼（至少 8 個字元）</span>
+        <span className="label">密碼（至少 8 個字元）</span>
         <input name="password" type="password" required minLength={8} autoComplete="current-password"
-          className="mt-1 w-full rounded border border-line bg-surface px-3 py-2" />
+          className="field" />
       </label>
-      {error && <p role="alert" className="text-sm text-seal">{error}</p>}
+      {error && <p role="alert" className="notice notice-error">{error}</p>}
       <div className="flex gap-3">
-        <button formAction={signInAction} onClick={() => setLastAction('signIn')} disabled={busy} className="rounded bg-brand px-4 py-2 text-white disabled:opacity-60">
+        <button formAction={signInAction} onClick={() => setLastAction('signIn')} disabled={busy} className="btn btn-primary flex-1">
           登入
         </button>
-        <button formAction={signUpAction} onClick={() => setLastAction('signUp')} disabled={busy} className="rounded border border-line px-4 py-2 disabled:opacity-60">
+        <button formAction={signUpAction} onClick={() => setLastAction('signUp')} disabled={busy} className="btn btn-secondary flex-1">
           建立帳號
         </button>
       </div>

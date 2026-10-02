@@ -23,13 +23,13 @@ export function NewProjectForm() {
   }
   return (
     <form onSubmit={submit} className="flex flex-wrap items-start gap-3">
-      <label className="min-w-64 flex-1">
+      <label className="min-w-0 flex-1 basis-64">
         <span className="sr-only">專案名稱</span>
         <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：第四季新產品上市"
-          className="w-full rounded border border-line bg-surface px-3 py-2" />
+          className="field mt-0" />
       </label>
-      <button disabled={busy} className="rounded bg-brand px-4 py-2 text-white disabled:opacity-60">{busy ? '建立中…' : '建立專案'}</button>
-      {error && <p role="alert" className="w-full text-sm text-seal">{error}</p>}
+      <button disabled={busy} className="btn btn-primary">{busy ? '建立中…' : '建立專案'}</button>
+      {error && <p role="alert" className="notice notice-error w-full">{error}</p>}
     </form>
   );
 }

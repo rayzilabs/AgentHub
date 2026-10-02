@@ -155,34 +155,48 @@ export function Chat({ threadId, ready, speaker, hasManager, colorOf, onSettled 
   }
 
   return (
-    <div className="flex min-h-[60vh] flex-col">
-      <div className="flex-1 space-y-6 pb-4">
+    <div className="flex min-h-[calc(100vh-14rem)] flex-col">
+      <div className="flex-1 space-y-7 pb-6">
         {messages.length === 0 && (
-          <p className="text-muted">
-            {hasManager
-              ? '說明你想完成的事，主管會分派給合適的顧問。需要跨專業權衡時，主管會召集大家討論。'
-              : `說明你想完成的事，${speaker}會直接幫你處理。`}
-          </p>
+          <div className="panel p-5 text-muted">
+            <p className="font-display text-xl text-ink">{hasManager ? '跟主管說你想完成的事' : `跟${speaker}說你想完成的事`}</p>
+            <p className="mt-2">
+              {hasManager
+                ? '主管會分派給合適的顧問；需要跨專業權衡時，會召集大家討論，最後整理成一份建議。'
+                : `${speaker}會直接處理，需要時會讀你上傳的專案資料。`}
+            </p>
+            <p className="mt-2 text-sm">說過的事實與偏好會記在「記憶」面板，之後的對話都會沿用。</p>
+          </div>
         )}
         {messages.map((m) => <MessageView key={m.id} message={m} speaker={speaker} colorOf={colorOf} />)}
-        {busy && <p className="text-sm text-muted">{waiting ? '回覆還在進行中，完成後會自動顯示…' : '顧問正在處理…'}</p>}
-        {notice && <p role="alert" className="text-sm text-seal">{notice}</p>}
+        <p role="status" className="flex items-center gap-2 text-sm text-muted empty:hidden">
+          {busy && (
+            <>
+              <span className="dot-busy" aria-hidden />
+              {waiting ? '回覆還在進行中，完成後會自動顯示' : `${speaker}正在處理`}
+            </>
+          )}
+        </p>
+        {notice && <p role="alert" className="notice notice-error">{notice}</p>}
         <div ref={bottom} />
       </div>
-      <form onSubmit={submit} className="sticky bottom-0 flex gap-2 border-t border-line bg-paper py-3">
-        <label className="flex-1">
-          <span className="sr-only">訊息</span>
-          <textarea
-            rows={2}
-            value={input}
-            disabled={!ready}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) submit(e); }}
-            placeholder={ready ? '輸入訊息，Enter 送出，Shift+Enter 換行' : 'agent 環境準備好之後才能送出'}
-            className="w-full resize-none rounded border border-line bg-surface px-3 py-2"
-          />
-        </label>
-        <button disabled={busy || !ready || !input.trim()} className="self-end rounded bg-brand px-4 py-2 text-white disabled:opacity-60">送出</button>
+      <form onSubmit={submit} className="sticky bottom-0 -mx-4 border-t border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
+        <div className="flex items-end gap-2">
+          <label className="min-w-0 flex-1">
+            <span className="sr-only">訊息</span>
+            <textarea
+              rows={2}
+              value={input}
+              disabled={!ready}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) submit(e); }}
+              placeholder={ready ? `輸入訊息給${speaker}` : '工作電腦準備好之後才能送出'}
+              className="field mt-0 resize-none"
+            />
+          </label>
+          <button disabled={busy || !ready || !input.trim()} className="btn btn-primary">送出</button>
+        </div>
+        <p className="mt-1 hidden text-sm text-muted sm:block">Enter 送出，Shift+Enter 換行</p>
       </form>
     </div>
   );

@@ -8,13 +8,23 @@
   --color-muted: #5b6578;
   --color-line: #dce1e8;
   --color-brand: #1f4e79;
+  --color-brand-strong: #163a5b;
   --color-brand-soft: #e3ecf5;
   --color-seal: #b8322a;
   --color-ochre: #8a6d1f;
-  --text-xs: 0.875rem;
-  --text-xs--line-height: 1.5;
-  --text-lg: 1.25rem;
-  --text-lg--line-height: 1.5;
+  /* 字級只有五階：14 / 16 / 20 / 28 / 40 */
+  --text-xs: initial;
+  --text-lg: initial;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.7;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.5;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.25;
+  --text-4xl: 2.5rem;
+  --text-4xl--line-height: 1.15;
   --font-display: var(--font-wenkai), "Noto Sans TC", serif;
   --font-sans: var(--font-noto), system-ui, sans-serif;
 }
@@ -28,11 +38,37 @@ body {
   font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.7;
+  overflow-wrap: break-word;
 }
 
 :focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
+}
+
+@layer components {
+  .btn { @apply inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded px-4 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60; }
+  .btn-primary { @apply bg-brand text-white hover:bg-brand-strong; }
+  .btn-secondary { @apply border border-line bg-surface text-ink hover:border-ink; }
+  .btn-sm { @apply min-h-8 px-3 text-sm; }
+
+  .field { @apply mt-1 block w-full rounded border border-line bg-surface px-3 py-2 text-base text-ink placeholder:text-muted focus:border-brand disabled:opacity-60; }
+  .label { @apply block text-sm font-medium text-ink; }
+  .hint { @apply mt-1 text-sm text-muted; }
+
+  .panel { @apply rounded border border-line bg-surface; }
+  .link { @apply text-brand underline underline-offset-2 hover:text-brand-strong; }
+
+  .chip { @apply inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 text-sm leading-5 text-muted; }
+  .chip-brand { @apply border-brand-soft bg-brand-soft text-brand; }
+  .chip-seal { @apply border-seal/40 text-seal; }
+
+  .notice { @apply rounded border-l-2 bg-surface px-3 py-2 text-sm text-ink; }
+  .notice-error { @apply border-seal text-seal; }
+  .notice-warn { @apply border-ochre; }
+  .notice-info { @apply border-brand text-muted; }
+
+  .dot-busy { @apply inline-block h-2 w-2 rounded-full bg-brand motion-safe:animate-pulse; }
 }
 
 @media (prefers-reduced-motion: reduce) {
