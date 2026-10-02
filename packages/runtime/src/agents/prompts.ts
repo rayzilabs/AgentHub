@@ -76,6 +76,7 @@ export function buildManagerInstructions(p: ManagerPromptInput): string {
       '召開討論後，最終回覆必須依序包含以下三段：',
       ...SUMMARY_HEADINGS,
       '「仍有分歧」要明確列出顧問之間沒有達成共識的地方，沒有分歧就寫「無」。不可以假裝大家都同意。',
+      '最終總結要精簡：約 600 字以內，用條列重點。',
     ].join('\n'),
     filesSection(p.sharedRoot, p.sharedFiles),
     memorySection(p.memories),

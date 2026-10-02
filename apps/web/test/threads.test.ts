@@ -4,6 +4,7 @@ import { createProject } from '@/lib/services/projects';
 import {
   createThread, deleteMemory, getOwnThread, getThreadMessages, listMemories, listThreads, updateMemory,
 } from '@/lib/services/threads';
+import type { Db } from '@/lib/supabase/admin';
 import { seedUser, testDb } from './helpers';
 
 const db = testDb();
@@ -25,6 +26,22 @@ describe('threads service', () => {
     const e = await getOwnThread(db, other.id, thread.id).catch((err) => err);
     expect(e).toBeInstanceOf(HttpError);
     expect((e as HttpError).status).toBe(404);
+  });
+
+  it('查專案時資料庫出錯：原樣丟出，不當成 404', async () => {
+    const dbError = new Error('connection reset');
+    const query = (result: unknown) => {
+      const chain: Record<string, unknown> = {};
+      for (const m of ['select', 'eq']) chain[m] = () => chain;
+      chain.maybeSingle = async () => result;
+      return chain;
+    };
+    const fakeDb = {
+      from: (table: string) => (table === 'threads'
+        ? query({ data: { id: 't', project_id: 'p', title: 'x', created_at: '' }, error: null })
+        : query({ data: null, error: dbError })),
+    } as unknown as Db;
+    await expect(getOwnThread(fakeDb, 'u', 't')).rejects.toBe(dbError);
   });
 
   it('messages 只回 user 與 final 的 ui_message，依時間排序；running 與 error 反映最新 run', async () => {

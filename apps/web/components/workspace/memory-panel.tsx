@@ -10,7 +10,9 @@ export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refr
   const [editing, setEditing] = useState<{ id: string; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => api<Memory[]>(`/api/projects/${projectId}/memories`).then(setMemories).catch((e) => setError(e.message)), [projectId]);
+  const load = useCallback(() => api<Memory[]>(`/api/projects/${projectId}/memories`)
+    .then((list) => { setMemories(list); setError(null); })
+    .catch((e) => setError(e.message)), [projectId]);
   useEffect(() => { void load(); }, [load, refreshKey]);
 
   async function save() {
@@ -25,6 +27,7 @@ export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refr
   }
 
   async function remove(id: string) {
+    if (!window.confirm('確定要刪除這筆記憶？')) return;
     try {
       await api(`/api/projects/${projectId}/memories?id=${id}`, { method: 'DELETE' });
       await load();

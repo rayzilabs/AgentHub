@@ -1,7 +1,8 @@
-import { APIError } from '@fly/sprites';
-import { describe, expect, it } from 'vitest';
+import { APIError, type Sprite } from '@fly/sprites';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { forwardChat, isNotFound, runtimeEnvFile, spriteName } from '@/lib/sprites';
+import { forwardChat, installRuntime, isNotFound, runtimeEnvFile, spriteName } from '@/lib/sprites';
+import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
 
@@ -64,5 +65,40 @@ describe('forwardChat', () => {
     expect(e).toBeInstanceOf(HttpError);
     expect(e.status).toBe(502);
     expect(e.message).toContain('agent 環境無法連線');
+  });
+});
+
+describe('installRuntime', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('建立服務後重新啟動，讓已存在的 Sprite 載入新的 main.js；兩個 log 串流都讀完', async () => {
+    for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'VERTEX_API_EXPRESS_MODE_KEY']) vi.stubEnv(k, 'x');
+    const calls: string[] = [];
+    const logStream = (label: string) => ({ processAll: async () => { calls.push(`${label}:drained`); } });
+    const sprite = {
+      execFile: async (_cmd: string, args: string[]) => {
+        calls.push(args[1].startsWith('printf') ? 'home' : 'download');
+        return { stdout: '/home/sprite\n' };
+      },
+      filesystem: () => ({ writeFile: async (name: string) => { calls.push(`write:${name}`); } }),
+      createService: async (name: string, _config: unknown, duration?: string) => {
+        calls.push(`create:${name}:${duration}`);
+        return logStream('create');
+      },
+      restartService: async (name: string, duration?: string) => {
+        calls.push(`restart:${name}:${duration}`);
+        return logStream('restart');
+      },
+    } as unknown as Sprite;
+    const db = {
+      storage: { from: () => ({ createSignedUrl: async () => ({ data: { signedUrl: 'https://signed' }, error: null }) }) },
+    } as unknown as Db;
+
+    expect(await installRuntime(db, sprite, 'p1')).toBe('/home/sprite/agenthub');
+    expect(calls).toEqual([
+      'home', 'download', 'write:.env',
+      'create:runtime:10s', 'create:drained',
+      'restart:runtime:10s', 'restart:drained',
+    ]);
   });
 });

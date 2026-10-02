@@ -1,0 +1,11 @@
+.env
+.env.*
+.superpowers
+.git
+node_modules
+**/node_modules
+apps/web/.next
+packages/runtime/dist
+supabase/.temp
+supabase/.branches
+*.pdf

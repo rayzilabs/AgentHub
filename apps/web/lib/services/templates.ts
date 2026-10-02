@@ -19,10 +19,22 @@ export type TemplateRow = {
   updated_at: string;
 };
 
+/** 擁有者看到的完整資料（含 system prompt、skill 檔路徑、MCP 連線設定）。 */
 export type PublishedTemplate = TemplateRow & { creator_name: string };
 
+/** 市集與非擁有者看到的 MCP：只有名稱、連線方式與需要的金鑰，不含指令、網址、headers。 */
+export type PublicMcpServer = Pick<McpServer, 'name' | 'transport' | 'required_secrets'>;
+
+/** 市集與非擁有者看到的資料：不含創作者的 system prompt、skill 檔路徑與 MCP 連線設定。 */
+export type PublicTemplate = Omit<TemplateRow, 'system_prompt' | 'skills_zip_path' | 'mcp_servers'> & {
+  mcp_servers: PublicMcpServer[];
+  creator_name: string;
+};
+
 const COLUMNS = 'id, creator_id, name, description, category, system_prompt, skills_zip_path, skills, mcp_servers, status, created_at, updated_at';
+const PUBLIC_COLUMNS = 'id, creator_id, name, description, category, skills, mcp_servers, status, created_at, updated_at';
 const WITH_CREATOR = `${COLUMNS}, creator:profiles(display_name)`;
+const PUBLIC_WITH_CREATOR = `${PUBLIC_COLUMNS}, creator:profiles(display_name)`;
 const NOT_FOUND = '找不到這個 agent';
 
 function withCreatorName(row: Record<string, unknown>): PublishedTemplate {
@@ -30,10 +42,18 @@ function withCreatorName(row: Record<string, unknown>): PublishedTemplate {
   return { ...(rest as TemplateRow), creator_name: (creator as { display_name: string } | null)?.display_name ?? '' };
 }
 
-export async function listPublishedTemplates(db: Db): Promise<PublishedTemplate[]> {
-  const { data, error } = await db.from('agent_templates').select(WITH_CREATOR).eq('status', 'published').order('updated_at', { ascending: false });
+function toPublic(row: Omit<PublishedTemplate, 'system_prompt' | 'skills_zip_path'>): PublicTemplate {
+  const { id, creator_id, name, description, category, skills, mcp_servers, status, created_at, updated_at, creator_name } = row;
+  return {
+    id, creator_id, name, description, category, skills, status, created_at, updated_at, creator_name,
+    mcp_servers: mcp_servers.map((s) => ({ name: s.name, transport: s.transport, required_secrets: s.required_secrets ?? [] })),
+  };
+}
+
+export async function listPublishedTemplates(db: Db): Promise<PublicTemplate[]> {
+  const { data, error } = await db.from('agent_templates').select(PUBLIC_WITH_CREATOR).eq('status', 'published').order('updated_at', { ascending: false });
   if (error) throw error;
-  return data.map(withCreatorName);
+  return data.map((row) => toPublic(withCreatorName(row)));
 }
 
 export async function listMyTemplates(db: Db, userId: string): Promise<TemplateRow[]> {
@@ -42,13 +62,15 @@ export async function listMyTemplates(db: Db, userId: string): Promise<TemplateR
   return data as TemplateRow[];
 }
 
-export async function getTemplate(db: Db, id: string, viewerId: string | null): Promise<PublishedTemplate> {
+/** 擁有者拿到完整資料；其他人（含未登入）只拿到公開欄位，且只看得到已上架的。 */
+export async function getTemplate(db: Db, id: string, viewerId: string | null): Promise<PublishedTemplate | PublicTemplate> {
   const { data, error } = await db.from('agent_templates').select(WITH_CREATOR).eq('id', id).maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError(404, NOT_FOUND);
   const row = withCreatorName(data);
-  if (row.status !== 'published' && row.creator_id !== viewerId) throw new HttpError(404, NOT_FOUND);
-  return row;
+  if (row.creator_id === viewerId) return row;
+  if (row.status !== 'published') throw new HttpError(404, NOT_FOUND);
+  return toPublic(row);
 }
 
 async function getOwnTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {

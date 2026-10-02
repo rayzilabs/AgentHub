@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
 import type { McpServer } from '@/lib/schemas';
 import type { TemplateRow } from '@/lib/services/templates';
@@ -46,6 +47,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
   const [mcp, setMcp] = useState<McpDraft[]>(initial.mcp_servers.map(toDraft));
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   async function run(label: string, action: () => Promise<TemplateRow>, apply: (updated: TemplateRow) => void): Promise<boolean> {
     setBusy(true);
@@ -81,12 +83,14 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
     );
 
   async function uploadZip(file: File) {
+    setUploading(true);
     await run(`已讀取 skill 檔案`, async () => {
       const { signedUrl } = await api<{ signedUrl: string }>(`/api/templates/${t.id}/upload-url`, { method: 'POST' });
       const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'content-type': 'application/zip', 'x-upsert': 'true' } });
       if (!res.ok) throw new Error(`上傳失敗（${res.status}），請再試一次`);
       return api<TemplateRow>(`/api/templates/${t.id}`, { method: 'PATCH', body: JSON.stringify({ process_upload: true }) });
     }, (updated) => setT((p) => ({ ...p, skills: updated.skills, skills_zip_path: updated.skills_zip_path })));
+    setUploading(false);
   }
 
   const publish = async () => {
@@ -120,8 +124,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
       <section>
         <h2 className="font-display text-xl">Skill</h2>
         <p className="text-sm text-muted">上傳一個 zip，裡面每個資料夾放一份 SKILL.md（Claude Code 的 .claude/skills 資料夾直接壓縮即可）。</p>
-        <input type="file" accept=".zip,application/zip" disabled={busy} className="mt-3 block"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadZip(f); e.target.value = ''; }} />
+        <FileButton label="上傳 skill zip" accept=".zip,application/zip" busy={busy} uploading={uploading} className="mt-3" onFile={(f) => void uploadZip(f)} />
         {t.skills.length > 0 && (
           <ul className="mt-3 space-y-1 text-sm">
             {t.skills.map((s) => <li key={s.name}><span className="font-medium">{s.name}</span>：{s.description}</li>)}

@@ -2496,7 +2496,7 @@ git commit -m "feat: runtime 打包發布、Sprite 部署與對話轉送"
 - Produces:
   - `consultantColor(index: number): string`（Global Constraints 的 6 色循環）
   - `textOf(m: UIMessage | undefined): string`
-  - `type DelegationOutput`、`type Speech`、`type DiscussionState`（與 runtime `tools/delegate.ts`、`tools/discuss.ts` 的輸出結構相同）
+  - `type ToolEvent`、`type DelegationOutput`、`type Speech`、`type DiscussionState`（與 runtime `tools/delegate.ts`、`tools/discuss.ts` 的輸出結構相同：DelegationOutput.message 只含文字片段並帶 `tools`；Speech 沒有 `message`、帶 `tools`）
   - `<Markdown text />`、`<Seal stance="agree" | "reserve" />`
 
 - [ ] **Step 1: 共用元件與型別**
@@ -2527,11 +2527,14 @@ export function textOf(m: UIMessage | undefined): string {
 ```ts
 import type { UIMessage } from 'ai';
 
+export type ToolEvent = { tool: string; state: string };
+
 export type DelegationOutput = {
   consultant_id: string;
   name: string;
   status: 'working' | 'done' | 'failed';
-  message?: UIMessage;
+  message?: UIMessage; // 只含文字片段
+  tools?: ToolEvent[];
   error?: string;
 };
 
@@ -2542,7 +2545,7 @@ export type Speech = {
   status: 'speaking' | 'done' | 'failed';
   text: string;
   stance?: 'agree' | 'reserve';
-  message?: UIMessage;
+  tools?: ToolEvent[];
   error?: string;
 };
 
@@ -3102,7 +3105,7 @@ git commit -m "feat(web): 市集、agent 介紹與啟用、創作者頁面"
 ### Task 7: 專案列表與工作區（對話、顧問發言、檔案、記憶）
 
 **Files:**
-- Create: `apps/web/components/new-project-form.tsx`、`components/workspace/workspace.tsx`、`workspace/agent-roster.tsx`、`workspace/file-panel.tsx`、`workspace/memory-panel.tsx`、`workspace/chat.tsx`、`workspace/message-view.tsx`、`workspace/delegation-card.tsx`、`workspace/discussion-view.tsx`
+- Create: `apps/web/components/new-project-form.tsx`、`components/workspace/tool-list.tsx`、`components/workspace/workspace.tsx`、`workspace/agent-roster.tsx`、`workspace/file-panel.tsx`、`workspace/memory-panel.tsx`、`workspace/chat.tsx`、`workspace/message-view.tsx`、`workspace/delegation-card.tsx`、`workspace/discussion-view.tsx`
 - Create: `apps/web/app/projects/page.tsx`、`app/projects/[id]/page.tsx`
 
 **Interfaces:**
@@ -3195,12 +3198,29 @@ export default async function ProjectsPage() {
 
 - [ ] **Step 2: 顧問發言元件**
 
+建立 `apps/web/components/workspace/tool-list.tsx`（顯示顧問用過的工具，名稱與 `message-view.tsx` 的 `TOOL_LABELS` 一致）：
+
+```tsx
+import type { ToolEvent } from '@/lib/agent-output';
+
+export const TOOL_LABELS: Record<string, string> = {
+  bash: '執行指令', read_file: '讀取檔案', write_file: '寫入檔案', remember: '記下重點', recall: '查詢記憶',
+};
+
+export function ToolList({ tools }: { tools?: ToolEvent[] }) {
+  if (!tools?.length) return null;
+  const names = [...new Set(tools.map((t) => TOOL_LABELS[t.tool] ?? t.tool))];
+  return <p className="mt-1 text-xs text-muted">用了工具：{names.join('、')}</p>;
+}
+```
+
 建立 `apps/web/components/workspace/delegation-card.tsx`：
 
 ```tsx
 import { Markdown } from '@/components/markdown';
 import type { DelegationOutput } from '@/lib/agent-output';
 import { textOf } from '@/lib/text';
+import { ToolList } from './tool-list';
 
 export function DelegationCard({ output, task, color }: { output?: DelegationOutput; task?: string; color: string }) {
   const name = output?.name ?? '顧問';
@@ -3213,6 +3233,7 @@ export function DelegationCard({ output, task, color }: { output?: DelegationOut
         </span>
       </div>
       {task && <p className="mt-1 text-sm text-muted">主管交辦：{task}</p>}
+      <ToolList tools={output?.tools} />
       {output?.status === 'failed' && <p className="mt-2 text-sm text-seal">{output.error}</p>}
       {output?.message && <div className="mt-2"><Markdown text={textOf(output.message)} /></div>}
     </div>
@@ -3226,6 +3247,7 @@ export function DelegationCard({ output, task, color }: { output?: DelegationOut
 import { Markdown } from '@/components/markdown';
 import { Seal } from '@/components/seal';
 import type { DiscussionState, Speech } from '@/lib/agent-output';
+import { ToolList } from './tool-list';
 
 const STANCE_LINE = /\n?\s*立場\s*[:：]\s*(同意|有保留)\s*$/;
 
@@ -3238,6 +3260,7 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
         {speech.status === 'speaking' && <span className="text-xs text-muted">發言中…</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
+      <ToolList tools={speech.tools} />
       {speech.status === 'failed' ? (
         <p className="mt-2 text-sm text-muted">未發言：{speech.error}</p>
       ) : (
@@ -3281,12 +3304,9 @@ import { Markdown } from '@/components/markdown';
 import type { DelegationOutput, DiscussionState } from '@/lib/agent-output';
 import { DelegationCard } from './delegation-card';
 import { DiscussionView } from './discussion-view';
+import { TOOL_LABELS } from './tool-list';
 
 type ToolPart = { type: string; toolName?: string; state: string; input?: Record<string, unknown>; output?: unknown };
-
-const TOOL_LABELS: Record<string, string> = {
-  bash: '執行指令', read_file: '讀取檔案', write_file: '寫入檔案', remember: '記下重點', recall: '查詢記憶',
-};
 
 export function MessageView({ message, speaker, colorOf }: { message: UIMessage; speaker: string; colorOf: (id: string) => string }) {
   if (message.role === 'user') {

@@ -41,6 +41,39 @@ describe('templates service', () => {
     expect((await getTemplate(db, t.id, null)).status).toBe('published');
   });
 
+  it('市集與非擁有者看不到 system prompt、skill 檔路徑與 MCP 連線設定；擁有者看得到', async () => {
+    const creator = await seedUser(db);
+    const other = await seedUser(db);
+    const secrets = [{ key: 'API_KEY', description: '服務金鑰' }];
+    const t = await createTemplate(db, creator.id, {
+      name: '私密顧問', description: '', category: '', system_prompt: '機密工作方法',
+      mcp_servers: [
+        { name: 'web', transport: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer x' }, required_secrets: secrets },
+        { name: 'local', transport: 'stdio', command: 'npx', args: ['secret-server'], required_secrets: [] },
+      ],
+    });
+    await publishTemplate(db, creator.id, t.id);
+    const publicServers = [
+      { name: 'web', transport: 'http', required_secrets: secrets },
+      { name: 'local', transport: 'stdio', required_secrets: [] },
+    ];
+
+    const listed = (await listPublishedTemplates(db)).find((x) => x.id === t.id)!;
+    for (const view of [listed, await getTemplate(db, t.id, null), await getTemplate(db, t.id, other.id)]) {
+      expect(view).not.toHaveProperty('system_prompt');
+      expect(view).not.toHaveProperty('skills_zip_path');
+      expect(view.mcp_servers).toEqual(publicServers);
+      expect(view.name).toBe('私密顧問');
+    }
+
+    const own = await getTemplate(db, t.id, creator.id);
+    expect(own).toHaveProperty('system_prompt', '機密工作方法');
+    expect(own.mcp_servers).toEqual([
+      expect.objectContaining({ name: 'web', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer x' } }),
+      expect.objectContaining({ name: 'local', command: 'npx', args: ['secret-server'] }),
+    ]);
+  });
+
   it('別人不能修改或上架', async () => {
     const creator = await seedUser(db);
     const other = await seedUser(db);
@@ -81,7 +114,7 @@ describe('templates service', () => {
       400,
       'a/SKILL.md：開頭缺少 --- 包住的設定區（name、description）',
     );
-    expect((await getTemplate(db, t.id, creator.id)).skills_zip_path).toBeNull();
+    expect(await getTemplate(db, t.id, creator.id)).toHaveProperty('skills_zip_path', null);
   });
 
   it('還沒上傳就要求處理：400', async () => {

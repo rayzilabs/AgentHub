@@ -60,6 +60,9 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string):
     httpPort: 8080,
   }, '10s');
   await logs.processAll(() => {});
+  // 重新佈建已存在的 Sprite 時，createService 不會重啟正在跑的程序；重新啟動才會載入剛下載的 main.js 與 .env
+  const restartLogs = await sprite.restartService(SERVICE, '10s');
+  await restartLogs.processAll(() => {});
   return base;
 }
 

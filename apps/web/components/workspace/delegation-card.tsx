@@ -1,6 +1,7 @@
 import { Markdown } from '@/components/markdown';
 import type { DelegationOutput } from '@/lib/agent-output';
 import { textOf } from '@/lib/text';
+import { Collapsible } from './collapsible';
 import { ToolList } from './tool-list';
 
 export function DelegationCard({ output, task, color, failedText }: { output?: DelegationOutput; task?: string; color: string; failedText?: string }) {
@@ -17,7 +18,9 @@ export function DelegationCard({ output, task, color, failedText }: { output?: D
       <ToolList tools={output?.tools} />
       {failedText !== undefined && <p className="mt-2 text-sm text-seal">{failedText}</p>}
       {output?.status === 'failed' && <p className="mt-2 text-sm text-seal">{output.error}</p>}
-      {output?.message && <div className="mt-2"><Markdown text={textOf(output.message)} /></div>}
+      {output?.message && <div className="mt-2">
+        {output.status === 'done' ? <Collapsible><Markdown text={textOf(output.message)} /></Collapsible> : <Markdown text={textOf(output.message)} />}
+      </div>}
     </div>
   );
 }
