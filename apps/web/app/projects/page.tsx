@@ -28,8 +28,8 @@ export default async function ProjectsPage() {
           {projects.map((p) => (
             <li key={p.id}>
               <Link href={`/projects/${p.id}`} className="flex items-center justify-between gap-4 px-4 py-4 hover:bg-brand-soft">
-                <span className="font-display text-xl">{p.name}</span>
-                <span className={`chip ${p.sprite_status === 'error' ? 'chip-seal' : p.sprite_status === 'provisioning' ? 'chip-brand' : ''}`}>
+                <span className="min-w-0 font-display text-xl [overflow-wrap:anywhere]">{p.name}</span>
+                <span className={`chip shrink-0 ${p.sprite_status === 'error' ? 'chip-seal' : p.sprite_status === 'provisioning' ? 'chip-brand' : ''}`}>
                   {p.sprite_status === 'provisioning' && <span className="dot-busy" aria-hidden />}
                   {STATUS[p.sprite_status]}
                 </span>

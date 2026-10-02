@@ -26,7 +26,7 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
         <p className="mt-4 max-w-2xl whitespace-pre-line">{template.description || '（創作者還沒寫介紹）'}</p>
       </header>
 
-      <aside className="panel h-fit p-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:col-start-2 lg:row-span-2 lg:row-start-1">
+      <aside className="panel h-fit p-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto lg:col-start-2 lg:row-span-2 lg:row-start-1">
         <h2 className="mb-3 font-display text-xl">加入你的專案</h2>
         {template.status !== 'published' ? (
           <p className="text-muted">這是你的草稿，上架後才能加入專案。<Link href={`/creator/${template.id}`} className="link">回去編輯</Link></p>

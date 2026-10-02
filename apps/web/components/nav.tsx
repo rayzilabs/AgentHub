@@ -24,7 +24,7 @@ export async function Nav() {
         </div>
 
         {/* 頁面連結：手機獨占第二行、可橫向捲；桌面接在品牌後面 */}
-        <div className="-mx-4 flex w-[calc(100%+2rem)] gap-x-5 overflow-x-auto whitespace-nowrap px-4 pb-1 sm:mx-0 sm:w-auto sm:gap-x-6 sm:px-0 sm:pb-0">
+        <div className="-mx-4 flex w-[calc(100%+2rem)] gap-x-5 overflow-x-auto whitespace-nowrap px-4 py-1 sm:mx-0 sm:w-auto sm:gap-x-6 sm:overflow-visible sm:px-0 sm:py-0">
           <Link href="/" className="text-muted hover:text-ink">市集</Link>
           {user && <Link href="/projects" className="text-muted hover:text-ink">我的專案</Link>}
           {user && <Link href="/creator" className="text-muted hover:text-ink">我上架的 agent</Link>}

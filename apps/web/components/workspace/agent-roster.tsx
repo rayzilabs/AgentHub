@@ -25,7 +25,7 @@ export function AgentRoster({ agents, colorOf }: { agents: AgentSummary[]; color
               <span aria-hidden className="mt-2 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colorOf(a.id) }} />
               <div className="min-w-0">
                 <div className="font-medium">{a.name}</div>
-                {a.description && <div className="line-clamp-2 text-sm text-muted" title={a.description}>{a.description}</div>}
+                {a.description && <div className="text-sm text-muted">{a.description}</div>}
               </div>
             </li>
           ))}

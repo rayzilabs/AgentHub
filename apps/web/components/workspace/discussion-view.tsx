@@ -71,7 +71,7 @@ export function DiscussionView({ state, colorOf, failedText }: {
       {state.finished ? (
         state.error
           ? <p className="notice notice-error mt-4">討論提前結束：{state.error}</p>
-          : <p className="mt-4 text-sm text-muted">討論結束。主管的總結在下方。</p>
+          : <p className="mt-4 text-sm text-muted">討論結束，主管接著整理總結。</p>
       ) : failedText !== undefined && (
         <p className="notice notice-error mt-4">討論提前結束：{failedText}</p>
       )}

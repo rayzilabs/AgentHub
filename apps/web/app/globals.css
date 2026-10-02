@@ -52,7 +52,7 @@ body {
   .btn-secondary { @apply border border-line bg-surface text-ink hover:border-ink; }
   .btn-sm { @apply min-h-8 px-3 text-sm; }
 
-  .field { @apply mt-1 block w-full rounded border border-line bg-surface px-3 py-2 text-base text-ink placeholder:text-muted/80 focus:border-brand disabled:opacity-60; }
+  .field { @apply mt-1 block w-full rounded border border-line bg-surface px-3 py-2 text-base text-ink placeholder:text-muted focus:border-brand disabled:opacity-60; }
   .label { @apply block text-sm font-medium text-ink; }
   .hint { @apply mt-1 text-sm text-muted; }
 

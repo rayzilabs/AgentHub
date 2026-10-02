@@ -130,7 +130,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
       <section aria-label="對話" className="min-w-0">
         <div className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-2 border-b border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
           {threads.map((t, i) => (
-            <button key={t.id} onClick={() => setThreadId(t.id)} aria-current={t.id === threadId ? 'true' : undefined} title={t.title}
+            <button key={t.id} onClick={() => setThreadId(t.id)} aria-current={t.id === threadId ? 'true' : undefined} title={t.title !== '新對話' ? t.title : undefined}
               className={`btn btn-sm max-w-full ${t.id === threadId ? 'btn-primary' : 'btn-secondary'}`}>
               <span className="truncate">{t.title === '新對話' ? `對話 ${threads.length - i}` : t.title}</span>
             </button>
