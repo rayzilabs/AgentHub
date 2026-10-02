@@ -4,7 +4,7 @@
 
 **Goal:** 建好 monorepo、Supabase 資料庫（schema、RPC、Storage bucket），以及可以在本機跟「一位顧問」對話的 agent runtime：串流回覆、執行工具、讀寫記憶、連接 MCP、記錄用量與 run 狀態。
 
-**Architecture:** 資料庫用 Supabase migration 建立，用 pgTAP 測試。runtime 是 `packages/runtime` 裡的 Node 服務（Hono），用 Vercel AI SDK v7 的 `ToolLoopAgent` 執行 agent 迴圈，透過 service role key 讀寫 Supabase。回覆以 AI SDK UI message stream 串流；伺服器端用 `tee()` 另外完整讀完串流並寫入資料庫，所以瀏覽器斷線也不影響 run 完成。測試全部用 AI SDK 的 mock 模型，接本機 Supabase。
+**Architecture:** 資料庫用 Supabase migration 建立，推到雲端 Supabase 開發專案，用 pgTAP 在雲端測試。runtime 是 `packages/runtime` 裡的 Node 服務（Hono），用 Vercel AI SDK v7 的 `ToolLoopAgent` 執行 agent 迴圈，透過 service role key 讀寫 Supabase。回覆以 AI SDK UI message stream 串流；伺服器端用 `tee()` 另外完整讀完串流並寫入資料庫，所以瀏覽器斷線也不影響 run 完成。測試全部用 AI SDK 的 mock 模型，接雲端 Supabase。
 
 **Tech Stack:** pnpm workspace、TypeScript、Supabase CLI（Postgres、Storage、Vault、pgTAP）、`ai` v7、`@ai-sdk/google-vertex`、`@ai-sdk/mcp`、`@supabase/supabase-js`、Hono、zod 4、fflate、Vitest 5。
 
@@ -16,9 +16,10 @@
 
 - 開發環境 Node.js 24（`@fly/sprites` 需要 Node 24，計畫 3 會用到）；runtime 套件 `engines.node` 為 `>=22`。
 - 套件管理：pnpm 10，workspace 結構 `apps/*`、`packages/*`。
-- 本機需要 Docker 與 Supabase CLI。**跑任何測試前先在 repo 根目錄執行 `supabase start`**；`supabase db reset`、`supabase test db` 也都在 repo 根目錄執行。
+- **不用本機 Supabase container。** repo 已用 Supabase CLI 連結雲端專案 AgentHub（ref `xrcyllzqionkwareukif`）。所有 supabase 指令都在 repo 根目錄執行並加 `--linked`：`supabase db push --linked`、`supabase test db --linked`；migration 需要重來時用 `supabase db reset --linked`（這個開發專案允許重置）。**不可對其他 Supabase 專案下任何指令。**
+- 憑證在 repo 根目錄的 `.env`（不可 commit、不可印出值）：`SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`、`SUPABASE_SECRET_KEY`、`FLY_SPRITES_TOKEN`、`VERTEX_API_EXPRESS_MODE_KEY`。測試從這個檔案讀取連線資訊。
 - 套件版本下限：`ai@^7.0.126`、`@ai-sdk/google-vertex@^5.0.101`、`@ai-sdk/mcp@^2.0.65`、`@supabase/supabase-js@^2.117.2`、`zod@^4`、`vitest@^5`。
-- 模型：`gemini-3.8-flash`，`createVertex({ location: 'global' })`。**不可設定 `GOOGLE_VERTEX_API_KEY` 環境變數**（設了會進入 express mode，忽略 project / location）。
+- 模型：`gemini-3.8-flash`，用 Vertex express mode：`createVertex({ apiKey: process.env.VERTEX_API_EXPRESS_MODE_KEY })`。
 - 測試一律用 `ai/test` 的 `MockLanguageModelV4`，不呼叫真實 Gemini。
 - 上限數字（規格 §6.4）：每個 agent 最多 30 步；`bash` 單次 120 秒、輸出 20000 字元；run 最長 15 分鐘；prompt 放最近 50 筆記憶；「工作中」登記有效 5 分鐘、每 2 分鐘更新。
 - Storage：bucket `skills`（物件路徑 `<template_id>/<sha256>.zip`，`skills_zip_path` 存的就是這個路徑）、`project-files`（`<project_id>/<檔名>`）、`runtime`。
@@ -100,13 +101,14 @@ packages/runtime/
 
 - [ ] **Step 1: 建立 repo 與 workspace 設定**
 
+repo 已經是 git repo，也已連結雲端 Supabase（`supabase/.temp/` 已存在）。只需要產生 `supabase/config.toml`：
+
 ```bash
 cd /Users/eric/Desktop/AgentHub
-git init
-supabase init
+supabase init --force
 ```
 
-`supabase init` 若詢問是否產生 VS Code / IntelliJ 設定，都選 No。
+若詢問是否產生 VS Code / IntelliJ 設定，都選 No（或加 `--with-vscode-settings=false --with-intellij-settings=false`）。
 
 建立 `.gitignore`：
 
@@ -136,8 +138,8 @@ supabase/.branches/
   "scripts": {
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "db:reset": "supabase db reset",
-    "db:test": "supabase test db"
+    "db:push": "supabase db push --linked --yes",
+    "db:test": "supabase test db --linked"
   }
 }
 ```
@@ -221,8 +223,7 @@ rollback;
 - [ ] **Step 3: 確認測試失敗**
 
 ```bash
-supabase start
-supabase test db
+supabase test db --linked
 ```
 
 Expected: FAIL，錯誤類似 `relation "public.profiles" does not exist`。
@@ -390,8 +391,8 @@ on conflict (id) do nothing;
 - [ ] **Step 5: 套用 migration 並確認測試通過**
 
 ```bash
-supabase db reset
-supabase test db
+supabase db push --linked --yes
+supabase test db --linked
 ```
 
 Expected: `schema.test.sql .. ok`，`All tests successful.`
@@ -525,7 +526,7 @@ rollback;
 - [ ] **Step 2: 確認測試失敗**
 
 ```bash
-supabase test db
+supabase test db --linked
 ```
 
 Expected: `hire_agent.test.sql` FAIL，錯誤類似 `function public.hire_agent(uuid, uuid, jsonb) does not exist`。
@@ -605,8 +606,8 @@ grant execute on function public.get_project_secrets(uuid) to service_role;
 - [ ] **Step 4: 確認測試通過**
 
 ```bash
-supabase db reset
-supabase test db
+supabase db push --linked --yes
+supabase test db --linked
 ```
 
 Expected: `schema.test.sql .. ok`、`hire_agent.test.sql .. ok`、`All tests successful.`
@@ -631,7 +632,7 @@ git commit -m "feat: hire_agent 與 get_project_secrets RPC"
 **Interfaces:**
 - Consumes: Task 1 資料表、Task 2 的 `get_project_secrets`。
 - Produces（後續 Task 都會用）：
-  - `loadConfig(env?: NodeJS.ProcessEnv): Config`；`Config` 欄位：`PROJECT_ID`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`GOOGLE_VERTEX_PROJECT`、`GCP_SA_JSON`、`AGENTS_ROOT`、`SHARED_ROOT`、`SPRITE_API_SOCK`、`MODEL_ID`、`PORT`
+  - `loadConfig(env?: NodeJS.ProcessEnv): Config`；`Config` 欄位：`PROJECT_ID`、`SUPABASE_URL`、`SUPABASE_SECRET_KEY`、`VERTEX_API_EXPRESS_MODE_KEY`、`AGENTS_ROOT`、`SHARED_ROOT`、`SPRITE_API_SOCK`、`MODEL_ID`、`PORT`
   - `createDb(url: string, serviceKey: string): Db`
   - 型別 `SkillMeta`、`McpServerConfig`、`AgentInstance`（含 `creator_id: string | null`）、`SecretRow`、`MessageKind`
   - `RunConflictError`、`NotFoundError`、`SyncError`、`errorText(e: unknown): string`
@@ -705,9 +706,8 @@ import { z } from 'zod';
 const EnvSchema = z.object({
   PROJECT_ID: z.uuid(),
   SUPABASE_URL: z.url(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  GOOGLE_VERTEX_PROJECT: z.string().min(1),
-  GCP_SA_JSON: z.string().min(1),
+  SUPABASE_SECRET_KEY: z.string().min(1),
+  VERTEX_API_EXPRESS_MODE_KEY: z.string().min(1),
   AGENTS_ROOT: z.string().default('/agents'),
   SHARED_ROOT: z.string().default('/shared'),
   SPRITE_API_SOCK: z.string().default('/.sprite/api.sock'),
@@ -785,9 +785,11 @@ export function errorText(e: unknown): string {
 
 建立 `packages/runtime/test/global-setup.ts`：
 
+測試接雲端 Supabase：從 repo 根目錄的 `.env` 讀連線資訊；全部測試跑完後，刪掉所有 `@test.local` 的測試帳號（會連帶刪掉他們的專案、範本等資料）。
+
 ```ts
-import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createClient } from '@supabase/supabase-js';
 import type { TestProject } from 'vitest/node';
 
 declare module 'vitest' {
@@ -798,10 +800,22 @@ declare module 'vitest' {
 }
 
 export default function setup(project: TestProject) {
-  const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
-  const status = JSON.parse(execSync('supabase status -o json', { cwd: repoRoot, encoding: 'utf8' }));
-  project.provide('supabaseUrl', status.API_URL);
-  project.provide('supabaseServiceKey', status.SERVICE_ROLE_KEY);
+  process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
+  const url = process.env.SUPABASE_URL!;
+  const key = process.env.SUPABASE_SECRET_KEY!;
+  project.provide('supabaseUrl', url);
+  project.provide('supabaseServiceKey', key);
+
+  return async () => {
+    const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    for (;;) {
+      const { data, error } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (error) throw error;
+      const testUsers = data.users.filter((u) => u.email?.endsWith('@test.local'));
+      if (testUsers.length === 0) break;
+      await Promise.all(testUsers.map((u) => db.auth.admin.deleteUser(u.id)));
+    }
+  };
 }
 ```
 
@@ -897,9 +911,8 @@ export function testConfig(projectId: string, roots: Roots): Config {
   return {
     PROJECT_ID: projectId,
     SUPABASE_URL: inject('supabaseUrl'),
-    SUPABASE_SERVICE_ROLE_KEY: inject('supabaseServiceKey'),
-    GOOGLE_VERTEX_PROJECT: 'test',
-    GCP_SA_JSON: '{}',
+    SUPABASE_SECRET_KEY: inject('supabaseServiceKey'),
+    VERTEX_API_EXPRESS_MODE_KEY: 'test',
     AGENTS_ROOT: roots.agentsRoot,
     SHARED_ROOT: roots.sharedRoot,
     SPRITE_API_SOCK: roots.sock,
@@ -2973,12 +2986,8 @@ import { failRunningRuns } from './run-store';
 import { createApp } from './server';
 
 const config = loadConfig();
-const db = createDb(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY);
-const vertex = createVertex({
-  project: config.GOOGLE_VERTEX_PROJECT,
-  location: 'global',
-  googleAuthOptions: { credentials: JSON.parse(config.GCP_SA_JSON) },
-});
+const db = createDb(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY);
+const vertex = createVertex({ apiKey: config.VERTEX_API_EXPRESS_MODE_KEY });
 
 const cleaned = await failRunningRuns(db, config.PROJECT_ID, 'runtime 重啟');
 if (cleaned > 0) console.warn(`[startup] 已把 ${cleaned} 個中斷的 run 標成 failed`);
@@ -2992,15 +3001,12 @@ serve({ fetch: createApp({ db, model: vertex(config.MODEL_ID), config }).fetch, 
 
 ```bash
 PROJECT_ID=00000000-0000-0000-0000-000000000000
-SUPABASE_URL=http://127.0.0.1:54321
-SUPABASE_SERVICE_ROLE_KEY=
-GOOGLE_VERTEX_PROJECT=
-# 整份 service account JSON，單行
-GCP_SA_JSON=
+SUPABASE_URL=
+SUPABASE_SECRET_KEY=
+VERTEX_API_EXPRESS_MODE_KEY=
 # 本機開發用暫存目錄；Sprite 上用預設值 /agents、/shared
 AGENTS_ROOT=/tmp/agenthub/agents
 SHARED_ROOT=/tmp/agenthub/shared
-# 不要設定 GOOGLE_VERTEX_API_KEY，否則 project / location 會被忽略
 ```
 
 - [ ] **Step 5: 確認測試通過**
@@ -3014,22 +3020,22 @@ Expected: 12 個測試全部 PASS。
 - [ ] **Step 6: 跑全部測試與型別檢查**
 
 ```bash
-supabase test db
+supabase test db --linked
 pnpm -F @agenthub/runtime test
 pnpm -F @agenthub/runtime typecheck
 ```
 
 Expected: pgTAP 全部 ok；Vitest 所有測試檔 PASS；typecheck 沒有錯誤。
 
-- [ ] **Step 7: 手動確認（選做，需要 GCP service account）**
+- [ ] **Step 7: 用真的 Gemini 手動確認**
 
-1. 在本機 Supabase 建一個使用者、範本、專案、對話、顧問（可以用 Studio：http://127.0.0.1:54323）。
-2. 複製 `.env.example` 成 `.env`，填入 `PROJECT_ID`、`SUPABASE_SERVICE_ROLE_KEY`（`supabase status -o json` 的 `SERVICE_ROLE_KEY`）、GCP 資訊。
-3. 執行：
+1. 用 service key 在雲端 Supabase 建一個 `@test.local` 使用者、範本、專案、對話、顧問（可以寫一支一次性的 tsx 腳本，跑完即可刪除）。
+2. 執行（`PROJECT_ID` 換成剛建立的專案 id）：
 
 ```bash
 cd packages/runtime
-node --env-file=.env --import tsx src/main.ts
+PROJECT_ID=<project id> AGENTS_ROOT=/tmp/agenthub/agents SHARED_ROOT=/tmp/agenthub/shared \
+  node --env-file=../../.env --import tsx src/main.ts
 ```
 
 4. 另一個終端機：
@@ -3040,7 +3046,7 @@ curl -N -X POST http://localhost:8080/chat \
   -d '{"thread_id":"<thread id>","text":"你好，請自我介紹"}'
 ```
 
-Expected: 看到 `data: {"type":"text-delta",...}` 的 SSE 串流，結束後 `runs` 表該筆為 `succeeded`。
+Expected: 看到 `data: {"type":"text-delta",...}` 的 SSE 串流，內容是 Gemini 的真實回覆；結束後 `runs` 表該筆為 `succeeded`、`usage_events` 有 token 數。確認完刪掉測試使用者。
 
 - [ ] **Step 8: Commit**
 

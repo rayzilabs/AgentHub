@@ -25,7 +25,7 @@
 | 沙盒 | **每個專案一台 Fly.io Sprite**，每個 agent 在裡面有自己的工作目錄 |
 | agent 迴圈 | 跑在專案 Sprite 裡的 Node 服務，有請求進來才喚醒執行 |
 | Agent SDK | **Vercel AI SDK**（`ai`、`@ai-sdk/google-vertex`、`@ai-sdk/mcp`）。不用 Google ADK，理由見 §6.1 |
-| 模型 | `gemini-3.8-flash`，走 Gemini Enterprise Agent Platform（原 Vertex AI）的 `global` 端點 |
+| 模型 | `gemini-3.8-flash`，走 Gemini Enterprise Agent Platform（原 Vertex AI）的 express mode（API key，global 端點） |
 | 主管 | 平台內建，不從市集上架 |
 | 多 agent 協作 | 派工 + 主持人式討論（最多 3 輪）。不做自由式 agent 互傳訊息 |
 | 記憶 | agent 自己用 `remember` / `recall` 決定記什麼，分「agent 私有」和「專案共用」兩層，存在 Supabase |
@@ -196,8 +196,8 @@ usage_events        模型用量帳本（只記錄，不計費）
 1. 寫入 `projects`，`sprite_status = 'provisioning'`。
 2. 用 `@fly/sprites` 建立 Sprite，網址維持私有。
 3. Vercel 產生 `runtime/<版本>.tgz` 的短效簽名下載網址（Sprite 此時還沒有任何憑證），在 Sprite 裡下載並安裝，再寫入環境變數檔：
-   - Supabase URL、service role key
-   - Gemini 憑證
+   - `SUPABASE_URL`、`SUPABASE_SECRET_KEY`
+   - `VERTEX_API_EXPRESS_MODE_KEY`
    - `PROJECT_ID`
 4. 把 runtime 註冊成 Sprite 的常駐服務，監聽 port 8080。
 5. `/health` 回應成功 → `ready`；失敗 → `error`，原因寫入 `sprite_error`。
@@ -303,7 +303,7 @@ packages/runtime/src/
 
 | | 顧問 | 主管 |
 |---|---|---|
-| 模型 | `vertex('gemini-3.8-flash')`，location `global` | 同左 |
+| 模型 | `createVertex({ apiKey })('gemini-3.8-flash')`（express mode） | 同左 |
 | system prompt | 創作者的 prompt + 記憶區塊 + skill 清單 + `/shared` 檔案清單 + 工作目錄說明 | 內建主管 prompt + 記憶區塊 + 顧問名單與專長 + 總結格式 |
 | 工具 | `bash`、`read_file`、`write_file`、`remember`、`recall`、它自己的 MCP 工具 | `read_file`、`remember`、`recall`、`assign_task`、`convene_discussion` |
 | 工作目錄 | `/agents/<實例id>/`，可讀寫 `/shared` | 不需要 |
@@ -364,7 +364,7 @@ packages/runtime/src/
    - 從 `messages` 組出對話歷史。
    - `remember` / `recall`。
 2. **整合測試**
-   - 本機跑 runtime（不用 Sprite），接本機 Supabase（`supabase start`），用 AI SDK 的 mock 模型取代 Gemini。
+   - 本機跑 runtime（不用 Sprite），接雲端 Supabase 開發專案，用 AI SDK 的 mock 模型取代 Gemini。資料庫測試用 pgTAP 在雲端執行（`supabase test db --linked`）。
    - 情境：單一顧問、主管派工、召開討論。
    - 驗證：串流內容、`messages` 與 `usage_events` 寫入、run 狀態。
 3. **真實環境冒煙測試**（手動執行，不進 CI）：腳本依序建專案、啟用 3 個金融 agent、問一個需要討論的問題，確認 run 成功且有總結。
