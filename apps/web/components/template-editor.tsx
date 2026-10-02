@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
 import type { McpServer } from '@/lib/schemas';
 import type { TemplateRow } from '@/lib/services/templates';
@@ -120,8 +121,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
       <section>
         <h2 className="font-display text-xl">Skill</h2>
         <p className="text-sm text-muted">上傳一個 zip，裡面每個資料夾放一份 SKILL.md（Claude Code 的 .claude/skills 資料夾直接壓縮即可）。</p>
-        <input type="file" accept=".zip,application/zip" disabled={busy} className="mt-3 block"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadZip(f); e.target.value = ''; }} />
+        <FileButton label="上傳 skill zip" accept=".zip,application/zip" busy={busy} className="mt-3" onFile={(f) => void uploadZip(f)} />
         {t.skills.length > 0 && (
           <ul className="mt-3 space-y-1 text-sm">
             {t.skills.map((s) => <li key={s.name}><span className="font-medium">{s.name}</span>：{s.description}</li>)}

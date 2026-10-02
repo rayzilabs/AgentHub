@@ -1,6 +1,7 @@
 import { Markdown } from '@/components/markdown';
 import { Seal } from '@/components/seal';
 import type { DiscussionState, Speech } from '@/lib/agent-output';
+import { Collapsible } from './collapsible';
 import { ToolList } from './tool-list';
 
 const STANCE_LINE = /\n?\s*立場\s*[:：]\s*(同意|有保留)\s*$/;
@@ -18,7 +19,11 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
       {speech.status === 'failed' ? (
         <p className="mt-2 text-sm text-muted">未發言：{speech.error}</p>
       ) : (
-        body && <div className="mt-2"><Markdown text={body} /></div>
+        body && (
+          <div className="mt-2">
+            {speech.status === 'done' ? <Collapsible><Markdown text={body} /></Collapsible> : <Markdown text={body} />}
+          </div>
+        )
       )}
     </div>
   );
@@ -35,7 +40,8 @@ export function DiscussionView({ state, colorOf, failedText }: {
   const rounds = [...new Set(state.speeches.map((s) => s.round))].sort((a, b) => a - b);
   return (
     <section className="my-4 rounded border border-line bg-paper p-4" aria-label="顧問討論">
-      <h3 className="font-display text-lg">顧問討論：{state.topic}</h3>
+      <h3 className="font-display text-lg">顧問討論</h3>
+      <p className="mt-1 text-sm text-muted">{state.topic}</p>
       {rounds.map((round) => (
         <div key={round} className="mt-4">
           <h4 className="mb-2 text-sm font-medium text-muted">

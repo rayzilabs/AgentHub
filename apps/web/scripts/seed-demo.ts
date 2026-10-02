@@ -27,6 +27,18 @@ async function ensureUser(email: string, password: string): Promise<string> {
 }
 
 const generated = !process.env.DEMO_PASSWORD;
+if (!generated && process.env.DEMO_PASSWORD!.length < 12) {
+  console.error('DEMO_PASSWORD 至少要 12 個字元。');
+  process.exit(1);
+}
+if (generated) {
+  const { data, error } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  if (error) throw error;
+  if (data.users.some((u) => u.email?.endsWith('@demo.agenthub.app'))) {
+    console.error('Demo 帳號已存在，但沒有設定 DEMO_PASSWORD。為避免重設既有密碼，已中止；請設定 DEMO_PASSWORD（至少 12 個字元）後再執行。');
+    process.exit(1);
+  }
+}
 const password = process.env.DEMO_PASSWORD ?? randomBytes(9).toString('base64url');
 const creatorId = await ensureUser('creator@demo.agenthub.app', password);
 const demoUserId = await ensureUser('demo@demo.agenthub.app', password);

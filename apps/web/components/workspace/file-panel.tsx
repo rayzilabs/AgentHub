@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
 
 type FileItem = { name: string; size: number; updated_at: string | null };
@@ -36,8 +37,7 @@ export function FilePanel({ projectId }: { projectId: string }) {
     <section aria-labelledby="files-title">
       <h2 id="files-title" className="font-display text-lg">專案資料</h2>
       <p className="text-xs text-muted">上傳後，所有顧問下一次回覆時都讀得到。</p>
-      <input type="file" disabled={busy} className="mt-2 block w-full text-sm"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = ''; }} />
+      <FileButton label="上傳檔案" busy={busy} className="mt-2" onFile={(f) => void upload(f)} />
       {error && <p role="alert" className="mt-1 text-xs text-seal">{error}</p>}
       <ul className="mt-2 space-y-1 text-sm">
         {files.map((f) => <li key={f.name} className="truncate">{f.name}</li>)}

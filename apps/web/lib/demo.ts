@@ -11,6 +11,7 @@ const DEFAULT_ROOT = fileURLToPath(new URL('../demo/agents', import.meta.url));
 async function collect(dir: string, prefix = ''): Promise<Record<string, Uint8Array>> {
   const out: Record<string, Uint8Array> = {};
   for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) Object.assign(out, await collect(full, rel));
