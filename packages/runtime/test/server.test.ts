@@ -182,12 +182,26 @@ describe('POST /chat', () => {
     expect(run).toMatchObject({ status: 'failed', error: 'run 超過 15 分鐘' });
   });
 
-  it('MCP 啟動失敗不影響 run，prompt 告知 agent', async () => {
+  it('MCP 啟動失敗不影響 run，prompt 告知 agent，前端收到警告', async () => {
     const env = await seedEnv({ mcp_servers: [{ name: 'broken', transport: 'stdio', command: '/nonexistent/cmd' }] });
     const model = mockModel(textTurn('照常回答'));
-    await (await post(app(env, model), { thread_id: env.threadId, text: '問題' })).text();
+    const body = await (await post(app(env, model), { thread_id: env.threadId, text: '問題' })).text();
+    expect(body).toContain('"type":"data-warning"');
+    expect(body).toContain('MCP「broken」目前無法使用');
     expect((await waitForRunDone(db, env.threadId)).status).toBe('succeeded');
     expect(promptText(model)).toContain('目前無法使用');
+
+    const final = (await messagesOf(env.threadId)).find((m) => m.kind === 'final');
+    expect(final.content).toBe('照常回答');
+    expect(final.ui_message.role).toBe('assistant');
+    const warning = final.ui_message.parts.find((p: { type: string }) => p.type === 'data-warning');
+    expect(warning.data.text).toContain('MCP「broken」目前無法使用');
+  });
+
+  it('只有 MCP 警告、模型沒有產生內容：仍標成失敗', async () => {
+    const env = await seedEnv({ mcp_servers: [{ name: 'broken', transport: 'stdio', command: '/nonexistent/cmd' }] });
+    await (await post(app(env, mockModel(emptyTurn())), { thread_id: env.threadId, text: '問題' })).text();
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'failed', error: '模型沒有產生回覆' });
   });
 
   it('同一串對話已有 run 在跑：回 409', async () => {

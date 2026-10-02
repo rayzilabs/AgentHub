@@ -34,6 +34,35 @@ export type BuiltAgent = {
   close(): Promise<void>;
 };
 
+/**
+ * 把 MCP 啟動警告放進 UI 串流（data-warning），前端與存下來的 ui_message 都看得到。
+ * 警告緊接在 start 之後送出；不用 createUIMessageStream 的 merge，因為它不會把取消往上游傳，
+ * run 逾時收尾時 agent 串流就停不下來。
+ */
+function withWarnings(stream: ReadableStream<UIMessageChunk>, warnings: string[]): ReadableStream<UIMessageChunk> {
+  if (warnings.length === 0) return stream;
+  let sent = false;
+  const sendWarnings = (controller: TransformStreamDefaultController<UIMessageChunk>) => {
+    if (sent) return;
+    sent = true;
+    for (const text of warnings) controller.enqueue({ type: 'data-warning', data: { text } });
+  };
+  return stream.pipeThrough(
+    new TransformStream<UIMessageChunk, UIMessageChunk>({
+      transform(chunk, controller) {
+        if (chunk.type === 'start') {
+          controller.enqueue(chunk);
+          sendWarnings(controller);
+        } else {
+          sendWarnings(controller);
+          controller.enqueue(chunk);
+        }
+      },
+      flush: sendWarnings,
+    }),
+  );
+}
+
 export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgent> {
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
@@ -73,7 +102,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
     close: mcp.close,
     streamUI: async ({ messages, abortSignal }) => {
       const result = await agent.stream({ messages, abortSignal });
-      return result.toUIMessageStream({ generateMessageId: generateId, onError: errorText });
+      return withWarnings(result.toUIMessageStream({ generateMessageId: generateId, onError: errorText }), mcp.warnings);
     },
   };
 }
