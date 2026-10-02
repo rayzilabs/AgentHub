@@ -123,7 +123,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
         {consultants.length === 0 ? (
           <p className="text-muted">先到市集加入至少一位顧問，才能開始對話。</p>
         ) : threadId ? (
-          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
+          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} hasManager={consultants.length > 1} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
         ) : (
           <button onClick={newThread} className="rounded bg-brand px-4 py-2 text-white">開始第一個對話</button>
         )}

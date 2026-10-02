@@ -9,10 +9,18 @@ import { MessageView } from './message-view';
 
 type ThreadMessages = { messages: UIMessage[]; running: boolean; error: string | null };
 
-export function Chat({ threadId, ready, speaker, colorOf, onSettled }: {
+/** 輪詢失敗後的等待時間：3 秒、6 秒，之後每 10 秒；連續失敗 5 次才放棄。 */
+const POLL_INTERVAL_MS = 3000;
+const POLL_BACKOFF_MS = [3000, 6000, 10000];
+const MAX_POLL_FAILURES = 5;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export function Chat({ threadId, ready, speaker, hasManager, colorOf, onSettled }: {
   threadId: string;
   ready: boolean;
   speaker: string;
+  /** 專案有兩位以上顧問時，由主管分工與召集討論 */
+  hasManager: boolean;
   colorOf: (id: string) => string;
   onSettled?: () => void;
 }) {
@@ -40,7 +48,16 @@ export function Chat({ threadId, ready, speaker, colorOf, onSettled }: {
   const { messages, sendMessage, setMessages, status } = useChat({
     id: threadId,
     transport,
-    onFinish: () => settled.current?.(),
+    onFinish: ({ isError, isAbort, finishReason }) => {
+      // 出錯由 onError 處理；使用者中止不需要處理
+      if (isError || isAbort) return;
+      // 串流正常關閉卻沒有 finish（runtime 逾時中止或 Vercel 函式時間到）：回覆可能沒完成，改向伺服器確認
+      if (finishReason == null) {
+        void pollUntilDoneRef.current();
+        return;
+      }
+      settled.current?.();
+    },
     onError: (err) => {
       if (!alive.current) return;
       // 請求本身被伺服器拒絕：伺服器回 { error }，訊息沒有送出，把草稿還給使用者
@@ -65,9 +82,23 @@ export function Chat({ threadId, ready, speaker, colorOf, onSettled }: {
     if (polling.current) return;
     polling.current = true;
     setWaiting(true);
+    let failures = 0;
     try {
       while (alive.current) {
-        const data = await api<ThreadMessages>(`/api/threads/${threadId}/messages`);
+        let data: ThreadMessages;
+        try {
+          data = await api<ThreadMessages>(`/api/threads/${threadId}/messages`);
+        } catch {
+          // 暫時連不上就稍後再試，連續失敗太多次才放棄
+          failures += 1;
+          if (failures >= MAX_POLL_FAILURES) {
+            if (alive.current) setNotice('一直無法取得回覆進度，請檢查網路後重新整理頁面');
+            return;
+          }
+          await sleep(POLL_BACKOFF_MS[Math.min(failures - 1, POLL_BACKOFF_MS.length - 1)]);
+          continue;
+        }
+        failures = 0;
         if (!alive.current) return;
         if (!data.running) {
           const local = localMessages.current;
@@ -84,10 +115,8 @@ export function Chat({ threadId, ready, speaker, colorOf, onSettled }: {
           }
           return;
         }
-        await new Promise((r) => setTimeout(r, 3000));
+        await sleep(POLL_INTERVAL_MS);
       }
-    } catch (e) {
-      if (alive.current) setNotice((e as Error).message);
     } finally {
       polling.current = false;
       if (alive.current) setWaiting(false);
@@ -109,7 +138,8 @@ export function Chat({ threadId, ready, speaker, colorOf, onSettled }: {
   }, [threadId, setMessages, pollUntilDone]);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    bottom.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'end' });
   }, [messages]);
 
   const busy = status === 'submitted' || status === 'streaming' || waiting;
@@ -128,7 +158,11 @@ export function Chat({ threadId, ready, speaker, colorOf, onSettled }: {
     <div className="flex min-h-[60vh] flex-col">
       <div className="flex-1 space-y-6 pb-4">
         {messages.length === 0 && (
-          <p className="text-muted">說明你想完成的事，顧問們會分工處理。需要跨專業權衡時，主管會召集大家討論。</p>
+          <p className="text-muted">
+            {hasManager
+              ? '說明你想完成的事，主管會分派給合適的顧問。需要跨專業權衡時，主管會召集大家討論。'
+              : `說明你想完成的事，${speaker}會直接幫你處理。`}
+          </p>
         )}
         {messages.map((m) => <MessageView key={m.id} message={m} speaker={speaker} colorOf={colorOf} />)}
         {busy && <p className="text-sm text-muted">{waiting ? '回覆還在進行中，完成後會自動顯示…' : '顧問正在處理…'}</p>}
