@@ -26,8 +26,9 @@ async function ensureUser(email: string, password: string): Promise<string> {
   return created.user.id;
 }
 
-const generated = !process.env.DEMO_PASSWORD;
-if (!generated && process.env.DEMO_PASSWORD!.length < 12) {
+const demoPassword = process.env.DEMO_PASSWORD?.trim();
+const generated = !demoPassword;
+if (demoPassword && demoPassword.length < 12) {
   console.error('DEMO_PASSWORD 至少要 12 個字元。');
   process.exit(1);
 }
@@ -39,7 +40,7 @@ if (generated) {
     process.exit(1);
   }
 }
-const password = process.env.DEMO_PASSWORD ?? randomBytes(9).toString('base64url');
+const password = demoPassword ?? randomBytes(9).toString('base64url');
 const creatorId = await ensureUser('creator@demo.agenthub.app', password);
 const demoUserId = await ensureUser('demo@demo.agenthub.app', password);
 
