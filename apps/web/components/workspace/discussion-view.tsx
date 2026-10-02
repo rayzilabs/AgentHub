@@ -24,7 +24,13 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
   );
 }
 
-export function DiscussionView({ state, colorOf }: { state?: DiscussionState; colorOf: (consultantId: string) => string }) {
+export function DiscussionView({ state, colorOf, failedText }: {
+  state?: DiscussionState;
+  colorOf: (consultantId: string) => string;
+  /** 召集討論的工具失敗時的原因：還沒開始就顯示「討論沒有開始」，進行到一半則顯示「提前結束」 */
+  failedText?: string;
+}) {
+  if (failedText !== undefined && !state) return <p role="status" className="my-3 text-sm text-muted">討論沒有開始：{failedText}</p>;
   if (!state) return <p className="my-3 text-sm text-muted">主管正在召集顧問…</p>;
   const rounds = [...new Set(state.speeches.map((s) => s.round))].sort((a, b) => a - b);
   return (
@@ -42,8 +48,10 @@ export function DiscussionView({ state, colorOf }: { state?: DiscussionState; co
           </div>
         </div>
       ))}
-      {state.finished && (
+      {state.finished ? (
         <p className="mt-4 text-sm text-muted">{state.error ? `討論提前結束：${state.error}` : `討論結束，共進行 ${state.round} 輪。`}</p>
+      ) : failedText !== undefined && (
+        <p className="mt-4 text-sm text-muted">討論提前結束：{failedText}</p>
       )}
     </section>
   );

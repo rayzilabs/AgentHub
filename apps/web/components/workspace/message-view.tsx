@@ -35,7 +35,8 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
             failedText={tool.state === 'output-error' ? tool.errorText ?? '顧問沒有完成這項工作' : undefined} />;
         }
         if (name === 'convene_discussion') {
-          return <DiscussionView key={i} state={tool.output as DiscussionState | undefined} colorOf={colorOf} />;
+          return <DiscussionView key={i} state={tool.output as DiscussionState | undefined} colorOf={colorOf}
+            failedText={tool.state === 'output-error' ? tool.errorText ?? '主管沒能召集顧問' : undefined} />;
         }
         const done = tool.state === 'output-available';
         const failed = tool.state === 'output-error';
