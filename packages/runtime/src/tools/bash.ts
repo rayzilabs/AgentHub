@@ -17,24 +17,42 @@ export function runBash(
   abortSignal?: AbortSignal,
 ): Promise<{ exitCode: number | null; output: string; timedOut: boolean }> {
   return new Promise((resolve) => {
-    const child = spawn('bash', ['-c', command], { cwd, env: process.env, signal: abortSignal });
+    // detached：讓 bash 成為獨立行程群組，逾時或中止時能連同子行程一起終止
+    const child = spawn('bash', ['-c', command], { cwd, env: process.env, detached: true });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     let output = '';
-    let total = 0;
-    const append = (chunk: Buffer) => {
-      total += chunk.length;
-      if (output.length < MAX_OUTPUT * 2) output += chunk.toString();
+    let overflowed = false;
+    const append = (chunk: string) => {
+      if (overflowed) return;
+      output += chunk;
+      if (output.length >= MAX_OUTPUT * 2) {
+        output = output.slice(0, MAX_OUTPUT * 2);
+        overflowed = true;
+      }
     };
     child.stdout.on('data', append);
     child.stderr.on('data', append);
+    const killGroup = () => {
+      try {
+        process.kill(-child.pid!, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
+    };
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      killGroup();
     }, timeoutMs);
+    const onAbort = () => killGroup();
+    if (abortSignal?.aborted) onAbort();
+    else abortSignal?.addEventListener('abort', onAbort, { once: true });
     const done = (exitCode: number | null, extra = '') => {
       clearTimeout(timer);
-      const text = total > output.length ? output + '…'.repeat(MAX_OUTPUT) : output;
-      resolve({ exitCode, output: truncate(text + extra), timedOut });
+      abortSignal?.removeEventListener('abort', onAbort);
+      // overflowed 時 output 已達 MAX_OUTPUT * 2，必定超過上限而被 truncate 標記
+      resolve({ exitCode, output: truncate(output + extra), timedOut });
     };
     child.on('close', (code) => done(code));
     child.on('error', (err) => done(null, `\n${err.message}`));

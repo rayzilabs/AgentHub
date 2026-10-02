@@ -33,6 +33,19 @@ describe('runBash', () => {
     expect(r.timedOut).toBe(true);
   });
 
+  it('多位元組輸出不會被誤判為過長', async () => {
+    const r = await runBash('echo 你好', await workDir());
+    expect(r.output).toBe('你好\n');
+    expect(r.output).not.toContain('已截斷');
+  });
+
+  it('逾時會連子行程一起終止', async () => {
+    const start = Date.now();
+    const r = await runBash('sleep 5; echo x', await workDir(), 200);
+    expect(r.timedOut).toBe(true);
+    expect(Date.now() - start).toBeLessThan(1500);
+  });
+
   it('輸出過長會截斷', async () => {
     const r = await runBash(`head -c 50000 /dev/zero | tr '\\0' a`, await workDir());
     expect(r.output.length).toBeLessThan(MAX_OUTPUT + 100);
