@@ -172,6 +172,8 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
       return { status: 'failed', error: TIMEOUT_ERROR };
     }
     const { final, failure } = outcome;
+    // 串流結束當下就判定是否逾時，不受之後寫入資料庫花的時間影響
+    const timedOut = abort.signal.aborted;
     let saveError: string | undefined;
     if (hasContent(final)) {
       await insertMessage(db, {
@@ -179,7 +181,7 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
         content: textOf(final), ui_message: final, tool_events: toolEvents(final),
       }).catch((e) => { saveError = `無法儲存回覆：${errorText(e)}`; });
     }
-    const error = abort.signal.aborted
+    const error = timedOut
       ? TIMEOUT_ERROR
       : failure ?? saveError ?? (hasContent(final) ? undefined : NO_REPLY_ERROR);
     return error ? { status: 'failed', error } : { status: 'succeeded' };

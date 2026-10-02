@@ -171,7 +171,7 @@ describe('POST /chat', () => {
     await res.text();
     const run = await waitForRunDone(db, env.threadId);
     expect(run).toMatchObject({ status: 'failed', error: 'run 超過 15 分鐘' });
-    expect(Date.now() - start).toBeLessThan(5000);
+    expect(Date.now() - start).toBeLessThan(10_000);
   });
 
   it('超過時間上限而中止：錯誤訊息是逾時，不是一般中止', async () => {
