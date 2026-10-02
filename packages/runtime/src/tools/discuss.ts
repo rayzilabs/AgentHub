@@ -45,7 +45,12 @@ export function formatTranscript(state: DiscussionState): string {
 
 export function roundPrompt(topic: string, round: number, transcript: string): string {
   if (round === 1) {
-    return `你正在參加一場專案討論。\n題目：${topic}\n\n請從你的專業角度提出獨立意見：重點、風險與建議。`;
+    return [
+      '你正在參加一場專案討論。',
+      `題目：${topic}`,
+      '',
+      '請從你的專業角度提出獨立意見，最多 300 字，用 3–5 個條列重點（重點、風險、建議）。不要冗長開場，不要標題。',
+    ].join('\n');
   }
   return [
     `你正在參加一場專案討論（第 ${round} 輪）。`,
@@ -54,7 +59,7 @@ export function roundPrompt(topic: string, round: number, transcript: string): s
     '目前的討論紀錄：',
     transcript,
     '',
-    '請回應其他人的意見：同意的地方、反對或補充的地方，必要時修正你的看法。',
+    '請回應其他人的意見，最多 200 字，只談同意的地方、反對的地方與需要修正之處。',
     '最後一行必須是「立場：同意」或「立場：有保留」。',
   ].join('\n');
 }

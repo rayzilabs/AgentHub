@@ -223,6 +223,18 @@ describe('roundPrompt / formatTranscript', () => {
     expect(p).toContain('L1');
     expect(p).toContain('立場：同意');
   });
+
+  it('限制發言長度：第 1 輪 300 字，第 2 輪起 200 字', () => {
+    const r1 = roundPrompt('題目A', 1, '');
+    expect(r1).toContain('300 字');
+    expect(r1).not.toContain('200 字');
+    for (const round of [2, 3]) {
+      const p = roundPrompt('題目A', round, 'T');
+      expect(p).toContain('200 字');
+      expect(p).not.toContain('300 字');
+      expect(p).toContain('立場：有保留');
+    }
+  });
 });
 
 describe('convene_discussion 工具', () => {
