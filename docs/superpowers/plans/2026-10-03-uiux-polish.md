@@ -282,7 +282,7 @@ label 的 className 改成 `btn btn-secondary btn-sm cursor-pointer peer-focus-v
 改後：`grid gap-6 py-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-10 lg:py-8`
 
 `aside` 改前：`space-y-8`
-改後：`min-w-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto lg:pr-1`，內部結構：
+改後：`min-w-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-8rem)] lg:self-start lg:overflow-y-auto lg:pr-1`，內部結構：
 
 ```tsx
 <aside className="…">
@@ -339,8 +339,8 @@ label 的 className 改成 `btn btn-secondary btn-sm cursor-pointer peer-focus-v
 <div className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-2 border-b border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
   {threads.map((t, i) => (
     <button key={t.id} onClick={() => setThreadId(t.id)} aria-current={t.id === threadId ? 'true' : undefined} title={t.title}
-      className={`btn btn-sm max-w-full truncate ${t.id === threadId ? 'btn-primary' : 'btn-secondary'}`}>
-      {t.title === '新對話' ? `對話 ${threads.length - i}` : t.title}
+      className={`btn btn-sm max-w-full ${t.id === threadId ? 'btn-primary' : 'btn-secondary'}`}>
+      <span className="truncate">{t.title === '新對話' ? `對話 ${threads.length - i}` : t.title}</span>
     </button>
   ))}
   <button onClick={newThread} className="btn btn-sm border border-dashed border-line text-muted hover:border-ink hover:text-ink">開新對話</button>
