@@ -23,7 +23,9 @@ export default function setup(project: TestProject) {
       if (error) throw error;
       const testUsers = data.users.filter((u) => u.email?.endsWith('@test.local'));
       if (testUsers.length === 0) break;
-      await Promise.all(testUsers.map((u) => db.auth.admin.deleteUser(u.id)));
+      const results = await Promise.all(testUsers.map((u) => db.auth.admin.deleteUser(u.id)));
+      const failed = results.find((r) => r.error);
+      if (failed?.error) throw failed.error;
     }
   };
 }
