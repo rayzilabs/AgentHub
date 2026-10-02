@@ -64,10 +64,16 @@ export function assignTaskTool(opts: {
         for await (const view of throttle(views, opts.intervalMs ?? SNAPSHOT_INTERVAL_MS)) {
           yield { ...base, status: 'working', ...view };
         }
-        if (last) await opts.record(instance, last, null);
       } catch (e) {
         yield { ...base, status: 'failed', ...lastView(), error: errorText(e) };
         return;
+      }
+      if (last) {
+        try {
+          await opts.record(instance, last, null);
+        } catch (e) {
+          console.error(`記錄 ${instance.name} 的派工發言失敗：${errorText(e)}`);
+        }
       }
       yield { ...base, status: 'done', ...lastView() };
     },

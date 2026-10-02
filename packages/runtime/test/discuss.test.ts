@@ -1,5 +1,5 @@
 import type { UIMessage } from 'ai';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ConsultantRunner, RecordSpeech } from '../src/consultant';
 import {
   conveneDiscussionTool, formatTranscript, parseStance, roundPrompt, runDiscussion, type DiscussionState,
@@ -168,6 +168,51 @@ describe('runDiscussion：快照內容', () => {
     expect(speaking).toHaveLength(1);
   });
 
+  it('記錄發言失敗：發言仍算成功，討論照常進行', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { run } = scriptedRunner({ 'c-legal': ['L1', 'L2\n立場：同意'], 'c-eng': ['E1', 'E2\n立場：同意'] });
+      const state = await finalState(runDiscussion({
+        topic: 't', participants: [legal, eng], maxRounds: 3, run,
+        record: async () => { throw new Error('DB 斷線'); },
+      }));
+      expect(state.error).toBeUndefined();
+      expect(state.speeches.map((s) => s.status)).toEqual(['done', 'done', 'done', 'done']);
+      expect(state.speeches[3].stance).toBe('agree');
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('第 1 輪後已中止：不再請下一輪的人發言', async () => {
+    const ac = new AbortController();
+    const { run, calls } = scriptedRunner({ 'c-legal': ['L1', 'L2'], 'c-eng': ['E1', 'E2'] });
+    const aborting: ConsultantRunner = async function* (instance, task, signal) {
+      yield* run(instance, task, signal);
+      ac.abort();
+    };
+    const state = await finalState(runDiscussion({
+      topic: 't', participants: [legal, eng], maxRounds: 3, run: aborting, record: noRecord, abortSignal: ac.signal,
+    }));
+    expect(calls).toHaveLength(2);
+    expect(state).toMatchObject({ finished: true, round: 1, error: '討論已中止' });
+    expect(state.speeches).toHaveLength(2);
+  });
+
+  it('第 2 輪中途中止：後面的人不再發言', async () => {
+    const ac = new AbortController();
+    const { run, calls } = scriptedRunner({ 'c-legal': ['L1', 'L2'], 'c-eng': ['E1', 'E2'] });
+    const aborting: ConsultantRunner = async function* (instance, task, signal) {
+      yield* run(instance, task, signal);
+      if (task.includes('第 2 輪')) ac.abort();
+    };
+    const state = await finalState(runDiscussion({
+      topic: 't', participants: [legal, eng], maxRounds: 3, run: aborting, record: noRecord, abortSignal: ac.signal,
+    }));
+    expect(calls.map((c) => c.id)).toEqual(['c-legal', 'c-eng', 'c-legal']);
+    expect(state).toMatchObject({ finished: true, round: 2, error: '討論已中止' });
+  });
 });
 
 describe('roundPrompt / formatTranscript', () => {
@@ -194,6 +239,16 @@ describe('convene_discussion 工具', () => {
     expect(out.type).toBe('text');
     expect(out.value).toContain('【第 2 輪｜工程】');
     expect(out.value).toContain('E2');
+  });
+
+  it('重複的 participant_ids 合併後不足兩人：直接回報失敗，不請任何人發言', async () => {
+    const { run, calls } = scriptedRunner({ 'c-legal': ['L1'], 'c-eng': ['E1'] });
+    const t = conveneDiscussionTool({ consultants: [legal, eng], run, record: noRecord, intervalMs: 0 });
+    const outputs = await allStates(
+      t.execute!({ topic: '題目', participant_ids: ['c-legal', 'c-legal'], max_rounds: 3 }, opts) as AsyncIterable<DiscussionState>,
+    );
+    expect(outputs).toEqual([{ topic: '題目', round: 0, finished: true, error: '討論至少需要兩位不同的顧問', speeches: [] }]);
+    expect(calls).toEqual([]);
   });
 
   it('預設每 1000ms 最多一份快照', async () => {

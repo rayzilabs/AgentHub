@@ -106,10 +106,15 @@ async function* speakConcurrently(
       }
       speech.status = 'done';
       speech.stance = parseStance(speech.text);
-      if (message) await record(instance, message, round);
     } catch (e) {
       speech.status = 'failed';
       speech.error = errorText(e);
+    }
+    try {
+      // 記錄失敗不影響這次發言的結果
+      if (speech.status === 'done' && message) await record(instance, message, round);
+    } catch (e) {
+      console.error(`記錄 ${instance.name} 第 ${round} 輪發言失敗：${errorText(e)}`);
     } finally {
       pending -= 1;
       feed.mark();
@@ -133,7 +138,14 @@ export async function* runDiscussion(opts: {
   const state: DiscussionState = { topic: opts.topic, round: 1, finished: false, speeches: [] };
   const maxRounds = Math.min(Math.max(opts.maxRounds, 1), MAX_ROUNDS);
 
+  const stopIfAborted = () => {
+    if (!opts.abortSignal?.aborted) return false;
+    state.error ??= '討論已中止';
+    return true;
+  };
+
   for (let round = 1; round <= maxRounds; round++) {
+    if (stopIfAborted()) break;
     state.round = round;
     if (round === 1) {
       const prompt = roundPrompt(opts.topic, 1, '');
@@ -143,9 +155,11 @@ export async function* runDiscussion(opts: {
       );
     } else {
       for (const instance of opts.participants) {
+        if (stopIfAborted()) break;
         const prompt = roundPrompt(opts.topic, round, formatTranscript(state));
         yield* speakConcurrently([{ instance, prompt }], round, state, opts.run, opts.record, opts.abortSignal);
       }
+      if (state.error) break;
     }
 
     const thisRound = state.speeches.filter((s) => s.round === round);
@@ -180,6 +194,10 @@ export function conveneDiscussionTool(opts: {
     }),
     async *execute({ topic, participant_ids, max_rounds }, { abortSignal }): AsyncGenerator<DiscussionState> {
       const participants = [...new Set(participant_ids)].map((id) => byId.get(id)).filter((c): c is AgentInstance => !!c);
+      if (participants.length < 2) {
+        yield { topic, round: 0, finished: true, error: '討論至少需要兩位不同的顧問', speeches: [] };
+        return;
+      }
       yield* throttle(
         runDiscussion({ topic, participants, maxRounds: max_rounds, run: opts.run, record: opts.record, abortSignal }),
         opts.intervalMs ?? DISCUSSION_SNAPSHOT_INTERVAL_MS,

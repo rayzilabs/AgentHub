@@ -1,5 +1,5 @@
 import type { UIMessage } from 'ai';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ConsultantRunner, RecordSpeech } from '../src/consultant';
 import { assignTaskTool, type DelegationOutput } from '../src/tools/delegate';
 import type { AgentInstance } from '../src/types';
@@ -113,5 +113,27 @@ describe('assign_task', () => {
     expect(outputs.map((o) => [o.status, o.message?.parts.map((p) => (p as { text: string }).text).join('')])).toEqual([
       ['working', 'A'], ['working', 'AB'], ['done', 'AB'],
     ]);
+  });
+
+  it('記錄發言失敗：仍算完成，結果照常交給主管', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const run: ConsultantRunner = async function* () {
+        yield msg('結論');
+      };
+      const t = assignTaskTool({
+        consultants: [legal], run, intervalMs: 0,
+        record: async () => { throw new Error('DB 斷線'); },
+      });
+      const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+      const last = outputs.at(-1)!;
+      expect(last).toMatchObject({ status: 'done' });
+      expect(last.error).toBeUndefined();
+      expect(t.toModelOutput!({ toolCallId: 't', input: { consultant_id: 'c-legal', task: 'x' }, output: last }))
+        .toEqual({ type: 'text', value: '結論' });
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 });
