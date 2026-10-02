@@ -1,6 +1,7 @@
+import { APIError } from '@fly/sprites';
 import { describe, expect, it } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { forwardChat, runtimeEnvFile, spriteName } from '@/lib/sprites';
+import { forwardChat, isNotFound, runtimeEnvFile, spriteName } from '@/lib/sprites';
 
 const body = { thread_id: 't1', text: '你好' };
 
@@ -19,6 +20,17 @@ describe('spriteName / runtimeEnvFile', () => {
   it('Sprite 名稱帶前綴；env 檔每行 KEY="value"', () => {
     expect(spriteName('abc')).toBe('agenthub-abc');
     expect(runtimeEnvFile({ A: 'x', B: 'has "quote"' })).toBe('A="x"\nB="has \\"quote\\""\n');
+  });
+});
+
+describe('isNotFound', () => {
+  it('依 API 狀態碼判斷，不因訊息裡的 404（例如 UUID）誤判', () => {
+    expect(isNotFound(new APIError('sprite not found', { statusCode: 404 }))).toBe(true);
+    expect(isNotFound(new APIError('agenthub-1404abcd 刪除失敗', { statusCode: 500 }))).toBe(false);
+    expect(isNotFound(new APIError('not found upstream', { statusCode: 502 }))).toBe(false);
+    expect(isNotFound(new Error('agenthub-0404-aaaa failed'))).toBe(false);
+    expect(isNotFound(new Error('Sprite not found'))).toBe(true);
+    expect(isNotFound(new Error('notfound'))).toBe(false);
   });
 });
 

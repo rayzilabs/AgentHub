@@ -11,7 +11,12 @@ const RETRYABLE = new Set([502, 503, 504]);
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const isNotFound = (e: unknown) => (e instanceof APIError && e.statusCode === 404) || /404|not found/i.test(errorText(e));
+
+/** Sprites API 回 404 時 SDK 一律丟出帶 statusCode 的 APIError；訊息比對只作為保守的備援（不比對 "404"，UUID 可能含這三個字）。 */
+export function isNotFound(e: unknown): boolean {
+  if (e instanceof APIError && e.statusCode !== undefined) return e.statusCode === 404;
+  return /\bnot found\b/i.test(errorText(e));
+}
 
 export function spriteName(projectId: string): string {
   return `agenthub-${projectId}`;
@@ -63,7 +68,10 @@ async function waitForHealth(url: string, projectId: string): Promise<void> {
   let last = '';
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${url}/health`, { headers: { authorization: `Bearer ${env.spritesToken}` } });
+      const res = await fetch(`${url}/health`, {
+        headers: { authorization: `Bearer ${env.spritesToken}` },
+        signal: AbortSignal.timeout(5000),
+      });
       if (res.ok) {
         const body = (await res.json()) as { project_id?: string };
         if (body.project_id === projectId) return;
