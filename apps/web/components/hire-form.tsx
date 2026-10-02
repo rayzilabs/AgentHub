@@ -7,8 +7,10 @@ import { api } from '@/lib/client-api';
 import type { McpServer } from '@/lib/schemas';
 
 type ProjectOption = { id: string; name: string };
+/** 只需要 MCP 名稱與需要的金鑰；不會拿到創作者的指令、網址或 headers。 */
+type HireMcpServer = Pick<McpServer, 'name' | 'required_secrets'>;
 
-export function HireForm({ templateId, mcpServers, projects }: { templateId: string; mcpServers: McpServer[]; projects: ProjectOption[] }) {
+export function HireForm({ templateId, mcpServers, projects }: { templateId: string; mcpServers: HireMcpServer[]; projects: ProjectOption[] }) {
   const router = useRouter();
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
   const [secrets, setSecrets] = useState<Record<string, Record<string, string>>>({});

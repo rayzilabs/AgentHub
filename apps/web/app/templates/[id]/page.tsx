@@ -54,7 +54,7 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
         {template.status !== 'published' ? (
           <p className="text-muted">這是你的草稿，上架後才能加入專案。<Link href={`/creator/${template.id}`} className="text-brand underline">回去編輯</Link></p>
         ) : user ? (
-          <HireForm templateId={template.id} mcpServers={template.mcp_servers} projects={projects.map((p) => ({ id: p.id, name: p.name }))} />
+          <HireForm templateId={template.id} mcpServers={template.mcp_servers.map((s) => ({ name: s.name, required_secrets: s.required_secrets }))} projects={projects.map((p) => ({ id: p.id, name: p.name }))} />
         ) : (
           <p className="text-muted"><Link href={`/login?next=/templates/${template.id}`} className="text-brand underline">登入</Link>後就能加入專案。</p>
         )}
