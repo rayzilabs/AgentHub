@@ -31,10 +31,14 @@ export async function getOwnThread(db: Db, userId: string, threadId: string): Pr
   const { data, error } = await db.from('threads').select('id, project_id, title, created_at').eq('id', threadId).maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError(404, '找不到這串對話');
-  const project = await getOwnProject(db, userId, data.project_id).catch(() => {
-    throw new HttpError(404, '找不到這串對話');
-  });
-  return { thread: data as ThreadRow, project };
+  try {
+    const project = await getOwnProject(db, userId, data.project_id);
+    return { thread: data as ThreadRow, project };
+  } catch (e) {
+    // 只有「不是擁有者」對外說成找不到對話；資料庫錯誤照實丟出（回 500）
+    if (e instanceof HttpError && e.status === 404) throw new HttpError(404, '找不到這串對話');
+    throw e;
+  }
 }
 
 export async function getThreadMessages(db: Db, userId: string, threadId: string): Promise<ThreadMessages> {

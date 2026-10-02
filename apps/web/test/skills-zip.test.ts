@@ -49,6 +49,20 @@ describe('parseSkillsZip', () => {
     expect(parseSkillsZip(zip({ 'm/SKILL.md': text }))[0].description).toBe('第一行 第二行');
   });
 
+  it('接受開頭有 UTF-8 BOM 的 SKILL.md', () => {
+    expect(parseSkillsZip(zip({ 'b/SKILL.md': `\uFEFF${skill('bom', '有 BOM')}` }))).toEqual([
+      { name: 'bom', description: '有 BOM', path: 'b' },
+    ]);
+  });
+
+  it('接受 Windows 換行（CRLF），BOM 加 CRLF 也可以', () => {
+    const crlf = skill('crlf', 'Windows 存檔').replace(/\n/g, '\r\n');
+    expect(parseSkillsZip(zip({ 'c/SKILL.md': crlf, 'd/SKILL.md': `\uFEFF${crlf.replace('crlf', 'both')}` }))).toEqual([
+      { name: 'crlf', description: 'Windows 存檔', path: 'c' },
+      { name: 'both', description: 'Windows 存檔', path: 'd' },
+    ]);
+  });
+
   it('沒有任何 SKILL.md', () => {
     expect(problemsOf(zip({ 'readme.md': 'x' }))).toEqual(['zip 裡找不到任何 SKILL.md']);
   });

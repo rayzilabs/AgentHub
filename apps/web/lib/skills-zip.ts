@@ -9,7 +9,9 @@ export class SkillZipError extends Error {
   }
 }
 
+/** 設定區接受 Windows 換行（CRLF）。 */
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
+const BOM = /^\uFEFF/;
 
 function isJunk(file: string): boolean {
   return file.startsWith('__MACOSX/') || file.split('/').pop()!.startsWith('._');
@@ -33,7 +35,8 @@ export function parseSkillsZip(bytes: Uint8Array): SkillMeta[] {
   const seen = new Map<string, string>();
 
   for (const file of skillFiles) {
-    const match = strFromU8(files[file]).match(FRONTMATTER);
+    // 去掉 Windows 編輯器常加的 UTF-8 BOM（TextDecoder 通常已去掉，沒有 TextDecoder 時 fflate 不會）
+    const match = strFromU8(files[file]).replace(BOM, '').match(FRONTMATTER);
     if (!match) {
       problems.push(`${file}：開頭缺少 --- 包住的設定區（name、description）`);
       continue;
