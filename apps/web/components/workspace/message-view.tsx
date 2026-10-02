@@ -5,7 +5,7 @@ import { DelegationCard } from './delegation-card';
 import { DiscussionView } from './discussion-view';
 import { TOOL_LABELS } from './tool-list';
 
-type ToolPart = { type: string; toolName?: string; state: string; input?: Record<string, unknown>; output?: unknown };
+type ToolPart = { type: string; toolName?: string; state: string; input?: Record<string, unknown>; output?: unknown; errorText?: string };
 
 export function MessageView({ message, speaker, colorOf }: { message: UIMessage; speaker: string; colorOf: (id: string) => string }) {
   if (message.role === 'user') {
@@ -31,7 +31,8 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
         if (name === 'assign_task') {
           const output = tool.output as DelegationOutput | undefined;
           const consultantId = output?.consultant_id ?? (tool.input?.consultant_id as string | undefined) ?? '';
-          return <DelegationCard key={i} output={output} task={tool.input?.task as string | undefined} color={colorOf(consultantId)} />;
+          return <DelegationCard key={i} output={output} task={tool.input?.task as string | undefined} color={colorOf(consultantId)}
+            failedText={tool.state === 'output-error' ? tool.errorText ?? '顧問沒有完成這項工作' : undefined} />;
         }
         if (name === 'convene_discussion') {
           return <DiscussionView key={i} state={tool.output as DiscussionState | undefined} colorOf={colorOf} />;

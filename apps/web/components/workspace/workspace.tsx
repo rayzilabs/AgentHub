@@ -15,9 +15,17 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
   const [detail, setDetail] = useState(initial);
   const [threadId, setThreadId] = useState<string | null>(initial.threads[0]?.id ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [memoryTick, setMemoryTick] = useState(0);
   const { project, agents, threads } = detail;
 
-  const reload = useCallback(async () => setDetail(await api<ProjectDetail>(`/api/projects/${project.id}`)), [project.id]);
+  const reload = useCallback(async () => {
+    try {
+      setDetail(await api<ProjectDetail>(`/api/projects/${project.id}`));
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [project.id]);
 
   useEffect(() => {
     if (project.sprite_status !== 'provisioning') return;
@@ -34,20 +42,29 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
       const t = await api<{ id: string }>(`/api/projects/${project.id}/threads`, { method: 'POST', body: JSON.stringify({}) });
       await reload();
       setThreadId(t.id);
+      setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
   async function retry() {
-    await api(`/api/projects/${project.id}/provision`, { method: 'POST' });
-    await reload();
+    try {
+      await api(`/api/projects/${project.id}/provision`, { method: 'POST' });
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   async function remove() {
     if (!window.confirm(`確定要刪除「${project.name}」？對話、記憶和資料都會一起刪除。`)) return;
-    await api(`/api/projects/${project.id}`, { method: 'DELETE' });
-    router.push('/projects');
+    try {
+      await api(`/api/projects/${project.id}`, { method: 'DELETE' });
+      router.push('/projects');
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   return (
@@ -65,7 +82,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
         </div>
         <AgentRoster agents={agents} colorOf={colorOf} />
         <FilePanel projectId={project.id} />
-        <MemoryPanel projectId={project.id} refreshKey={threadId ? threads.length : 0} />
+        <MemoryPanel projectId={project.id} refreshKey={memoryTick + threads.length} />
         <button onClick={remove} className="text-sm text-seal underline">刪除專案</button>
       </aside>
 
@@ -83,7 +100,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
         {consultants.length === 0 ? (
           <p className="text-muted">先到市集加入至少一位顧問，才能開始對話。</p>
         ) : threadId ? (
-          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} colorOf={colorOf} />
+          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
         ) : (
           <button onClick={newThread} className="rounded bg-brand px-4 py-2 text-white">開始第一個對話</button>
         )}
