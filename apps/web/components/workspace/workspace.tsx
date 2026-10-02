@@ -10,12 +10,17 @@ import { Chat } from './chat';
 import { FilePanel } from './file-panel';
 import { MemoryPanel } from './memory-panel';
 
+// 準備超過這個時間仍未完成（例如背景部署被中斷），讓使用者可以重新準備
+const STALLED_MS = 120_000;
+
 export function Workspace({ initial }: { initial: ProjectDetail }) {
   const router = useRouter();
   const [detail, setDetail] = useState(initial);
   const [threadId, setThreadId] = useState<string | null>(initial.threads[0]?.id ?? null);
   const [error, setError] = useState<string | null>(null);
   const [memoryTick, setMemoryTick] = useState(0);
+  const [stalled, setStalled] = useState(false);
+  const [provisionRun, setProvisionRun] = useState(0);
   const { project, agents, threads } = detail;
 
   const reload = useCallback(async () => {
@@ -33,6 +38,12 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
     return () => clearInterval(timer);
   }, [project.sprite_status, reload]);
 
+  useEffect(() => {
+    if (project.sprite_status !== 'provisioning') return;
+    const timer = setTimeout(() => setStalled(true), STALLED_MS);
+    return () => clearTimeout(timer);
+  }, [project.sprite_status, provisionRun]);
+
   const consultants = agents.filter((a) => a.role === 'consultant');
   const colorOf = (id: string) => consultantColor(Math.max(0, consultants.findIndex((a) => a.id === id)));
   const speaker = consultants.length > 1 ? '主管' : consultants[0]?.name ?? '顧問';
@@ -49,6 +60,8 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
   }
 
   async function retry() {
+    setStalled(false);
+    setProvisionRun((n) => n + 1);
     try {
       await api(`/api/projects/${project.id}/provision`, { method: 'POST' });
       await reload();
@@ -72,7 +85,17 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
       <aside className="space-y-8">
         <div>
           <h1 className="font-display text-[28px] leading-tight">{project.name}</h1>
-          {project.sprite_status === 'provisioning' && <p className="mt-1 text-sm text-muted">正在準備 agent 的工作電腦，約需一分鐘…</p>}
+          {project.sprite_status === 'provisioning' && (
+            <div className="mt-1 text-sm">
+              <p className="text-muted">正在準備 agent 的工作電腦，約需一分鐘…</p>
+              {stalled && (
+                <>
+                  <p className="mt-1 text-muted">準備時間比平常久，可以重新準備。</p>
+                  <button onClick={retry} className="mt-1 text-brand underline">重新準備</button>
+                </>
+              )}
+            </div>
+          )}
           {project.sprite_status === 'error' && (
             <div className="mt-2 text-sm">
               <p className="text-seal">準備失敗：{project.sprite_error}</p>
