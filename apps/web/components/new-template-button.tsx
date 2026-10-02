@@ -23,7 +23,7 @@ export function NewTemplateButton() {
       <button onClick={create} disabled={busy} className="btn btn-primary">
         {busy ? '建立中…' : '做一位新顧問'}
       </button>
-      {error && <p role="alert" className="mt-2 text-sm text-seal">{error}</p>}
+      {error && <p role="alert" className="notice notice-error mt-2">{error}</p>}
     </div>
   );
 }

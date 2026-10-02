@@ -98,93 +98,105 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
     await run('已上架，現在大家都能在市集看到這位顧問', () => api<TemplateRow>(`/api/templates/${t.id}/publish`, { method: 'POST' }), applyAll);
   };
 
-  const input = 'mt-1 w-full rounded border border-line bg-surface px-3 py-2';
-
   return (
-    <div className="space-y-8">
-      <section className="space-y-4">
+    <div className="space-y-6">
+      <section className="panel space-y-5 p-5">
+        <h2 className="font-display text-xl">基本資料</h2>
         <label className="block">
-          <span className="text-sm text-muted">名稱</span>
-          <input disabled={busy} className={input} value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} />
+          <span className="label">名稱</span>
+          <input disabled={busy} className="field" value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} />
         </label>
         <label className="block">
-          <span className="text-sm text-muted">分類（例如：法律、財務、行銷）</span>
-          <input disabled={busy} className={input} value={t.category} onChange={(e) => setT({ ...t, category: e.target.value })} />
+          <span className="label">分類</span>
+          <input disabled={busy} className="field" value={t.category} onChange={(e) => setT({ ...t, category: e.target.value })} />
+          <span className="hint block">例如：法律、財務、行銷。會顯示在市集卡片上。</span>
         </label>
         <label className="block">
-          <span className="text-sm text-muted">介紹（顯示在市集，也會讓主管知道該把什麼工作交給這位顧問）</span>
-          <textarea disabled={busy} className={input} rows={3} value={t.description} onChange={(e) => setT({ ...t, description: e.target.value })} />
+          <span className="label">介紹</span>
+          <textarea disabled={busy} className="field" rows={3} value={t.description} onChange={(e) => setT({ ...t, description: e.target.value })} />
+          <span className="hint block">顯示在市集，也是主管決定派什麼工作給這位顧問的依據。</span>
         </label>
         <label className="block">
-          <span className="text-sm text-muted">System prompt：你的工作方法與 SOP</span>
-          <textarea disabled={busy} className={`${input} font-mono text-sm`} rows={12} value={t.system_prompt} onChange={(e) => setT({ ...t, system_prompt: e.target.value })} />
+          <span className="label">System prompt</span>
+          <textarea disabled={busy} className="field min-h-72 font-mono text-sm" rows={12} value={t.system_prompt} onChange={(e) => setT({ ...t, system_prompt: e.target.value })} />
+          <span className="hint block">你的工作方法與 SOP。使用者看不到這段。</span>
         </label>
       </section>
 
-      <section>
+      <section className="panel p-5">
         <h2 className="font-display text-xl">Skill</h2>
-        <p className="text-sm text-muted">上傳一個 zip，裡面每個資料夾放一份 SKILL.md（Claude Code 的 .claude/skills 資料夾直接壓縮即可）。</p>
+        <p className="mt-1 text-sm text-muted">上傳一個 zip，裡面每個資料夾放一份 SKILL.md（Claude Code 的 .claude/skills 資料夾直接壓縮即可）。</p>
         <FileButton label="上傳 skill zip" accept=".zip,application/zip" busy={busy} uploading={uploading} className="mt-3" onFile={(f) => void uploadZip(f)} />
-        {t.skills.length > 0 && (
-          <ul className="mt-3 space-y-1 text-sm">
-            {t.skills.map((s) => <li key={s.name}><span className="font-medium">{s.name}</span>：{s.description}</li>)}
+        {t.skills.length > 0 ? (
+          <ul className="mt-3 space-y-2">
+            {t.skills.map((s) => (
+              <li key={s.name} className="rounded border border-line p-3">
+                <div className="font-medium">{s.name}</div>
+                <div className="text-sm text-muted">{s.description}</div>
+              </li>
+            ))}
           </ul>
+        ) : (
+          <p className="hint mt-3">還沒有 skill。沒有也能上架，顧問只靠 system prompt 工作。</p>
         )}
       </section>
 
-      <section>
+      <section className="panel p-5">
         <h2 className="font-display text-xl">工具（MCP）</h2>
-        <p className="text-sm text-muted">需要金鑰的工具，租用的人會在加入時填自己的金鑰。</p>
+        <p className="mt-1 text-sm text-muted">需要金鑰的工具，租用的人會在加入時填自己的金鑰。</p>
         <div className="mt-3 space-y-4">
           {mcp.map((d, i) => {
             const update = (patch: Partial<McpDraft>) => setMcp(mcp.map((x, j) => (j === i ? { ...x, ...patch } : x)));
             return (
               <fieldset key={i} className="space-y-3 rounded border border-line bg-surface p-4">
+                <legend className="px-1 text-sm font-medium">工具 {i + 1}</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block"><span className="text-sm text-muted">名稱（英數字）</span>
-                    <input disabled={busy} className={input} value={d.name} onChange={(e) => update({ name: e.target.value })} /></label>
-                  <label className="block"><span className="text-sm text-muted">連線方式</span>
-                    <select disabled={busy} className={input} value={d.transport} onChange={(e) => update({ transport: e.target.value as McpDraft['transport'] })}>
+                  <label className="block"><span className="label">名稱（英數字）</span>
+                    <input disabled={busy} className="field" value={d.name} onChange={(e) => update({ name: e.target.value })} /></label>
+                  <label className="block"><span className="label">連線方式</span>
+                    <select disabled={busy} className="field" value={d.transport} onChange={(e) => update({ transport: e.target.value as McpDraft['transport'] })}>
                       <option value="stdio">在 agent 電腦上啟動（stdio）</option>
                       <option value="http">連到遠端網址（HTTP）</option>
                     </select></label>
                 </div>
                 {d.transport === 'stdio' ? (
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block"><span className="text-sm text-muted">啟動指令</span>
-                      <input disabled={busy} className={input} placeholder="npx" value={d.command} onChange={(e) => update({ command: e.target.value })} /></label>
-                    <label className="block"><span className="text-sm text-muted">參數（空白分隔）</span>
-                      <input disabled={busy} className={input} placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
+                    <label className="block"><span className="label">啟動指令</span>
+                      <input disabled={busy} className="field" placeholder="npx" value={d.command} onChange={(e) => update({ command: e.target.value })} /></label>
+                    <label className="block"><span className="label">參數（空白分隔）</span>
+                      <input disabled={busy} className="field" placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
                   </div>
                 ) : (
                   <>
-                    <label className="block"><span className="text-sm text-muted">網址</span>
-                      <input disabled={busy} className={input} placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} /></label>
-                    <label className="block"><span className="text-sm text-muted">Headers（每行一個，例如 Authorization: Bearer {'${API_KEY}'}）</span>
-                      <textarea disabled={busy} className={input} rows={2} value={d.headers} onChange={(e) => update({ headers: e.target.value })} /></label>
+                    <label className="block"><span className="label">網址</span>
+                      <input disabled={busy} className="field" placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} /></label>
+                    <label className="block"><span className="label">Headers（每行一個，例如 Authorization: Bearer {'${API_KEY}'}）</span>
+                      <textarea disabled={busy} className="field" rows={2} value={d.headers} onChange={(e) => update({ headers: e.target.value })} /></label>
                   </>
                 )}
-                <label className="block"><span className="text-sm text-muted">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
-                  <input disabled={busy} className={input} value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
-                <button type="button" onClick={() => setMcp(mcp.filter((_, j) => j !== i))} className="text-sm text-seal underline">移除這個工具</button>
+                <label className="block"><span className="label">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
+                  <input disabled={busy} className="field" value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
+                <button type="button" onClick={() => setMcp(mcp.filter((_, j) => j !== i))} className="link text-sm text-seal hover:text-seal">移除這個工具</button>
               </fieldset>
             );
           })}
-          <button type="button" onClick={() => setMcp([...mcp, { ...emptyDraft }])} className="rounded border border-line px-3 py-1 hover:border-ink">新增工具</button>
+          <button type="button" onClick={() => setMcp([...mcp, { ...emptyDraft }])} className="btn btn-secondary">新增工具</button>
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
-        <button onClick={save} disabled={busy} className="btn btn-secondary">儲存</button>
-        <button onClick={publish} disabled={busy} className="btn btn-primary">
-          {t.status === 'published' ? '儲存並更新上架內容' : '儲存並上架'}
-        </button>
-        {t.status === 'published' && <Link href={`/templates/${t.id}`} className="text-brand underline">看市集上的樣子</Link>}
+      <div className="sticky bottom-0 -mx-4 border-t border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
         {message && (
-          <p role={message.kind === 'error' ? 'alert' : 'status'} className={`w-full whitespace-pre-line text-sm ${message.kind === 'error' ? 'text-seal' : 'text-muted'}`}>
+          <p role={message.kind === 'error' ? 'alert' : 'status'} className={`notice mb-3 whitespace-pre-line ${message.kind === 'error' ? 'notice-error' : 'notice-info'}`}>
             {message.text}
           </p>
         )}
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={save} disabled={busy} className="btn btn-secondary">儲存</button>
+          <button onClick={publish} disabled={busy} className="btn btn-primary">
+            {t.status === 'published' ? '儲存並更新上架內容' : '儲存並上架'}
+          </button>
+          {t.status === 'published' && <Link href={`/templates/${t.id}`} className="link ml-auto text-sm">看市集上的樣子</Link>}
+        </div>
       </div>
     </div>
   );
