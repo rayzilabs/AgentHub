@@ -48,6 +48,16 @@ export async function syncSkills(
   await writeFile(path.join(dir, SKILLS_MARKER), instance.skills_zip_path);
 }
 
+/** 讀不到或損毀的同步紀錄都當成空的，等於重新下載全部檔案 */
+async function readSyncState(statePath: string): Promise<Record<string, string>> {
+  try {
+    const state: unknown = JSON.parse(await readFile(statePath, 'utf8'));
+    return state && typeof state === 'object' && !Array.isArray(state) ? (state as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: string): Promise<string[]> {
   await mkdir(sharedRoot, { recursive: true });
   const bucket = db.storage.from('project-files');
@@ -56,7 +66,7 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
   const objects = data.filter((o) => o.id !== null);
 
   const statePath = path.join(sharedRoot, SHARED_STATE);
-  const previous: Record<string, string> = JSON.parse(await readFile(statePath, 'utf8').catch(() => '{}'));
+  const previous = await readSyncState(statePath);
   const next: Record<string, string> = {};
 
   for (const o of objects) {

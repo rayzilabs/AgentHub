@@ -63,8 +63,11 @@ export async function loadHistory(db: Db, threadId: string, limit = 50): Promise
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
-  return data
-    .reverse()
+  const rows = data.reverse();
+  // 截斷後的視窗可能從 assistant 回覆開始，對話歷史必須從使用者發言開始
+  const firstUser = rows.findIndex((m) => m.kind === 'user');
+  return rows
+    .slice(firstUser === -1 ? rows.length : firstUser)
     .map((m): ModelMessage => (m.kind === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', content: m.content }));
 }
 

@@ -85,6 +85,18 @@ describe('syncSharedFiles', () => {
     expect(await exists(path.join(sharedRoot, 'b.txt'))).toBe(false);
   });
 
+  it('同步紀錄檔損毀時當作沒有紀錄，重新下載全部檔案', async () => {
+    const { sharedRoot } = await tmpRoots();
+    const projectId = randomUUID();
+    await db.storage.from('project-files').upload(`${projectId}/a.txt`, 'A1', { contentType: 'text/plain' });
+    await syncSharedFiles(db, projectId, sharedRoot);
+    await writeFile(path.join(sharedRoot, 'a.txt'), '本機被改掉');
+    await writeFile(path.join(sharedRoot, '.sync.json'), '{壞掉的 json');
+
+    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual(['a.txt']);
+    expect(await readFile(path.join(sharedRoot, 'a.txt'), 'utf8')).toBe('A1');
+  });
+
   it('專案沒有檔案時回傳空陣列', async () => {
     const { sharedRoot } = await tmpRoots();
     expect(await syncSharedFiles(db, randomUUID(), sharedRoot)).toEqual([]);

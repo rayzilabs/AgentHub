@@ -45,6 +45,7 @@ export async function connectMcpServers(
   secretsByServer: Record<string, Record<string, string>>,
   cwd: string,
   connect: typeof createMCPClient = createMCPClient,
+  timeoutMs = MCP_CONNECT_TIMEOUT_MS,
 ): Promise<McpHandle> {
   const clients: McpClient[] = [];
   const warnings: string[] = [];
@@ -53,9 +54,14 @@ export async function connectMcpServers(
   for (const server of servers) {
     try {
       const transport = transportFor(server, secretsByServer[server.name] ?? {}, cwd);
-      const client = await withTimeout(connect({ transport }), MCP_CONNECT_TIMEOUT_MS, `MCP「${server.name}」`);
+      const pending = connect({ transport });
+      const client = await withTimeout(pending, timeoutMs, `MCP「${server.name}」`).catch((e: unknown) => {
+        // 逾時後才連上的 client 已經沒人管，連上時直接關掉
+        pending.then((c) => c.close()).catch(() => undefined);
+        throw e;
+      });
       clients.push(client);
-      const serverTools = await withTimeout(client.tools(), MCP_CONNECT_TIMEOUT_MS, `MCP「${server.name}」`);
+      const serverTools = await withTimeout(client.tools(), timeoutMs, `MCP「${server.name}」`);
       for (const [name, definition] of Object.entries(serverTools)) {
         tools[sanitizeToolName(`${server.name}__${name}`)] = definition as ToolSet[string];
       }

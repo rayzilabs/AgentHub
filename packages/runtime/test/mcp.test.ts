@@ -74,4 +74,19 @@ describe('connectMcpServers', () => {
       await handle.close();
     }
   });
+
+  it('連線逾時後才連上的 client 會被關掉，不會外洩', async () => {
+    let closed = false;
+    const slowConnect = (async () => {
+      await new Promise((r) => setTimeout(r, 100));
+      return { tools: async () => ({}), close: async () => { closed = true; } };
+    }) as unknown as typeof createMCPClient;
+    const handle = await connectMcpServers(
+      [{ name: 'slow', transport: 'http', url: 'https://mcp.example.com' }], {}, '/tmp', slowConnect, 20,
+    );
+    expect(handle.warnings[0]).toContain('MCP「slow」目前無法使用');
+    expect(handle.warnings[0]).toContain('沒有回應');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(closed).toBe(true);
+  });
 });

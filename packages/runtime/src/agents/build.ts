@@ -68,41 +68,47 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
   await mkdir(workDir, { recursive: true });
 
   const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir);
-  const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
-  const instructions = buildConsultantInstructions({
-    instance: ctx.instance,
-    workDir,
-    skillsDir: skillsDir(ctx.config.AGENTS_ROOT, ctx.instance.id),
-    sharedRoot: ctx.config.SHARED_ROOT,
-    sharedFiles: ctx.sharedFiles,
-    memories,
-    mcpWarnings: mcp.warnings,
-  });
+  try {
+    const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
+    const instructions = buildConsultantInstructions({
+      instance: ctx.instance,
+      workDir,
+      skillsDir: skillsDir(ctx.config.AGENTS_ROOT, ctx.instance.id),
+      sharedRoot: ctx.config.SHARED_ROOT,
+      sharedFiles: ctx.sharedFiles,
+      memories,
+      mcpWarnings: mcp.warnings,
+    });
 
-  const tools: ToolSet = {
-    bash: bashTool(workDir),
-    read_file: readFileTool(workDir),
-    write_file: writeFileTool(workDir),
-    ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),
-    ...mcp.tools,
-  };
+    const tools: ToolSet = {
+      bash: bashTool(workDir),
+      read_file: readFileTool(workDir),
+      write_file: writeFileTool(workDir),
+      ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),
+      ...mcp.tools,
+    };
 
-  const agent = new ToolLoopAgent({
-    model: ctx.model,
-    instructions,
-    tools,
-    stopWhen: stepCountIs(MAX_STEPS),
-    maxRetries: 3,
-    onStepEnd: ctx.onStepEnd,
-  });
+    const agent = new ToolLoopAgent({
+      model: ctx.model,
+      instructions,
+      tools,
+      stopWhen: stepCountIs(MAX_STEPS),
+      maxRetries: 3,
+      onStepEnd: ctx.onStepEnd,
+    });
 
-  return {
-    instructions,
-    warnings: mcp.warnings,
-    close: mcp.close,
-    streamUI: async ({ messages, abortSignal }) => {
-      const result = await agent.stream({ messages, abortSignal });
-      return withWarnings(result.toUIMessageStream({ generateMessageId: generateId, onError: errorText }), mcp.warnings);
-    },
-  };
+    return {
+      instructions,
+      warnings: mcp.warnings,
+      close: mcp.close,
+      streamUI: async ({ messages, abortSignal }) => {
+        const result = await agent.stream({ messages, abortSignal });
+        return withWarnings(result.toUIMessageStream({ generateMessageId: generateId, onError: errorText }), mcp.warnings);
+      },
+    };
+  } catch (e) {
+    // 組裝失敗時 MCP 連線（含 stdio 子行程）沒有人會關，先關掉再往上丟
+    await mcp.close();
+    throw e;
+  }
 }

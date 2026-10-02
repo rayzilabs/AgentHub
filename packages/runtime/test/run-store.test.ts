@@ -66,6 +66,15 @@ describe('run-store', () => {
     ]);
   });
 
+  it('loadHistory：截斷後開頭若是 assistant 訊息就丟掉，從 user 開始', async () => {
+    const { threadId } = await setup();
+    const runId = await createRun(db, threadId);
+    await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: '問題一' });
+    await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'final', content: '回答一' });
+    await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: '問題二' });
+    expect(await loadHistory(db, threadId, 2)).toEqual([{ role: 'user', content: '問題二' }]);
+  });
+
   it('failRunningRuns：只把本專案 running 的 run 改成 failed', async () => {
     const a = await setup();
     const b = await setup();

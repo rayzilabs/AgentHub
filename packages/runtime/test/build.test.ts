@@ -1,13 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readUIMessageStream } from 'ai';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildConsultant } from '../src/agents/build';
+import type { Db } from '../src/db';
 import { buildConsultantInstructions } from '../src/agents/prompts';
 import { usageRow } from '../src/usage';
 import type { AgentInstance } from '../src/types';
 import { seedConsultant, seedProject, seedUser, testDb, tmpRoots } from './helpers';
 import { mockModel, promptText, textTurn } from './mock-model';
+
+// 包一層 connectMcpServers，記錄 MCP 連線有沒有被關閉
+const mcpCloses = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../src/mcp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/mcp')>();
+  return {
+    ...actual,
+    connectMcpServers: async (...args: Parameters<typeof actual.connectMcpServers>) => {
+      const handle = await actual.connectMcpServers(...args);
+      return { ...handle, close: async () => { mcpCloses.count++; await handle.close(); } };
+    },
+  };
+});
 
 const db = testDb();
 const fixture = fileURLToPath(new URL('./fixtures/echo-mcp.mjs', import.meta.url));
@@ -97,5 +111,19 @@ describe('buildConsultant', () => {
     } finally {
       await built.close();
     }
+  });
+
+  it('MCP 連上之後組裝失敗：先關掉 MCP 連線再丟出錯誤', async () => {
+    const roots = await tmpRoots();
+    const brokenDb = { from: () => { throw new Error('資料庫掛了'); } } as unknown as Db;
+    const before = mcpCloses.count;
+    await expect(buildConsultant({
+      db: brokenDb, model: mockModel(),
+      config: { PROJECT_ID: randomUUID(), AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot },
+      instance: instance({ mcp_servers: [{ name: 'echo', transport: 'stdio', command: process.execPath, args: [fixture] }] }),
+      sharedFiles: [],
+      secrets: {},
+    })).rejects.toThrow('資料庫掛了');
+    expect(mcpCloses.count).toBe(before + 1);
   });
 });
