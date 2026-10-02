@@ -47,6 +47,7 @@ export async function seedThread(db: Db, projectId: string): Promise<string> {
 export type ConsultantFields = {
   template_id?: string | null;
   name?: string;
+  description?: string;
   system_prompt?: string;
   skills_zip_path?: string | null;
   skills?: SkillMeta[];
@@ -56,7 +57,20 @@ export type ConsultantFields = {
 export async function seedConsultant(db: Db, projectId: string, fields: ConsultantFields = {}): Promise<string> {
   const { data, error } = await db
     .from('agent_instances')
-    .insert({ project_id: projectId, role: 'consultant', name: '法務顧問', system_prompt: '你是法務顧問。', ...fields })
+    .insert({
+      project_id: projectId, role: 'consultant', name: '法務顧問', description: '處理法律問題',
+      system_prompt: '你是法務顧問。', ...fields,
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+
+export async function seedManager(db: Db, projectId: string): Promise<string> {
+  const { data, error } = await db
+    .from('agent_instances')
+    .insert({ project_id: projectId, role: 'manager', name: '主管', description: '平台內建主管' })
     .select('id')
     .single();
   if (error) throw error;

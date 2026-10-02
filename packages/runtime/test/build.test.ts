@@ -29,7 +29,7 @@ const fixture = fileURLToPath(new URL('./fixtures/echo-mcp.mjs', import.meta.url
 function instance(fields: Partial<AgentInstance> = {}): AgentInstance {
   return {
     id: randomUUID(), project_id: randomUUID(), template_id: randomUUID(), creator_id: randomUUID(),
-    role: 'consultant', name: '法務顧問', system_prompt: '你是法務顧問。',
+    role: 'consultant', name: '法務顧問', description: '處理法律問題', system_prompt: '你是法務顧問。',
     skills_zip_path: null, skills: [], mcp_servers: [], ...fields,
   };
 }

@@ -17,6 +17,7 @@ export type AgentInstance = {
   creator_id: string | null;
   role: 'consultant' | 'manager';
   name: string;
+  description: string;
   system_prompt: string;
   skills_zip_path: string | null;
   skills: SkillMeta[];

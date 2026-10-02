@@ -4,7 +4,7 @@ import type { AgentInstance, SecretRow } from './types';
 export async function loadInstances(db: Db, projectId: string): Promise<AgentInstance[]> {
   const { data, error } = await db
     .from('agent_instances')
-    .select('id, project_id, template_id, role, name, system_prompt, skills_zip_path, skills, mcp_servers, template:agent_templates(creator_id)')
+    .select('id, project_id, template_id, role, name, description, system_prompt, skills_zip_path, skills, mcp_servers, template:agent_templates(creator_id)')
     .eq('project_id', projectId)
     .order('created_at', { ascending: true });
   if (error) throw error;

@@ -10,6 +10,7 @@ describe('project-store', () => {
     const renterId = await seedUser(db);
     const templateId = await seedTemplate(db, creatorId, {
       name: '財務顧問',
+      description: '估值專家',
       skills: [{ name: 'dcf', description: '估值', path: 'dcf' }],
       mcp_servers: [{ name: 'finmind', transport: 'stdio', command: 'npx', args: ['finmind-mcp'], required_secrets: [{ key: 'TOKEN' }] }],
     });
@@ -27,6 +28,7 @@ describe('project-store', () => {
       id: instanceId,
       role: 'consultant',
       name: '財務顧問',
+      description: '估值專家',
       template_id: templateId,
       creator_id: creatorId,
       skills: [{ name: 'dcf', description: '估值', path: 'dcf' }],
