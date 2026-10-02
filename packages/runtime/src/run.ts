@@ -1,5 +1,6 @@
 import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessageChunk } from 'ai';
-import { buildConsultant, type BuiltAgent } from './agents/build';
+import { buildConsultant, buildManager, type BuiltAgent } from './agents/build';
+import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
 import type { Db } from './db';
 import { errorText } from './errors';
@@ -21,24 +22,46 @@ export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeout
 
 type PreparedRoot = { rootId: string; streamUI: BuiltAgent['streamUI']; close: () => Promise<void> };
 
-async function prepareRootAgent(deps: RunDeps, runId: string): Promise<PreparedRoot> {
+async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string): Promise<PreparedRoot> {
   const { db, config, model } = deps;
   const instances = await loadInstances(db, config.PROJECT_ID);
   const consultants = instances.filter((i) => i.role === 'consultant');
   if (consultants.length === 0) throw new Error('專案裡還沒有任何顧問');
-  if (consultants.length > 1) throw new Error('多顧問模式尚未實作');
 
   const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT);
   for (const i of consultants) await syncSkills(db, config.AGENTS_ROOT, i);
   const secrets = await loadSecrets(db, config.PROJECT_ID);
 
-  const root = consultants[0];
-  const built = await buildConsultant({
-    db, model, config, instance: root, sharedFiles,
-    secrets: groupSecrets(secrets, root.id),
-    onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
+  if (consultants.length === 1) {
+    const root = consultants[0];
+    const built = await buildConsultant({
+      db, model, config, instance: root, sharedFiles,
+      secrets: groupSecrets(secrets, root.id),
+      onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
+    });
+    return { rootId: root.id, streamUI: built.streamUI, close: built.close };
+  }
+
+  const manager = instances.find((i) => i.role === 'manager');
+  if (!manager) throw new Error('找不到主管');
+
+  const record: RecordSpeech = async (instance, message, round) => {
+    await insertMessage(db, {
+      thread_id: threadId,
+      run_id: runId,
+      speaker_instance_id: instance.id,
+      kind: round === null ? 'delegation' : 'discussion',
+      round,
+      content: textOf(message),
+      tool_events: toolEvents(message),
+    });
+  };
+  const built = await buildManager({
+    db, model, config, manager, consultants, sharedFiles, record,
+    runner: createConsultantRunner({ db, model, config, runId, sharedFiles, secrets }),
+    onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: manager }),
   });
-  return { rootId: root.id, streamUI: built.streamUI, close: built.close };
+  return { rootId: manager.id, streamUI: built.streamUI, close: built.close };
 }
 
 /** 包住串流，讓 run 逾時時能從上游直接收尾：tee 出去的兩邊（瀏覽器與伺服器）都會結束 */
@@ -107,7 +130,7 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
       thread_id: req.threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: req.text,
       ui_message: { id: generateId(), role: 'user', parts: [{ type: 'text', text: req.text }] },
     });
-    const root = await prepareRootAgent(deps, runId);
+    const root = await prepareRootAgent(deps, runId, req.threadId);
     closeAgent = root.close;
     rootId = root.rootId;
     uiStream = await root.streamUI({

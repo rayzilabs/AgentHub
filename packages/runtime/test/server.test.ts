@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server';
 import type { Db } from '../src/db';
 import {
-  seedConsultant, seedProject, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
+  seedConsultant, seedManager, seedProject, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
   uploadSkillsZip, waitFor, type ConsultantFields,
 } from './helpers';
 import {
@@ -231,5 +231,73 @@ describe('POST /chat', () => {
     expect(res.status).toBe(500);
     const run = await waitForRunDone(db, env.threadId);
     expect(run).toMatchObject({ status: 'failed', error: '專案裡還沒有任何顧問' });
+  });
+});
+
+describe('POST /chat：多顧問', () => {
+  async function seedTeam() {
+    const env = await seedEnv({ name: '法務顧問', description: '契約' });
+    const engId = await seedConsultant(db, env.projectId, { name: '工程顧問', description: '系統架構' });
+    const managerId = await seedManager(db, env.projectId);
+    return { ...env, legalId: env.consultantId, engId, managerId };
+  }
+
+  it('派工：顧問發言即時串流、寫入 delegation，主管拿到結果後回覆', async () => {
+    const env = await seedTeam();
+    const model = mockModel(
+      toolTurn('assign_task', { consultant_id: env.legalId, task: '審查合約第 5 條' }),
+      textTurn('法務意見：第 5 條有違約金風險'),
+      textTurn('總結：第 5 條要修改'),
+    );
+    const res = await post(app(env, model), { thread_id: env.threadId, text: '幫我看合約' });
+    expect(await res.text()).toContain('法務意見：第 5 條有違約金風險');
+
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run.status).toBe('succeeded');
+    const msgs = await messagesOf(env.threadId);
+    expect(msgs.map((m) => m.kind)).toEqual(['user', 'delegation', 'final']);
+    expect(msgs[1]).toMatchObject({ speaker_instance_id: env.legalId, content: '法務意見：第 5 條有違約金風險', round: null });
+    expect(msgs[2]).toMatchObject({ speaker_instance_id: env.managerId, content: '總結：第 5 條要修改' });
+    expect(promptText(model, 2)).toContain('法務意見：第 5 條有違約金風險');
+
+    const usageRows = await waitFor(async () => {
+      const { data } = await db.from('usage_events').select('instance_id').eq('run_id', run.id);
+      return data && data.length >= 3 ? data : undefined;
+    });
+    expect(new Set(usageRows.map((r) => r.instance_id))).toEqual(new Set([env.managerId, env.legalId]));
+  });
+
+  it('討論：第 1 輪平行、第 2 輪全部同意後結束，主管拿到完整紀錄', async () => {
+    const env = await seedTeam();
+    const model = mockModel(
+      toolTurn('convene_discussion', { topic: '要不要本週上線', participant_ids: [env.legalId, env.engId], max_rounds: 3 }),
+      textTurn('第一輪意見'),
+      textTurn('第一輪意見'),
+      textTurn('法務：可以上線\n立場：同意'),
+      textTurn('工程：可以上線\n立場：同意'),
+      textTurn('## 各面向建議\n...\n## 共識方案\n本週上線\n## 仍有分歧\n無'),
+    );
+    const res = await post(app(env, model), { thread_id: env.threadId, text: '要不要本週上線？' });
+    expect(await res.text()).toContain('工程：可以上線');
+
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run.status).toBe('succeeded');
+    const msgs = await messagesOf(env.threadId);
+    const discussion = msgs.filter((m) => m.kind === 'discussion');
+    expect(discussion.map((m) => m.round).sort()).toEqual([1, 1, 2, 2]);
+    expect(discussion.filter((m) => m.round === 2).map((m) => m.speaker_instance_id)).toEqual([env.legalId, env.engId]);
+    expect(msgs.at(-1)).toMatchObject({ kind: 'final', speaker_instance_id: env.managerId });
+    expect(msgs.at(-1).content).toContain('## 仍有分歧');
+    const managerSecondPrompt = promptText(model, 5);
+    expect(managerSecondPrompt).toContain('法務：可以上線');
+    expect(managerSecondPrompt).toContain('【第 2 輪｜工程顧問】');
+  });
+
+  it('2 位顧問但沒有主管資料列：回 500「找不到主管」', async () => {
+    const env = await seedEnv();
+    await seedConsultant(db, env.projectId, { name: '第二位' });
+    const res = await post(app(env, mockModel()), { thread_id: env.threadId, text: '問題' });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: '找不到主管' });
   });
 });
