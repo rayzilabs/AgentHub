@@ -26,7 +26,7 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
         <p className="mt-4 max-w-2xl whitespace-pre-line">{template.description || '（創作者還沒寫介紹）'}</p>
       </header>
 
-      <aside className="panel h-fit p-5 lg:sticky lg:top-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+      <aside className="panel h-fit p-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:col-start-2 lg:row-span-2 lg:row-start-1">
         <h2 className="mb-3 font-display text-xl">加入你的專案</h2>
         {template.status !== 'published' ? (
           <p className="text-muted">這是你的草稿，上架後才能加入專案。<Link href={`/creator/${template.id}`} className="link">回去編輯</Link></p>
@@ -40,14 +40,16 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
       <section className="min-w-0 lg:col-start-1">
         <h2 className="font-display text-xl">這位顧問會的事</h2>
         {template.skills.length === 0 && <p className="hint">沒有額外的 skill，只靠創作者寫的工作方法。</p>}
-        <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-          {template.skills.map((s) => (
-            <li key={s.name} className="panel p-4">
-              <div className="font-medium">{s.name}</div>
-              <div className="mt-1 text-sm text-muted">{s.description}</div>
-            </li>
-          ))}
-        </ul>
+        {template.skills.length > 0 && (
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {template.skills.map((s) => (
+              <li key={s.name} className="panel min-w-0 p-4 [overflow-wrap:anywhere]">
+                <div className="font-medium">{s.name}</div>
+                <div className="mt-1 text-sm text-muted">{s.description}</div>
+              </li>
+            ))}
+          </ul>
+        )}
 
         {template.mcp_servers.length > 0 && (
           <>

@@ -40,12 +40,12 @@ export default async function Marketplace() {
         ) : (
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {templates.map((t) => (
-              <li key={t.id}>
+              <li key={t.id} className="min-w-0">
                 <Link href={`/templates/${t.id}`} className="panel flex h-full flex-col p-5 hover:border-brand">
                   <div className="text-sm text-brand">{t.category || '未分類'}</div>
-                  <div className="mt-1 font-display text-xl">{t.name}</div>
+                  <div className="mt-1 font-display text-xl [overflow-wrap:anywhere]">{t.name}</div>
                   <div className="text-sm text-muted">由 {t.creator_name || '匿名創作者'} 製作</div>
-                  <p className="mt-3 line-clamp-3 flex-1 text-muted">{t.description || '（創作者還沒寫介紹）'}</p>
+                  <p className="mt-3 flex-1 text-muted [overflow-wrap:anywhere]">{t.description || '（創作者還沒寫介紹）'}</p>
                   <div className="mt-4 flex flex-wrap gap-2 text-sm text-muted">
                     {t.skills.slice(0, 3).map((s) => <span key={s.name} className="chip">{s.name}</span>)}
                     {t.skills.length > 3 && <span className="chip">+{t.skills.length - 3}</span>}
