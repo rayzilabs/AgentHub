@@ -5,10 +5,17 @@ export type StreamOutcome = { final: UIMessage | undefined; failure: string | un
 
 export function textOf(m: UIMessage | undefined): string {
   if (!m) return '';
-  return m.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
+  return m.parts.flatMap((p) => (p.type === 'text' && p.text ? [p.text] : [])).join('\n\n');
 }
 
-export function toolEvents(m: UIMessage): { tool: string; state: string }[] {
+/** 只保留文字部分的訊息（工具輸出裡不放顧問的工具呼叫，避免串流與存下來的 ui_message 過大） */
+export function textOnly(m: UIMessage): UIMessage {
+  return { id: m.id, role: m.role, parts: m.parts.filter((p) => p.type === 'text') };
+}
+
+export type ToolEvent = { tool: string; state: string };
+
+export function toolEvents(m: UIMessage): ToolEvent[] {
   return m.parts.flatMap((p) => {
     if (p.type === 'dynamic-tool') return [{ tool: p.toolName, state: p.state }];
     if (p.type.startsWith('tool-')) return [{ tool: p.type.slice('tool-'.length), state: (p as { state: string }).state }];

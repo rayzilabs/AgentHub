@@ -1,6 +1,6 @@
 import type { UIMessage, UIMessageChunk } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { consumeToEnd, hasContent, readSnapshots, textOf, toolEvents } from '../src/ui-stream';
+import { consumeToEnd, hasContent, readSnapshots, textOf, textOnly, toolEvents } from '../src/ui-stream';
 
 function chunks(list: UIMessageChunk[]): ReadableStream<UIMessageChunk> {
   return new ReadableStream({
@@ -52,11 +52,26 @@ describe('ui-stream', () => {
         { type: 'text', text: 'B' },
       ],
     } as unknown as UIMessage;
-    expect(textOf(m)).toBe('AB');
+    expect(textOf(m)).toBe('A\n\nB');
     expect(textOf(undefined)).toBe('');
     expect(toolEvents(m)).toEqual([{ tool: 'write_file', state: 'output-available' }]);
     expect(hasContent(m)).toBe(true);
     expect(hasContent({ id: 'y', role: 'assistant', parts: [] } as UIMessage)).toBe(false);
     expect(hasContent(undefined)).toBe(false);
+  });
+
+  it('textOnly 只留文字部分', () => {
+    const m = {
+      id: 'x',
+      role: 'assistant',
+      parts: [
+        { type: 'step-start' },
+        { type: 'text', text: 'A' },
+        { type: 'tool-write_file', toolCallId: 'c1', state: 'output-available', input: {}, output: {} },
+        { type: 'dynamic-tool', toolName: 'mcp__x', toolCallId: 'c2', state: 'input-available', input: {} },
+        { type: 'text', text: 'B' },
+      ],
+    } as unknown as UIMessage;
+    expect(textOnly(m)).toEqual({ id: 'x', role: 'assistant', parts: [{ type: 'text', text: 'A' }, { type: 'text', text: 'B' }] });
   });
 });
