@@ -7,7 +7,9 @@ import {
   seedConsultant, seedProject, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
   uploadSkillsZip, waitFor, type ConsultantFields,
 } from './helpers';
-import { failingModel, mockModel, promptText, textTurn, toolTurn } from './mock-model';
+import {
+  emptyTurn, errorAfterTextTurn, failingModel, hangingModel, mockModel, promptText, textTurn, toolTurn,
+} from './mock-model';
 import type { LanguageModel } from 'ai';
 
 const db = testDb();
@@ -44,8 +46,8 @@ async function messagesOf(threadId: string) {
   return data!;
 }
 
-function app(env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel) {
-  return createApp({ db, model, config: env.config });
+function app(env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, runTimeoutMs?: number) {
+  return createApp({ db, model, config: env.config, runTimeoutMs });
 }
 
 describe('GET /health', () => {
@@ -141,6 +143,43 @@ describe('POST /chat', () => {
     const run = await waitForRunDone(db, env.threadId);
     expect(run.status).toBe('failed');
     expect(run.error).toContain('模型掛了');
+  });
+
+  it('模型串流中途出錯：run 標成 failed，已產生的內容仍存成 final', async () => {
+    const env = await seedEnv();
+    const res = await post(app(env, mockModel(errorAfterTextTurn('已經寫了一半', '中途壞掉'))), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run.status).toBe('failed');
+    expect(run.error).toContain('中途壞掉');
+    const final = (await messagesOf(env.threadId)).find((m) => m.kind === 'final');
+    expect(final.content).toBe('已經寫了一半');
+  });
+
+  it('模型沒有產生任何內容：run 標成 failed，不寫 final', async () => {
+    const env = await seedEnv();
+    await (await post(app(env, mockModel(emptyTurn())), { thread_id: env.threadId, text: '問題' })).text();
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run).toMatchObject({ status: 'failed', error: '模型沒有產生回覆' });
+    expect((await messagesOf(env.threadId)).map((m) => m.kind)).toEqual(['user']);
+  });
+
+  it('模型卡住不回應：超過時間上限後 run 標成 failed，回應串流也會結束', async () => {
+    const env = await seedEnv();
+    const start = Date.now();
+    const res = await post(app(env, hangingModel(), 300), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run).toMatchObject({ status: 'failed', error: 'run 超過 15 分鐘' });
+    expect(Date.now() - start).toBeLessThan(5000);
+  });
+
+  it('超過時間上限而中止：錯誤訊息是逾時，不是一般中止', async () => {
+    const env = await seedEnv();
+    const res = await post(app(env, mockModel(textTurn('一段要講很久很久很久的回答'.repeat(3), 100)), 300), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run).toMatchObject({ status: 'failed', error: 'run 超過 15 分鐘' });
   });
 
   it('MCP 啟動失敗不影響 run，prompt 告知 agent', async () => {

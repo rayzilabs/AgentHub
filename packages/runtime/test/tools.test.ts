@@ -46,6 +46,14 @@ describe('runBash', () => {
     expect(Date.now() - start).toBeLessThan(1500);
   });
 
+  it('逾時時，脫離行程群組的孫行程佔住 stdout 也不會卡住', async () => {
+    const start = Date.now();
+    const r = await runBash(`perl -e 'setpgrp; sleep 5' & echo started`, await workDir(), 300);
+    expect(r.timedOut).toBe(true);
+    expect(r.output).toContain('started');
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+
   it('輸出過長會截斷', async () => {
     const r = await runBash(`head -c 50000 /dev/zero | tr '\\0' a`, await workDir());
     expect(r.output.length).toBeLessThan(MAX_OUTPUT + 100);
