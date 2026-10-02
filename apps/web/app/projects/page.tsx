@@ -15,7 +15,7 @@ export default async function ProjectsPage() {
   const projects = await listProjects(adminDb(), user.id);
   return (
     <div className="py-10">
-      <h1 className="font-display text-[28px]">我的專案</h1>
+      <h1 className="font-display text-2xl">我的專案</h1>
       <p className="mb-6 text-muted">一個專案就是一張工作桌：放資料、請顧問、開對話。</p>
       <NewProjectForm />
       {projects.length === 0 ? (

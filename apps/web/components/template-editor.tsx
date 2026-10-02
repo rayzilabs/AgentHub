@@ -175,8 +175,8 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
       </section>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-line pt-6">
-        <button onClick={save} disabled={busy} className="rounded border border-line px-4 py-2 hover:border-ink disabled:opacity-60">儲存</button>
-        <button onClick={publish} disabled={busy} className="rounded bg-brand px-4 py-2 text-white disabled:opacity-60">
+        <button onClick={save} disabled={busy} className="btn btn-secondary">儲存</button>
+        <button onClick={publish} disabled={busy} className="btn btn-primary">
           {t.status === 'published' ? '儲存並更新上架內容' : '儲存並上架'}
         </button>
         {t.status === 'published' && <Link href={`/templates/${t.id}`} className="text-brand underline">看市集上的樣子</Link>}

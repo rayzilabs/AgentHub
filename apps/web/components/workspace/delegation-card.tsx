@@ -9,8 +9,8 @@ export function DelegationCard({ output, task, color, failedText }: { output?: D
   return (
     <div className="my-3 border-l-4 bg-surface py-3 pl-4 pr-3" style={{ borderColor: color }}>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="font-display text-lg" style={{ color }}>{name}</span>
-        <span className="text-xs text-muted">
+        <span className="font-display text-xl" style={{ color }}>{name}</span>
+        <span className="text-sm text-muted">
           {failedText !== undefined ? '失敗' : !output || output.status === 'working' ? '處理中…' : output.status === 'done' ? '完成' : '失敗'}
         </span>
       </div>

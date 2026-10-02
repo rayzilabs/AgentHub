@@ -15,7 +15,7 @@ export default async function CreatorPage() {
     <div className="py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-[28px]">我上架的 agent</h1>
+          <h1 className="font-display text-2xl">我上架的 agent</h1>
           <p className="text-muted">把你的 SOP、skill 和工具包成一位顧問，上架後別人就能加進他們的專案。</p>
         </div>
         <NewTemplateButton />

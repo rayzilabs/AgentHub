@@ -84,7 +84,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
     <div className="grid gap-8 py-8 lg:grid-cols-[260px_1fr]">
       <aside className="space-y-8">
         <div>
-          <h1 className="font-display text-[28px] leading-tight">{project.name}</h1>
+          <h1 className="font-display text-2xl leading-tight">{project.name}</h1>
           {project.sprite_status === 'provisioning' && (
             <div className="mt-1 text-sm">
               <p className="text-muted">正在準備 agent 的工作電腦，約需一分鐘…</p>

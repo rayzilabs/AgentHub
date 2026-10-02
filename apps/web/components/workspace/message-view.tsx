@@ -23,7 +23,7 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
       {message.parts.map((part, i) => {
         if (part.type === 'text') return <Markdown key={i} text={part.text} />;
         if (part.type === 'data-warning') {
-          return <p key={i} role="status" className="my-1 text-xs text-ochre">{(part as { data: { text: string } }).data.text}</p>;
+          return <p key={i} role="status" className="my-1 text-sm text-ochre">{(part as { data: { text: string } }).data.text}</p>;
         }
         if (!part.type.startsWith('tool-') && part.type !== 'dynamic-tool') return null;
         const tool = part as ToolPart;
@@ -41,7 +41,7 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
         const done = tool.state === 'output-available';
         const failed = tool.state === 'output-error';
         return (
-          <p key={i} className="my-1 text-xs text-muted">
+          <p key={i} className="my-1 text-sm text-muted">
             {failed ? '工具失敗' : done ? '用了工具' : '正在使用工具'}：{TOOL_LABELS[name] ?? name}
           </p>
         );

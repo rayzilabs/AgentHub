@@ -22,7 +22,7 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
     <div className="grid gap-10 py-10 lg:grid-cols-[2fr_1fr]">
       <article>
         <p className="text-sm text-muted">{template.category || '未分類'}，由 {template.creator_name || '匿名創作者'} 製作</p>
-        <h1 className="mt-1 font-display text-[40px] leading-tight">{template.name}</h1>
+        <h1 className="mt-1 font-display text-4xl leading-tight">{template.name}</h1>
         <p className="mt-4 max-w-2xl whitespace-pre-line">{template.description || '（創作者還沒寫介紹）'}</p>
 
         <h2 className="mt-10 font-display text-xl">這位顧問會的事</h2>

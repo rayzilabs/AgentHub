@@ -11,8 +11,8 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
   return (
     <div className="border-l-4 bg-surface py-3 pl-4 pr-3" style={{ borderColor: color }}>
       <div className="flex items-center justify-between gap-3">
-        <span className="font-display text-lg" style={{ color }}>{speech.name}</span>
-        {speech.status === 'speaking' && <span className="text-xs text-muted">發言中…</span>}
+        <span className="font-display text-xl" style={{ color }}>{speech.name}</span>
+        {speech.status === 'speaking' && <span className="text-sm text-muted">發言中…</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
       <ToolList tools={speech.tools} />
@@ -40,7 +40,7 @@ export function DiscussionView({ state, colorOf, failedText }: {
   const rounds = [...new Set(state.speeches.map((s) => s.round))].sort((a, b) => a - b);
   return (
     <section className="my-4 rounded border border-line bg-paper p-4" aria-label="顧問討論">
-      <h3 className="font-display text-lg">顧問討論</h3>
+      <h3 className="font-display text-xl">顧問討論</h3>
       <p className="mt-1 text-sm text-muted">{state.topic}</p>
       {rounds.map((round) => (
         <div key={round} className="mt-4">

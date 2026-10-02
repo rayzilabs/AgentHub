@@ -182,7 +182,7 @@ export function Chat({ threadId, ready, speaker, hasManager, colorOf, onSettled 
             className="w-full resize-none rounded border border-line bg-surface px-3 py-2"
           />
         </label>
-        <button disabled={busy || !ready || !input.trim()} className="self-end rounded bg-brand px-4 py-2 text-white disabled:opacity-60">送出</button>
+        <button disabled={busy || !ready || !input.trim()} className="btn btn-primary self-end">送出</button>
       </form>
     </div>
   );

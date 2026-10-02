@@ -9,14 +9,14 @@ export default async function Marketplace() {
   return (
     <>
       <section className="py-12">
-        <h1 className="max-w-3xl font-display text-[40px] leading-tight">請專業的人，帶著他們的方法來幫你做事</h1>
+        <h1 className="max-w-3xl font-display text-4xl leading-tight">請專業的人，帶著他們的方法來幫你做事</h1>
         <p className="mt-4 max-w-2xl text-muted">
           這裡的每一位顧問，都是律師、會計師、行銷人把自己的 SOP 做成的 agent。把他們加進你的專案，他們會分工、討論，最後給你一份整合過的建議。
         </p>
       </section>
 
       <section aria-labelledby="roster">
-        <h2 id="roster" className="mb-4 font-display text-[28px]">顧問名冊</h2>
+        <h2 id="roster" className="mb-4 font-display text-2xl">顧問名冊</h2>
         {templates.length === 0 ? (
           <p className="rounded border border-dashed border-line bg-surface p-6 text-muted">
             還沒有人上架顧問。你可以在「我上架的 agent」把自己的專業做成第一位。

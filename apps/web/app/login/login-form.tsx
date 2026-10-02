@@ -26,10 +26,10 @@ export function LoginForm({ next }: { next: string }) {
       </label>
       {error && <p role="alert" className="text-sm text-seal">{error}</p>}
       <div className="flex gap-3">
-        <button formAction={signInAction} onClick={() => setLastAction('signIn')} disabled={busy} className="rounded bg-brand px-4 py-2 text-white disabled:opacity-60">
+        <button formAction={signInAction} onClick={() => setLastAction('signIn')} disabled={busy} className="btn btn-primary">
           登入
         </button>
-        <button formAction={signUpAction} onClick={() => setLastAction('signUp')} disabled={busy} className="rounded border border-line px-4 py-2 disabled:opacity-60">
+        <button formAction={signUpAction} onClick={() => setLastAction('signUp')} disabled={busy} className="btn btn-secondary">
           建立帳號
         </button>
       </div>
