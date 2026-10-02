@@ -1,7 +1,4 @@
-import {
-  createUIMessageStreamResponse, generateId, readUIMessageStream,
-  type LanguageModel, type UIMessage, type UIMessageChunk,
-} from 'ai';
+import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessageChunk } from 'ai';
 import { buildConsultant, type BuiltAgent } from './agents/build';
 import type { Config } from './config';
 import type { Db } from './db';
@@ -12,6 +9,7 @@ import {
   assertThreadInProject, createRun, finishRun, insertMessage, loadHistory, type RunResult,
 } from './run-store';
 import { syncSharedFiles, syncSkills } from './sync';
+import { consumeToEnd, hasContent, textOf, toolEvents } from './ui-stream';
 import { usageRecorder } from './usage';
 
 export const RUN_TIMEOUT_MS = 15 * 60_000;
@@ -22,22 +20,6 @@ const NO_REPLY_ERROR = '模型沒有產生回覆';
 export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeoutMs?: number };
 
 type PreparedRoot = { rootId: string; streamUI: BuiltAgent['streamUI']; close: () => Promise<void> };
-
-export function textOf(m: UIMessage): string {
-  return m.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
-}
-
-export function toolEvents(m: UIMessage): { tool: string; state: string }[] {
-  return m.parts.flatMap((p) => {
-    if (p.type === 'dynamic-tool') return [{ tool: p.toolName, state: p.state }];
-    if (p.type.startsWith('tool-')) return [{ tool: p.type.slice('tool-'.length), state: (p as { state: string }).state }];
-    return [];
-  });
-}
-
-function hasContent(m: UIMessage | undefined): m is UIMessage {
-  return !!m && m.parts.some((p) => p.type === 'text' || p.type === 'dynamic-tool' || p.type.startsWith('tool-'));
-}
 
 async function prepareRootAgent(deps: RunDeps, runId: string): Promise<PreparedRoot> {
   const { db, config, model } = deps;
@@ -91,28 +73,6 @@ function stoppable<T>(source: ReadableStream<T>): { stream: ReadableStream<T>; s
     reader.cancel().catch(() => undefined);
   };
   return { stream, stop };
-}
-
-async function consumeToEnd(
-  stream: ReadableStream<UIMessageChunk>,
-): Promise<{ final: UIMessage | undefined; failure: string | undefined }> {
-  let failure: string | undefined;
-  const watched = stream.pipeThrough(
-    new TransformStream<UIMessageChunk, UIMessageChunk>({
-      transform(chunk, controller) {
-        if (chunk.type === 'error') failure = chunk.errorText;
-        if (chunk.type === 'abort') failure ??= 'run 已中止';
-        controller.enqueue(chunk);
-      },
-    }),
-  );
-  let final: UIMessage | undefined;
-  try {
-    for await (const m of readUIMessageStream({ stream: watched })) final = m;
-  } catch (e) {
-    failure ??= errorText(e);
-  }
-  return { final, failure };
 }
 
 export async function startRun(deps: RunDeps, req: { threadId: string; text: string }): Promise<Response> {
