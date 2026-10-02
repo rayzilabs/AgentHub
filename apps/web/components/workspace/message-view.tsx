@@ -11,7 +11,7 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded bg-brand px-4 py-2 text-white">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-brand px-4 py-2.5 text-white sm:max-w-[70%]">
           {message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')}
         </div>
       </div>
@@ -19,11 +19,15 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
   }
   return (
     <div>
-      <div className="mb-1 font-display text-sm text-muted">{speaker}</div>
+      <div className="mb-2 font-display text-base font-bold text-ink">{speaker}</div>
       {message.parts.map((part, i) => {
         if (part.type === 'text') return <Markdown key={i} text={part.text} />;
         if (part.type === 'data-warning') {
-          return <p key={i} role="status" className="my-1 text-sm text-ochre">{(part as { data: { text: string } }).data.text}</p>;
+          return (
+            <p key={i} role="status" className="notice notice-warn my-2">
+              <span className="font-medium text-ochre">提醒</span>　{(part as { data: { text: string } }).data.text}
+            </p>
+          );
         }
         if (!part.type.startsWith('tool-') && part.type !== 'dynamic-tool') return null;
         const tool = part as ToolPart;
@@ -41,9 +45,9 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
         const done = tool.state === 'output-available';
         const failed = tool.state === 'output-error';
         return (
-          <p key={i} className="my-1 text-sm text-muted">
-            {failed ? '工具失敗' : done ? '用了工具' : '正在使用工具'}：{TOOL_LABELS[name] ?? name}
-          </p>
+          <span key={i} className={`chip mb-2 mr-2 ${failed ? 'chip-seal' : ''}`}>
+            {failed ? '工具失敗：' : done ? '用了' : '正在用'}{TOOL_LABELS[name] ?? name}
+          </span>
         );
       })}
     </div>
