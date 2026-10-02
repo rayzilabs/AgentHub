@@ -10,7 +10,9 @@ export function FilePanel({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => api<FileItem[]>(`/api/projects/${projectId}/files`).then(setFiles).catch((e) => setError(e.message)), [projectId]);
+  const load = useCallback(() => api<FileItem[]>(`/api/projects/${projectId}/files`)
+    .then((list) => { setFiles(list); setError(null); })
+    .catch((e) => setError(e.message)), [projectId]);
   useEffect(() => { void load(); }, [load]);
 
   async function upload(file: File) {
