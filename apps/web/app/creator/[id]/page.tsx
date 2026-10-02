@@ -14,10 +14,6 @@ export default async function EditTemplatePage({ params }: { params: Promise<{ i
   if (!template) notFound();
   return (
     <div className="mx-auto max-w-3xl py-10">
-      <div className="mb-6 flex items-center gap-3">
-        <h1 className="font-display text-2xl">編輯顧問</h1>
-        <span className={`chip ${template.status === 'published' ? 'chip-brand' : ''}`}>{template.status === 'published' ? '已上架' : '草稿'}</span>
-      </div>
       <TemplateEditor initial={template} />
     </div>
   );

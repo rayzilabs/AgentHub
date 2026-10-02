@@ -99,7 +99,11 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-4">
+      <div className="flex items-center gap-3">
+        <h1 className="font-display text-2xl">編輯顧問</h1>
+        <span className={`chip ${t.status === 'published' ? 'chip-brand' : ''}`}>{t.status === 'published' ? '已上架' : '草稿'}</span>
+      </div>
       <section className="panel space-y-5 p-5">
         <h2 className="font-display text-xl">基本資料</h2>
         <label className="block">
@@ -184,9 +188,9 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
         </div>
       </section>
 
-      <div className="sticky bottom-0 -mx-4 border-t border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
+      <div className="sticky bottom-0 z-10 -mx-4 border-t border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
         {message && (
-          <p role={message.kind === 'error' ? 'alert' : 'status'} className={`notice mb-3 whitespace-pre-line ${message.kind === 'error' ? 'notice-error' : 'notice-info'}`}>
+          <p role={message.kind === 'error' ? 'alert' : 'status'} className={`notice mb-3 max-h-[40vh] overflow-y-auto whitespace-pre-line ${message.kind === 'error' ? 'notice-error' : 'notice-info'}`}>
             {message.text}
           </p>
         )}

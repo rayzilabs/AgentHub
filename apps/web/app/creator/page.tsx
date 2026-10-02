@@ -36,7 +36,7 @@ export default async function CreatorPage() {
                   <span>{t.skills.length} 個 skill</span>
                 </div>
               </div>
-              <Link href={`/creator/${t.id}`} className="btn btn-secondary btn-sm shrink-0">編輯</Link>
+              <Link href={`/creator/${t.id}`} aria-label={`編輯「${t.name}」`} className="btn btn-secondary btn-sm shrink-0">編輯</Link>
             </li>
           ))}
         </ul>
