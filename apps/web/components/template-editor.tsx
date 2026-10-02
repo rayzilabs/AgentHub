@@ -47,20 +47,26 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function run(label: string, action: () => Promise<TemplateRow>) {
+  async function run(label: string, action: () => Promise<TemplateRow>, apply: (updated: TemplateRow) => void): Promise<boolean> {
     setBusy(true);
     setMessage(null);
     try {
       const updated = await action();
-      setT(updated);
-      setMcp(updated.mcp_servers.map(toDraft));
+      apply(updated);
       setMessage({ kind: 'ok', text: label });
+      return true;
     } catch (e) {
       setMessage({ kind: 'error', text: (e as Error).message });
+      return false;
     } finally {
       setBusy(false);
     }
   }
+
+  const applyAll = (updated: TemplateRow) => {
+    setT(updated);
+    setMcp(updated.mcp_servers.map(toDraft));
+  };
 
   const save = () =>
     run('已儲存', () =>
@@ -71,6 +77,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
           mcp_servers: mcp.map(fromDraft),
         }),
       }),
+      applyAll,
     );
 
   async function uploadZip(file: File) {
@@ -79,12 +86,12 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
       const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'content-type': 'application/zip', 'x-upsert': 'true' } });
       if (!res.ok) throw new Error(`上傳失敗（${res.status}），請再試一次`);
       return api<TemplateRow>(`/api/templates/${t.id}`, { method: 'PATCH', body: JSON.stringify({ process_upload: true }) });
-    });
+    }, (updated) => setT((p) => ({ ...p, skills: updated.skills, skills_zip_path: updated.skills_zip_path })));
   }
 
   const publish = async () => {
-    await save();
-    await run('已上架，現在大家都能在市集看到這位顧問', () => api<TemplateRow>(`/api/templates/${t.id}/publish`, { method: 'POST' }));
+    if (!(await save())) return;
+    await run('已上架，現在大家都能在市集看到這位顧問', () => api<TemplateRow>(`/api/templates/${t.id}/publish`, { method: 'POST' }), applyAll);
   };
 
   const input = 'mt-1 w-full rounded border border-line bg-surface px-3 py-2';
@@ -94,19 +101,19 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
       <section className="space-y-4">
         <label className="block">
           <span className="text-sm text-muted">名稱</span>
-          <input className={input} value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} />
+          <input disabled={busy} className={input} value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} />
         </label>
         <label className="block">
           <span className="text-sm text-muted">分類（例如：法律、財務、行銷）</span>
-          <input className={input} value={t.category} onChange={(e) => setT({ ...t, category: e.target.value })} />
+          <input disabled={busy} className={input} value={t.category} onChange={(e) => setT({ ...t, category: e.target.value })} />
         </label>
         <label className="block">
           <span className="text-sm text-muted">介紹（顯示在市集，也會讓主管知道該把什麼工作交給這位顧問）</span>
-          <textarea className={input} rows={3} value={t.description} onChange={(e) => setT({ ...t, description: e.target.value })} />
+          <textarea disabled={busy} className={input} rows={3} value={t.description} onChange={(e) => setT({ ...t, description: e.target.value })} />
         </label>
         <label className="block">
           <span className="text-sm text-muted">System prompt：你的工作方法與 SOP</span>
-          <textarea className={`${input} font-mono text-sm`} rows={12} value={t.system_prompt} onChange={(e) => setT({ ...t, system_prompt: e.target.value })} />
+          <textarea disabled={busy} className={`${input} font-mono text-sm`} rows={12} value={t.system_prompt} onChange={(e) => setT({ ...t, system_prompt: e.target.value })} />
         </label>
       </section>
 
@@ -132,9 +139,9 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
               <fieldset key={i} className="space-y-3 rounded border border-line bg-surface p-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block"><span className="text-sm text-muted">名稱（英數字）</span>
-                    <input className={input} value={d.name} onChange={(e) => update({ name: e.target.value })} /></label>
+                    <input disabled={busy} className={input} value={d.name} onChange={(e) => update({ name: e.target.value })} /></label>
                   <label className="block"><span className="text-sm text-muted">連線方式</span>
-                    <select className={input} value={d.transport} onChange={(e) => update({ transport: e.target.value as McpDraft['transport'] })}>
+                    <select disabled={busy} className={input} value={d.transport} onChange={(e) => update({ transport: e.target.value as McpDraft['transport'] })}>
                       <option value="stdio">在 agent 電腦上啟動（stdio）</option>
                       <option value="http">連到遠端網址（HTTP）</option>
                     </select></label>
@@ -142,20 +149,20 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                 {d.transport === 'stdio' ? (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block"><span className="text-sm text-muted">啟動指令</span>
-                      <input className={input} placeholder="npx" value={d.command} onChange={(e) => update({ command: e.target.value })} /></label>
+                      <input disabled={busy} className={input} placeholder="npx" value={d.command} onChange={(e) => update({ command: e.target.value })} /></label>
                     <label className="block"><span className="text-sm text-muted">參數（空白分隔）</span>
-                      <input className={input} placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
+                      <input disabled={busy} className={input} placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
                   </div>
                 ) : (
                   <>
                     <label className="block"><span className="text-sm text-muted">網址</span>
-                      <input className={input} placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} /></label>
+                      <input disabled={busy} className={input} placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} /></label>
                     <label className="block"><span className="text-sm text-muted">Headers（每行一個，例如 Authorization: Bearer {'${API_KEY}'}）</span>
-                      <textarea className={input} rows={2} value={d.headers} onChange={(e) => update({ headers: e.target.value })} /></label>
+                      <textarea disabled={busy} className={input} rows={2} value={d.headers} onChange={(e) => update({ headers: e.target.value })} /></label>
                   </>
                 )}
                 <label className="block"><span className="text-sm text-muted">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
-                  <input className={input} value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
+                  <input disabled={busy} className={input} value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
                 <button type="button" onClick={() => setMcp(mcp.filter((_, j) => j !== i))} className="text-sm text-seal underline">移除這個工具</button>
               </fieldset>
             );
