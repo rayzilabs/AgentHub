@@ -85,7 +85,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
 
   return (
     <div className="grid gap-6 py-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-10 lg:py-8">
-      <aside className="min-w-0 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
+      <aside className="min-w-0 lg:sticky lg:top-6 lg:-ml-1 lg:max-h-[calc(100vh-8rem)] lg:self-start lg:overflow-y-auto lg:pb-1 lg:pl-1 lg:pr-1">
         {/* 標題與環境狀態：手機也永遠看得到 */}
         <div>
           <h1 className="font-display text-2xl leading-tight">{project.name}</h1>
@@ -114,7 +114,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
         <button type="button" onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen} aria-controls="workspace-panels"
           className="btn btn-secondary mt-4 w-full justify-between lg:hidden">
           <span>顧問、資料與記憶</span>
-          <span className="text-muted">{panelOpen ? '收起' : '展開'}</span>
+          <span aria-hidden className="text-muted">{panelOpen ? '收起' : '展開'}</span>
         </button>
 
         <div id="workspace-panels" className={`${panelOpen ? 'mt-6 block' : 'hidden'} space-y-8 lg:mt-8 lg:block`}>
@@ -131,8 +131,8 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
         <div className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-2 border-b border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
           {threads.map((t, i) => (
             <button key={t.id} onClick={() => setThreadId(t.id)} aria-current={t.id === threadId ? 'true' : undefined} title={t.title}
-              className={`btn btn-sm max-w-full truncate ${t.id === threadId ? 'btn-primary' : 'btn-secondary'}`}>
-              {t.title === '新對話' ? `對話 ${threads.length - i}` : t.title}
+              className={`btn btn-sm max-w-full ${t.id === threadId ? 'btn-primary' : 'btn-secondary'}`}>
+              <span className="truncate">{t.title === '新對話' ? `對話 ${threads.length - i}` : t.title}</span>
             </button>
           ))}
           <button onClick={newThread} className="btn btn-sm border border-dashed border-line text-muted hover:border-ink hover:text-ink">開新對話</button>

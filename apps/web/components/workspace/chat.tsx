@@ -169,12 +169,14 @@ export function Chat({ threadId, ready, speaker, hasManager, colorOf, onSettled 
           </div>
         )}
         {messages.map((m) => <MessageView key={m.id} message={m} speaker={speaker} colorOf={colorOf} />)}
-        {busy && (
-          <p role="status" className="flex items-center gap-2 text-sm text-muted">
-            <span className="dot-busy" aria-hidden />
-            {waiting ? '回覆還在進行中，完成後會自動顯示' : `${speaker}正在處理`}
-          </p>
-        )}
+        <p role="status" className="flex items-center gap-2 text-sm text-muted empty:hidden">
+          {busy && (
+            <>
+              <span className="dot-busy" aria-hidden />
+              {waiting ? '回覆還在進行中，完成後會自動顯示' : `${speaker}正在處理`}
+            </>
+          )}
+        </p>
         {notice && <p role="alert" className="notice notice-error">{notice}</p>}
         <div ref={bottom} />
       </div>
