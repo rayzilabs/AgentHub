@@ -23,6 +23,16 @@ async function drain(it: AsyncIterable<DelegationOutput>): Promise<DelegationOut
 
 const legal = consultant('c-legal', '法務顧問');
 
+const withTool = (text: string, state: string): UIMessage => ({
+  id: 'm',
+  role: 'assistant',
+  parts: [
+    { type: 'step-start' },
+    { type: 'tool-write_file', toolCallId: 'c1', state, input: { path: 'a.md', content: 'x'.repeat(1000) }, output: { ok: true } },
+    { type: 'text', text },
+  ],
+} as unknown as UIMessage);
+
 describe('assign_task', () => {
   it('串流顧問快照，完成後記錄發言，交給主管的是最後的文字', async () => {
     const run: ConsultantRunner = async function* () {
@@ -65,5 +75,43 @@ describe('assign_task', () => {
     const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0 });
     const outputs = await drain(t.execute!({ consultant_id: 'nope', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
     expect(outputs).toEqual([{ consultant_id: 'nope', name: 'nope', status: 'failed', error: '找不到這位顧問' }]);
+  });
+
+  it('快照只帶文字部分與工具摘要；記錄收到完整訊息', async () => {
+    const run: ConsultantRunner = async function* () {
+      yield withTool('', 'input-available');
+      yield withTool('完成', 'output-available');
+    };
+    const recorded: UIMessage[] = [];
+    const t = assignTaskTool({ consultants: [legal], run, record: async (_i, m) => { recorded.push(m); }, intervalMs: 0 });
+    const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+
+    for (const o of outputs) {
+      expect(o.message!.parts.every((p) => p.type === 'text')).toBe(true);
+      expect(Array.isArray(o.tools)).toBe(true);
+    }
+    expect(outputs.at(-1)).toMatchObject({
+      status: 'done',
+      message: { id: 'm', role: 'assistant', parts: [{ type: 'text', text: '完成' }] },
+      tools: [{ tool: 'write_file', state: 'output-available' }],
+    });
+    expect(outputs.find((o) => o.status === 'working')!.tools).toEqual([{ tool: 'write_file', state: 'input-available' }]);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].parts.some((p) => p.type === 'tool-write_file')).toBe(true);
+  });
+
+  it('文字與工具都沒變的快照不重複送出', async () => {
+    const run: ConsultantRunner = async function* () {
+      yield msg('A');
+      yield msg('A');
+      yield msg('A');
+      yield msg('AB');
+      yield msg('AB');
+    };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0 });
+    const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+    expect(outputs.map((o) => [o.status, o.message?.parts.map((p) => (p as { text: string }).text).join('')])).toEqual([
+      ['working', 'A'], ['working', 'AB'], ['done', 'AB'],
+    ]);
   });
 });

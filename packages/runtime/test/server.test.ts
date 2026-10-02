@@ -246,6 +246,7 @@ describe('POST /chat：多顧問', () => {
     const env = await seedTeam();
     const model = mockModel(
       toolTurn('assign_task', { consultant_id: env.legalId, task: '審查合約第 5 條' }),
+      toolTurn('write_file', { path: 'review.md', content: '第 5 條草稿' }, 'call-c1'),
       textTurn('法務意見：第 5 條有違約金風險'),
       textTurn('總結：第 5 條要修改'),
     );
@@ -258,11 +259,22 @@ describe('POST /chat：多顧問', () => {
     expect(msgs.map((m) => m.kind)).toEqual(['user', 'delegation', 'final']);
     expect(msgs[1]).toMatchObject({ speaker_instance_id: env.legalId, content: '法務意見：第 5 條有違約金風險', round: null });
     expect(msgs[2]).toMatchObject({ speaker_instance_id: env.managerId, content: '總結：第 5 條要修改' });
-    expect(promptText(model, 2)).toContain('法務意見：第 5 條有違約金風險');
+    expect(msgs[1].tool_events).toEqual([{ tool: 'write_file', state: 'output-available' }]);
+    expect(promptText(model, 3)).toContain('法務意見：第 5 條有違約金風險');
+
+    // 存下來的 ui_message 只帶顧問的文字與工具摘要，不帶顧問的工具呼叫本體
+    const final = msgs[2].ui_message;
+    expect(JSON.stringify(final)).not.toContain('tool-write_file');
+    const assign = final.parts.find((p: { type: string }) => p.type === 'tool-assign_task');
+    expect(assign.output).toMatchObject({
+      status: 'done',
+      message: { parts: [{ type: 'text', text: '法務意見：第 5 條有違約金風險' }] },
+      tools: [{ tool: 'write_file', state: 'output-available' }],
+    });
 
     const usageRows = await waitFor(async () => {
       const { data } = await db.from('usage_events').select('instance_id').eq('run_id', run.id);
-      return data && data.length >= 3 ? data : undefined;
+      return data && data.length >= 4 ? data : undefined;
     });
     expect(new Set(usageRows.map((r) => r.instance_id))).toEqual(new Set([env.managerId, env.legalId]));
   });
@@ -291,6 +303,13 @@ describe('POST /chat：多顧問', () => {
     const managerSecondPrompt = promptText(model, 5);
     expect(managerSecondPrompt).toContain('法務：可以上線');
     expect(managerSecondPrompt).toContain('【第 2 輪｜工程顧問】');
+
+    const convene = msgs.at(-1).ui_message.parts.find((p: { type: string }) => p.type === 'tool-convene_discussion');
+    expect(convene.output.speeches).toHaveLength(4);
+    for (const speech of convene.output.speeches) {
+      expect(speech).not.toHaveProperty('message');
+      expect(speech.tools).toEqual([]);
+    }
   });
 
   it('2 位顧問但沒有主管資料列：回 500「找不到主管」', async () => {

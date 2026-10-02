@@ -2,9 +2,9 @@ import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
 import { errorText } from '../errors';
-import { SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
+import { DISCUSSION_SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
-import { textOf } from '../ui-stream';
+import { textOf, toolEvents, type ToolEvent } from '../ui-stream';
 
 export const MAX_ROUNDS = 3;
 
@@ -17,7 +17,8 @@ export type Speech = {
   status: 'speaking' | 'done' | 'failed';
   text: string;
   stance?: Stance;
-  message?: UIMessage;
+  /** 顧問用過的工具摘要；完整訊息只交給 record，不放進快照 */
+  tools?: ToolEvent[];
   error?: string;
 };
 
@@ -89,18 +90,23 @@ async function* speakConcurrently(
   const feed = changeFeed();
   let pending = speakers.length;
   const tasks = speakers.map(async ({ instance, prompt }) => {
-    const speech: Speech = { consultant_id: instance.id, name: instance.name, round, status: 'speaking', text: '' };
+    const speech: Speech = { consultant_id: instance.id, name: instance.name, round, status: 'speaking', text: '', tools: [] };
     state.speeches.push(speech);
     feed.mark();
+    let message: UIMessage | undefined;
     try {
-      for await (const message of run(instance, prompt, abortSignal)) {
-        speech.message = message;
-        speech.text = textOf(message);
+      for await (const m of run(instance, prompt, abortSignal)) {
+        message = m;
+        const text = textOf(m);
+        const tools = toolEvents(m);
+        if (text === speech.text && JSON.stringify(tools) === JSON.stringify(speech.tools)) continue;
+        speech.text = text;
+        speech.tools = tools;
         feed.mark();
       }
       speech.status = 'done';
       speech.stance = parseStance(speech.text);
-      if (speech.message) await record(instance, speech.message, round);
+      if (message) await record(instance, message, round);
     } catch (e) {
       speech.status = 'failed';
       speech.error = errorText(e);
@@ -176,7 +182,7 @@ export function conveneDiscussionTool(opts: {
       const participants = [...new Set(participant_ids)].map((id) => byId.get(id)).filter((c): c is AgentInstance => !!c);
       yield* throttle(
         runDiscussion({ topic, participants, maxRounds: max_rounds, run: opts.run, record: opts.record, abortSignal }),
-        opts.intervalMs ?? SNAPSHOT_INTERVAL_MS,
+        opts.intervalMs ?? DISCUSSION_SNAPSHOT_INTERVAL_MS,
       );
     },
     toModelOutput: ({ output }) => ({

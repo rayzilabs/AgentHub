@@ -4,15 +4,36 @@ import type { ConsultantRunner, RecordSpeech } from '../consultant';
 import { errorText } from '../errors';
 import { SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
-import { textOf } from '../ui-stream';
+import { textOf, textOnly, toolEvents, type ToolEvent } from '../ui-stream';
 
 export type DelegationOutput = {
   consultant_id: string;
   name: string;
   status: 'working' | 'done' | 'failed';
+  /** 只含文字部分；顧問的工具呼叫細節只以 tools 摘要呈現 */
   message?: UIMessage;
+  tools?: ToolEvent[];
   error?: string;
 };
+
+type DelegationView = { message: UIMessage; tools: ToolEvent[] };
+
+function viewOf(m: UIMessage): DelegationView {
+  return { message: textOnly(m), tools: toolEvents(m) };
+}
+
+/** 顧問快照轉成前端看得到的內容，內容沒變就略過 */
+async function* changedViews(source: AsyncIterable<UIMessage>, onMessage: (m: UIMessage) => void): AsyncGenerator<DelegationView> {
+  let previous: string | undefined;
+  for await (const m of source) {
+    onMessage(m);
+    const view = viewOf(m);
+    const key = JSON.stringify(view);
+    if (key === previous) continue;
+    previous = key;
+    yield view;
+  }
+}
 
 export function assignTaskTool(opts: {
   consultants: AgentInstance[];
@@ -37,16 +58,18 @@ export function assignTaskTool(opts: {
       }
       const base = { consultant_id, name: instance.name };
       let last: UIMessage | undefined;
+      const lastView = () => (last ? viewOf(last) : { tools: [] });
       try {
-        for await (const message of throttle(opts.run(instance, task, abortSignal), opts.intervalMs ?? SNAPSHOT_INTERVAL_MS)) {
-          last = message;
-          yield { ...base, status: 'working', message };
+        const views = changedViews(opts.run(instance, task, abortSignal), (m) => (last = m));
+        for await (const view of throttle(views, opts.intervalMs ?? SNAPSHOT_INTERVAL_MS)) {
+          yield { ...base, status: 'working', ...view };
         }
         if (last) await opts.record(instance, last, null);
-        yield { ...base, status: 'done', message: last };
       } catch (e) {
-        yield { ...base, status: 'failed', message: last, error: errorText(e) };
+        yield { ...base, status: 'failed', ...lastView(), error: errorText(e) };
+        return;
       }
+      yield { ...base, status: 'done', ...lastView() };
     },
     toModelOutput: ({ output }) =>
       output.status === 'failed'
