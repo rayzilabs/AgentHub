@@ -15,9 +15,8 @@ const failed: string[] = [];
 for (const p of projects) {
   try {
     const sprite = client.sprite(p.sprite_name ?? spriteName(p.id));
+    // installRuntime 會重新啟動 runtime 服務，載入新的 main.js
     await installRuntime(db, sprite, p.id);
-    const logs = await sprite.restartService('runtime');
-    await logs.processAll(() => {});
     console.log(`已更新 ${p.id}`);
   } catch (e) {
     failed.push(p.id);
