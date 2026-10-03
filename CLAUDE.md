@@ -71,28 +71,19 @@ cd apps/web && pnpm exec tsx scripts/smoke.ts       # 冒煙測試，BASE_URL �
 
 | 改動 | 部署方式 |
 |---|---|
-| `apps/web` | Vercel CLI（見下） |
+| `apps/web` | push 到 `main`（Vercel 自動部署） |
 | `packages/runtime` | `pnpm -F @agenthub/runtime publish-runtime` → `cd apps/web && pnpm exec tsx scripts/redeploy-runtime.ts` |
 | `supabase/migrations` | `pnpm db:push`，再 `pnpm db:test` |
 
-**push 到 main 不會觸發 Vercel 部署**：Vercel Hobby 會擋下 commit 作者不是團隊成員的部署（狀態 BLOCKED），在 repo 目錄跑 `vercel deploy` 也會帶 git 作者而被擋。從不含 `.git` 的副本部署：
+**push 到 `main` 會自動部署 production**（Vercel 連 GitHub `rayzilabs/AgentHub`，root directory `apps/web`，區域 `sin1`）。部署狀態用 `vercel ls agenthub` 或 GitHub commit 的 status 查看。
 
-```bash
-rsync -a --delete \
-  --exclude .git --exclude node_modules --exclude '.env*' --exclude .superpowers \
-  --exclude .next --exclude dist --exclude supabase/.temp \
-  ./ /tmp/agenthub-deploy/
-cd /tmp/agenthub-deploy
-VERCEL_ORG_ID=team_XVWS97D8nPs7ITss26Y012jE VERCEL_PROJECT_ID=prj_bXdQMKRYUzkVM1nGXm1lfKHoN3Uo vercel deploy --prod --yes
-```
-
-- Vercel 的環境變數已在專案設定好，部署不帶 `.env`（根目錄 `.vercelignore` 也排除機密）。
+- Vercel 的環境變數已在專案設定好，`.env` 不進 git。
 - `publish-runtime` 會上傳 `runtime/main.js` 與 `runtime/main-<commit>.js`；新專案自動用最新版，既有專案要跑 `redeploy-runtime.ts`。
 - 部署後跑 `BASE_URL=https://agenthub-kappa-pink.vercel.app pnpm exec tsx scripts/smoke.ts` 驗證（約 3 分鐘，會建立並刪除一台 Sprite）。
 
 ## Git
 
-- 在 `feat/mvp` 開發，完成後 `git merge --no-ff feat/mvp` 進 `main` 再 push（`main` 上有 feat/mvp 沒有的 merge commit，不能直接 `git push origin feat/mvp:main`）。
+- 直接在 `main` 開發、commit、push 到 `origin main`；push 前先跑 `pnpm test` 與 `pnpm typecheck`，因為 push 就會上 production。
 - 不要 commit `.env`、`.superpowers/`（SDD 工作區與 demo 密碼都在裡面）。
 
 ## 慣例

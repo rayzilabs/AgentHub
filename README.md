@@ -108,18 +108,7 @@ BASE_URL=https://agenthub-kappa-pink.vercel.app pnpm exec tsx scripts/smoke.ts  
 
 Vercel 專案的 Root Directory 是 `apps/web`，區域 `sin1`，環境變數同上表。
 
-目前 **push 到 main 不會自動部署**：Vercel Hobby 方案會擋下作者不是團隊成員的 commit，從 repo 目錄執行 `vercel deploy` 也會帶上 git 作者而被擋。暫時的做法是從不含 `.git` 的副本部署：
-
-```bash
-rsync -a --delete \
-  --exclude .git --exclude node_modules --exclude '.env*' --exclude .superpowers \
-  --exclude .next --exclude dist --exclude supabase/.temp \
-  ./ /tmp/agenthub-deploy/
-cd /tmp/agenthub-deploy
-VERCEL_ORG_ID=<team id> VERCEL_PROJECT_ID=<project id> vercel deploy --prod --yes
-```
-
-把 GitHub 帳號加進 Vercel 團隊（需要 Pro）之後，就可以回到 push 自動部署。
+push 到 `main` 會自動部署到 production。
 
 ### runtime（Sprite）
 
@@ -181,7 +170,6 @@ description: 用 5P 架構評估中小企業授信案件
 - **安全性未處理**：agent 的 bash 讀得到 runtime 的金鑰，檔案工具不限工作目錄；沒有上架審核和限流。被 prompt injection 操縱時可能洩漏金鑰。
 - **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，完成後顯示完整結果。
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。
-- **push 不會自動部署**：見[部署](#網站vercel)。
 
 ## 文件
 
