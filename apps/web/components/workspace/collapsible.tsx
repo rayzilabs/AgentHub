@@ -1,6 +1,6 @@
 'use client';
 
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 /** 收合時的高度（約 10 行） */
@@ -14,6 +14,7 @@ export function Collapsible({ children }: { children: ReactNode }) {
   const [touched, setTouched] = useState(false);
   const inner = useRef<HTMLDivElement>(null);
   const id = useId();
+  const reduce = useReducedMotion();
 
   useLayoutEffect(() => {
     const el = inner.current;
@@ -28,7 +29,7 @@ export function Collapsible({ children }: { children: ReactNode }) {
   const clamped = overflows && !open;
   return (
     <div>
-      <motion.div id={id} initial={false} animate={{ height: clamped ? CLAMP_PX : 'auto' }} transition={touched ? undefined : { duration: 0 }} className="relative overflow-hidden">
+      <motion.div id={id} initial={false} animate={{ height: clamped ? CLAMP_PX : 'auto' }} transition={touched && !reduce ? undefined : { duration: 0 }} className="relative overflow-hidden">
         <div ref={inner}>{children}</div>
         <motion.div aria-hidden initial={false} animate={{ opacity: clamped ? 1 : 0 }} transition={{ duration: 0.2 }}
           className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface to-transparent" />

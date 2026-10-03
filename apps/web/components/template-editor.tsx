@@ -156,7 +156,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
           {mcp.map((d, i) => {
             const update = (patch: Partial<McpDraft>) => setMcp(mcp.map((x, j) => (j === i ? { ...x, ...patch } : x)));
             return (
-              <fieldset key={i} className="panel space-y-3 p-5">
+              <fieldset key={i} className="panel space-y-3 p-5 [&>legend+*]:clear-left">
                 <legend className="float-left w-full text-sm font-medium text-muted">工具 {i + 1}</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block"><span className="label">名稱（英數字）</span>
