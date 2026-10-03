@@ -81,9 +81,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-link);
-  outline-offset: 2px;
+/* 放在 base layer，元件自己有聚焦外觀時（輸入框、輸入列）可以用 utility 蓋掉 */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-link);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {

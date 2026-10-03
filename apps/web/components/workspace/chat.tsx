@@ -199,7 +199,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
       </div>
       {/* 浮動輸入列：半透明材質，對話從底下捲過去 */}
       <form onSubmit={submit} className="sticky bottom-0 z-10 -mx-4 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:mx-0 sm:px-0">
-        <div className="material-surface flex items-end gap-2 rounded-[24px] p-1.5 pl-4 shadow-float transition-shadow duration-150 focus-within:shadow-[0_0_0_4px_var(--color-brand-soft),var(--shadow-float)]">
+        <div className="material-surface flex items-end gap-2 rounded-[24px] p-1.5 pl-4 shadow-float transition-shadow duration-150 focus-within:shadow-[0_0_0_1.5px_var(--color-link),0_0_0_5px_var(--color-brand-soft),var(--shadow-float)]">
           <label className="min-w-0 flex-1 self-center">
             <span className="sr-only">訊息</span>
             <textarea
