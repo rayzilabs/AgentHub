@@ -1,5 +1,9 @@
+'use client';
+
 import type { UIMessage } from 'ai';
+import { motion } from 'motion/react';
 import { Markdown } from '@/components/markdown';
+import { Avatar } from '@/components/ui/avatar';
 import type { DelegationOutput, DiscussionState } from '@/lib/agent-output';
 import { DelegationCard } from './delegation-card';
 import { DiscussionView } from './discussion-view';
@@ -7,19 +11,31 @@ import { TOOL_LABELS } from './tool-list';
 
 type ToolPart = { type: string; toolName?: string; state: string; input?: Record<string, unknown>; output?: unknown; errorText?: string };
 
-export function MessageView({ message, speaker, colorOf }: { message: UIMessage; speaker: string; colorOf: (id: string) => string }) {
+export function MessageView({ message, speaker, speakerColor, colorOf, animateIn }: {
+  message: UIMessage;
+  speaker: string;
+  speakerColor: string;
+  colorOf: (id: string) => string;
+  /** 這次畫面上新出現的訊息才播進場動畫 */
+  animateIn: boolean;
+}) {
   if (message.role === 'user') {
+    // 送出的訊息從右下角的輸入列方向長出來
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-brand px-4 py-2.5 text-white sm:max-w-[70%]">
+        <motion.div initial={animateIn ? { opacity: 0, y: 16, scale: 0.96 } : false} animate={{ opacity: 1, y: 0, scale: 1 }}
+          className="max-w-[85%] origin-bottom-right whitespace-pre-wrap rounded-[20px] rounded-br-md bg-brand px-4 py-2.5 text-white sm:max-w-[70%]">
           {message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')}
-        </div>
+        </motion.div>
       </div>
     );
   }
   return (
-    <div>
-      <div className="mb-2 font-display text-base font-bold text-ink">{speaker}</div>
+    <motion.div initial={animateIn ? { opacity: 0 } : false} animate={{ opacity: 1 }} transition={{ duration: 0.25, ease: 'easeOut' }}>
+      <div className="mb-3 flex items-center gap-2.5">
+        <Avatar name={speaker} color={speakerColor} />
+        <span className="font-semibold">{speaker}</span>
+      </div>
       {message.parts.map((part, i) => {
         if (part.type === 'text') return <Markdown key={i} text={part.text} />;
         if (part.type === 'data-warning') {
@@ -46,10 +62,11 @@ export function MessageView({ message, speaker, colorOf }: { message: UIMessage;
         const failed = tool.state === 'output-error';
         return (
           <span key={i} className={`chip mb-2 mr-2 ${failed ? 'chip-seal' : ''}`}>
+            {!done && !failed && <span className="dot-busy" aria-hidden />}
             {failed ? '工具失敗：' : done ? '用了' : '正在用'}{TOOL_LABELS[name] ?? name}
           </span>
         );
       })}
-    </div>
+    </motion.div>
   );
 }

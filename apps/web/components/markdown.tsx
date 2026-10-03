@@ -16,7 +16,7 @@ export function Markdown({ text, compact = false }: { text: string; compact?: bo
       'prose max-w-none break-words',
       'prose-headings:font-display prose-headings:text-ink prose-headings:font-bold',
       'prose-h1:text-xl prose-h2:text-xl prose-h3:text-base prose-h4:text-base',
-      'prose-a:text-brand prose-strong:text-ink prose-th:text-sm prose-td:text-sm prose-pre:text-sm',
+      'prose-a:text-link prose-strong:text-ink prose-th:text-sm prose-td:text-sm prose-pre:text-sm',
       compact
         ? 'prose-sm prose-p:my-2 prose-li:my-0.5 prose-headings:mt-4 prose-headings:mb-1 prose-hr:my-3'
         : 'prose-p:my-3 prose-li:my-1 prose-headings:mt-6 prose-headings:mb-2 prose-hr:my-5',

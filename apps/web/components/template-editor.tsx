@@ -99,13 +99,14 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
   };
 
   return (
-    <div className="space-y-6 pb-4">
+    <div className="space-y-8 pb-4">
       <div className="flex items-center gap-3">
-        <h1 className="font-display text-2xl">編輯顧問</h1>
-        <span className={`chip ${t.status === 'published' ? 'chip-brand' : ''}`}>{t.status === 'published' ? '已上架' : '草稿'}</span>
+        <h1 className="font-display text-2xl font-bold sm:text-4xl">編輯顧問</h1>
+        <span className={`chip ${t.status === 'published' ? 'chip-sage' : ''}`}>{t.status === 'published' ? '已上架' : '草稿'}</span>
       </div>
-      <section className="panel space-y-5 p-5">
-        <h2 className="font-display text-xl">基本資料</h2>
+      <section aria-labelledby="basic-title">
+        <h2 id="basic-title" className="group-title">基本資料</h2>
+        <div className="panel space-y-5 p-5">
         <label className="block">
           <span className="label">名稱</span>
           <input disabled={busy} className="field" value={t.name} onChange={(e) => setT({ ...t, name: e.target.value })} />
@@ -125,16 +126,18 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
           <textarea disabled={busy} className="field min-h-72 font-mono text-sm" rows={12} value={t.system_prompt} onChange={(e) => setT({ ...t, system_prompt: e.target.value })} />
           <span className="hint block">你的工作方法與 SOP。使用者看不到這段。</span>
         </label>
+        </div>
       </section>
 
-      <section className="panel p-5">
-        <h2 className="font-display text-xl">Skill</h2>
-        <p className="mt-1 text-sm text-muted">上傳一個 zip，裡面每個資料夾放一份 SKILL.md（Claude Code 的 .claude/skills 資料夾直接壓縮即可）。</p>
+      <section aria-labelledby="skill-title">
+        <h2 id="skill-title" className="group-title">Skill</h2>
+        <div className="panel p-5">
+        <p className="text-sm text-muted">上傳一個 zip，裡面每個資料夾放一份 SKILL.md（Claude Code 的 .claude/skills 資料夾直接壓縮即可）。</p>
         <FileButton label="上傳 skill zip" accept=".zip,application/zip" busy={busy} uploading={uploading} className="mt-3" onFile={(f) => void uploadZip(f)} />
         {t.skills.length > 0 ? (
           <ul className="mt-3 space-y-2">
             {t.skills.map((s) => (
-              <li key={s.name} className="rounded border border-line p-3">
+              <li key={s.name} className="rounded-xl bg-sunken px-4 py-3">
                 <div className="font-medium">{s.name}</div>
                 <div className="text-sm text-muted">{s.description}</div>
               </li>
@@ -143,17 +146,18 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
         ) : (
           <p className="hint mt-3">還沒有 skill。沒有也能上架，顧問只靠 system prompt 工作。</p>
         )}
+        </div>
       </section>
 
-      <section className="panel p-5">
-        <h2 className="font-display text-xl">工具（MCP）</h2>
-        <p className="mt-1 text-sm text-muted">需要金鑰的工具，租用的人會在加入時填自己的金鑰。</p>
-        <div className="mt-3 space-y-4">
+      <section aria-labelledby="mcp-title">
+        <h2 id="mcp-title" className="group-title">工具（MCP）</h2>
+        <p className="mb-3 px-1 text-sm text-muted">需要金鑰的工具，租用的人會在加入時填自己的金鑰。</p>
+        <div className="space-y-4">
           {mcp.map((d, i) => {
             const update = (patch: Partial<McpDraft>) => setMcp(mcp.map((x, j) => (j === i ? { ...x, ...patch } : x)));
             return (
-              <fieldset key={i} className="space-y-3 rounded border border-line bg-surface p-4">
-                <legend className="px-1 text-sm font-medium">工具 {i + 1}</legend>
+              <fieldset key={i} className="panel space-y-3 p-5">
+                <legend className="float-left w-full text-sm font-medium text-muted">工具 {i + 1}</legend>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block"><span className="label">名稱（英數字）</span>
                     <input disabled={busy} className="field" value={d.name} onChange={(e) => update({ name: e.target.value })} /></label>
@@ -180,7 +184,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                 )}
                 <label className="block"><span className="label">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
                   <input disabled={busy} className="field" value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
-                <button type="button" onClick={() => setMcp(mcp.filter((_, j) => j !== i))} className="link text-sm text-seal hover:text-seal">移除這個工具</button>
+                <button type="button" onClick={() => setMcp(mcp.filter((_, j) => j !== i))} className="btn btn-sm -ml-3 text-seal hover:bg-seal/10">移除這個工具</button>
               </fieldset>
             );
           })}
@@ -188,7 +192,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
         </div>
       </section>
 
-      <div className="sticky bottom-0 z-10 -mx-4 border-t border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
+      <div className="material-surface sticky bottom-3 z-10 rounded-[24px] px-4 py-3 shadow-float">
         {message && (
           <p role={message.kind === 'error' ? 'alert' : 'status'} className={`notice mb-3 max-h-[40vh] overflow-y-auto whitespace-pre-line ${message.kind === 'error' ? 'notice-error' : 'notice-info'}`}>
             {message.text}

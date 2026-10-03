@@ -2,36 +2,75 @@
 @plugin "@tailwindcss/typography";
 
 @theme {
-  --color-paper: #f4f6f9;
+  /* 底色是淺灰，內容放在白色群組上；深色模式在下方 :root 重新定義同一組 token */
+  --color-paper: #f5f5f7;
   --color-surface: #ffffff;
-  --color-ink: #172033;
-  --color-muted: #5b6578;
-  --color-line: #dce1e8;
-  --color-brand: #1f4e79;
-  --color-brand-strong: #163a5b;
-  --color-brand-soft: #e3ecf5;
-  --color-seal: #b8322a;
-  --color-ochre: #8a6d1f;
-  /* 字級只有五階：14 / 16 / 20 / 28 / 40 */
+  --color-sunken: #f0f0f3;
+  --color-ink: #1d1d1f;
+  --color-muted: #68686d;
+  --color-line: #d2d2d7;
+  /* brand 是填色（按鈕、使用者訊息），link 是文字色；深色模式兩者亮度不同 */
+  --color-brand: #0071e3;
+  --color-brand-strong: #0062c4;
+  --color-brand-soft: #e8f1fc;
+  --color-link: #0066cc;
+  --color-seal: #c4261d;
+  --color-ochre: #8a5100;
+  --color-sage: #23793a;
+
+  /* 字級只有五階：14 / 16 / 20 / 28 / 40；字距依大小調整，大字收緊、小字放鬆 */
   --text-xs: initial;
   --text-lg: initial;
   --text-sm: 0.875rem;
   --text-sm--line-height: 1.5;
+  --text-sm--letter-spacing: 0.01em;
   --text-base: 1rem;
   --text-base--line-height: 1.7;
   --text-xl: 1.25rem;
-  --text-xl--line-height: 1.5;
+  --text-xl--line-height: 1.4;
   --text-2xl: 1.75rem;
   --text-2xl--line-height: 1.25;
+  --text-2xl--letter-spacing: -0.005em;
   --text-4xl: 2.5rem;
-  --text-4xl--line-height: 1.15;
-  --font-display: var(--font-wenkai), "Noto Sans TC", serif;
-  --font-sans: var(--font-noto), system-ui, sans-serif;
+  --text-4xl--line-height: 1.12;
+  --text-4xl--letter-spacing: -0.015em;
+
+  --font-display: var(--font-wenkai), "PingFang TC", "Noto Sans TC", serif;
+  /* 內文優先用系統字（Apple 裝置是 PingFang TC），其他平台退回 Noto Sans TC */
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang TC", var(--font-noto), "Microsoft JhengHei", system-ui, sans-serif;
+
+  /* 浮在內容上的表面才有陰影，越大的表面越厚 */
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px rgb(0 0 0 / 0.06);
+  --shadow-sheet: 0 -8px 40px rgb(0 0 0 / 0.16);
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: #000000;
+    --color-surface: #1c1c1e;
+    --color-sunken: #2c2c2e;
+    --color-ink: #f5f5f7;
+    --color-muted: #a1a1a6;
+    --color-line: #3a3a3c;
+    --color-brand: #0071e3;
+    --color-brand-strong: #0077ed;
+    --color-brand-soft: #0d2a4a;
+    --color-link: #2997ff;
+    --color-seal: #ff6961;
+    --color-ochre: #ffb340;
+    --color-sage: #30d158;
+    --shadow-float: 0 0 0 1px rgb(255 255 255 / 0.06), 0 4px 16px rgb(0 0 0 / 0.5);
+    --shadow-sheet: 0 0 0 1px rgb(255 255 255 / 0.08), 0 -8px 40px rgb(0 0 0 / 0.6);
+    color-scheme: dark;
+  }
 }
 
 html {
   background: var(--color-paper);
   color: var(--color-ink);
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -39,41 +78,123 @@ body {
   font-size: 16px;
   line-height: 1.7;
   overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--color-link);
   outline-offset: 2px;
 }
 
 @layer components {
-  .btn { @apply inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded px-4 text-base font-medium disabled:cursor-not-allowed disabled:opacity-60; }
+  /* 按下的瞬間就回饋（:active），不等放開 */
+  .btn { @apply inline-flex min-h-10 select-none items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 text-base font-medium transition-[transform,background-color,border-color,color] duration-100 ease-out active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
   .btn-primary { @apply bg-brand text-white hover:bg-brand-strong; }
-  .btn-secondary { @apply border border-line bg-surface text-ink hover:border-ink; }
-  .btn-sm { @apply min-h-8 px-3 text-sm; }
+  .btn-secondary { @apply bg-sunken text-ink hover:bg-line/70; }
+  .btn-plain { @apply px-2 text-link hover:bg-brand-soft; }
+  .btn-sm { @apply min-h-8 px-3.5 text-sm; }
 
-  .field { @apply mt-1 block w-full rounded border border-line bg-surface px-3 py-2 text-base text-ink placeholder:text-muted focus:border-brand disabled:opacity-60; }
+  .field { @apply mt-1.5 block w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base text-ink transition-[border-color,box-shadow] duration-150 placeholder:text-muted focus:border-link focus:shadow-[0_0_0_4px_var(--color-brand-soft)] focus:outline-none disabled:opacity-60; }
   .label { @apply block text-sm font-medium text-ink; }
   .hint { @apply mt-1 text-sm text-muted; }
 
-  .panel { @apply rounded border border-line bg-surface; }
-  .link { @apply text-brand underline underline-offset-2 hover:text-brand-strong; }
+  /* 群組：淺灰底上的白色圓角區塊，不加框線也不加陰影 */
+  .panel { @apply rounded-2xl bg-surface; }
+  /* 群組標題：放在群組外面上方的小字 */
+  .group-title { @apply mb-2 px-1 text-sm font-medium text-muted; }
+  .link { @apply text-link underline-offset-2 hover:underline; }
 
-  .chip { @apply inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5 text-sm leading-5 text-muted; }
-  .chip-brand { @apply border-brand-soft bg-brand-soft text-brand; }
-  .chip-seal { @apply border-seal/40 text-seal; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full bg-sunken px-2.5 py-0.5 text-sm leading-5 text-muted; }
+  .chip-brand { @apply bg-brand-soft text-link; }
+  .chip-seal { @apply bg-seal/10 text-seal; }
+  .chip-sage { @apply bg-sage/12 text-sage; }
 
-  .notice { @apply rounded border-l-2 bg-surface px-3 py-2 text-sm text-ink; }
-  .notice-error { @apply border-seal text-seal; }
-  .notice-warn { @apply border-ochre; }
-  .notice-info { @apply border-brand text-muted; }
+  .notice { @apply rounded-xl bg-sunken px-3.5 py-2.5 text-sm text-ink; }
+  .notice-error { @apply bg-seal/10 text-seal; }
+  .notice-warn { @apply bg-ochre/10; }
+  .notice-info { @apply bg-brand-soft text-ink; }
 
   .dot-busy { @apply inline-block h-2 w-2 rounded-full bg-brand motion-safe:animate-pulse; }
+
+  /* 半透明材質：浮在內容上的導覽列、輸入列、操作列；內容從底下捲過去 */
+  .material {
+    background: color-mix(in srgb, var(--color-paper) 72%, transparent);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+  }
+  .material-surface {
+    background: color-mix(in srgb, var(--color-surface) 78%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+  }
+
+  /* 顧問頭像：識別色加深一點，白字在任何識別色上都清楚 */
+  .avatar { @apply inline-flex shrink-0 select-none items-center justify-center rounded-full font-medium text-white; background: color-mix(in oklab, var(--agent, var(--color-ink)) 86%, black); }
 }
 
+/* 下拉選單：拿掉原生外觀，換成和輸入框一致的樣子 */
+select.field {
+  appearance: none;
+  padding-right: 2.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%2386868b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  background-size: 0.75rem;
+}
+
+/* Markdown 內文跟著 token 走，深色模式自動對調 */
+.prose {
+  --tw-prose-body: var(--color-ink);
+  --tw-prose-headings: var(--color-ink);
+  --tw-prose-lead: var(--color-muted);
+  --tw-prose-links: var(--color-link);
+  --tw-prose-bold: var(--color-ink);
+  --tw-prose-counters: var(--color-muted);
+  --tw-prose-bullets: var(--color-muted);
+  --tw-prose-hr: var(--color-line);
+  --tw-prose-quotes: var(--color-ink);
+  --tw-prose-quote-borders: var(--color-line);
+  --tw-prose-captions: var(--color-muted);
+  --tw-prose-kbd: var(--color-ink);
+  --tw-prose-code: var(--color-ink);
+  --tw-prose-pre-code: var(--color-ink);
+  --tw-prose-pre-bg: var(--color-sunken);
+  --tw-prose-th-borders: var(--color-line);
+  --tw-prose-td-borders: var(--color-line);
+}
+
+/* 捲動邊緣：導覽列只有在內容捲到底下時才出現分隔線 */
+@keyframes edge-in { to { border-bottom-color: var(--color-line); } }
+.scroll-edge { border-bottom: 1px solid transparent; }
+@supports (animation-timeline: scroll()) {
+  .scroll-edge { animation: edge-in linear both; animation-timeline: scroll(root); animation-range: 0 24px; }
+}
+@supports not (animation-timeline: scroll()) {
+  .scroll-edge { border-bottom-color: color-mix(in srgb, var(--color-line) 60%, transparent); }
+}
+
+/* 減少透明度：材質改成實心 */
+@media (prefers-reduced-transparency: reduce) {
+  .material { background: var(--color-paper); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .material-surface { background: var(--color-surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* 高對比：實心底色加明確的框線 */
+@media (prefers-contrast: more) {
+  .material, .material-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .material { background: var(--color-paper); }
+  .material-surface { background: var(--color-surface); }
+  .panel, .field, .btn-secondary, .chip { border: 1px solid var(--color-ink); }
+  .scroll-edge { border-bottom-color: var(--color-ink); animation: none; }
+}
+
+/* 減少動態：移動改成淡入淡出，按壓不縮放；彈簧動畫由 MotionConfig 與元件自己判斷 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
+  .btn { @apply active:scale-100; }
+  .scroll-edge { animation-duration: auto !important; }
 }

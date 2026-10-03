@@ -49,8 +49,8 @@ export function HireForm({ templateId, mcpServers, projects }: { templateId: str
         </select>
       </label>
       {needed.length > 0 && (
-        <fieldset className="rounded border border-line bg-paper p-3">
-          <legend className="px-1 text-sm font-medium">這位顧問的工具需要你的金鑰</legend>
+        <fieldset className="rounded-xl bg-sunken p-4">
+          <legend className="float-left mb-1 w-full text-sm font-medium">這位顧問的工具需要你的金鑰</legend>
           <p className="hint mt-0">只會存在你的專案裡，創作者看不到。</p>
           {needed.map((n) => (
             <label key={`${n.server}.${n.key}`} className="mt-3 block">

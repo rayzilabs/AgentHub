@@ -9,7 +9,8 @@ type FileItem = { name: string; size: number; updated_at: string | null };
 const formatSize = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
 export function FilePanel({ projectId }: { projectId: string }) {
-  const [files, setFiles] = useState<FileItem[]>([]);
+  // null = 還在載入，避免載入中先閃出「還沒有資料」
+  const [files, setFiles] = useState<FileItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,19 +38,22 @@ export function FilePanel({ projectId }: { projectId: string }) {
 
   return (
     <section aria-labelledby="files-title">
-      <h2 id="files-title" className="font-display text-xl">專案資料</h2>
-      <p className="text-sm text-muted">上傳後，所有顧問下一次回覆時都讀得到。</p>
-      <FileButton label="上傳檔案" busy={busy} className="mt-2" onFile={(f) => void upload(f)} />
-      {error && <p role="alert" className="notice notice-error mt-2">{error}</p>}
-      <ul className="mt-3 space-y-1 text-sm">
-        {files.map((f) => (
-          <li key={f.name} className="flex items-baseline justify-between gap-2 text-sm">
-            <span className="truncate" title={f.name}>{f.name}</span>
-            <span className="shrink-0 text-muted">{formatSize(f.size)}</span>
-          </li>
-        ))}
-        {files.length === 0 && <li className="text-sm text-muted">還沒有資料。</li>}
-      </ul>
+      <h2 id="files-title" className="group-title">專案資料</h2>
+      <div className="panel p-4">
+        <ul className="divide-y divide-line/70 text-sm">
+          {files?.map((f) => (
+            <li key={f.name} className="flex items-baseline justify-between gap-2 py-2 first:pt-0">
+              <span className="truncate" title={f.name}>{f.name}</span>
+              <span className="shrink-0 text-muted">{formatSize(f.size)}</span>
+            </li>
+          ))}
+          {files === null && <li className="pb-2 text-muted">載入中…</li>}
+          {files?.length === 0 && <li className="pb-2 text-muted">還沒有資料。</li>}
+        </ul>
+        {error && <p role="alert" className="notice notice-error mt-2">{error}</p>}
+        <FileButton label="上傳檔案" busy={busy} className="mt-2" onFile={(f) => void upload(f)} />
+      </div>
+      <p className="hint px-1">上傳後，所有顧問下一次回覆時都讀得到。</p>
     </section>
   );
 }

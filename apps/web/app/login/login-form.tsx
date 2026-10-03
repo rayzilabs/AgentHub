@@ -25,7 +25,7 @@ export function LoginForm({ next }: { next: string }) {
           className="field" />
       </label>
       {error && <p role="alert" className="notice notice-error">{error}</p>}
-      <div className="flex gap-3">
+      <div className="flex gap-3 pt-2">
         <button formAction={signInAction} onClick={() => setLastAction('signIn')} disabled={busy} className="btn btn-primary flex-1">
           登入
         </button>

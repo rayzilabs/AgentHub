@@ -1,12 +1,17 @@
 import Link from 'next/link';
 import { signOut } from '@/app/login/actions';
 import { currentUser } from '@/lib/auth';
+import { NavLinks } from './nav-links';
 
 export async function Nav() {
   const user = await currentUser();
+  const links = [
+    { href: '/', label: '市集' },
+    ...(user ? [{ href: '/projects', label: '我的專案' }, { href: '/creator', label: '我上架的 agent' }] : []),
+  ];
   return (
-    <header className="border-b border-line bg-surface">
-      <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-1 px-4 py-2 sm:px-6 sm:py-3">
+    <header id="site-nav" className="material scroll-edge sticky top-0 z-30">
+      <nav className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6">
         <Link href="/" className="font-display text-xl font-bold text-ink">AgentHub</Link>
 
         {/* 帳號區在手機排第一行右側，桌面排最右 */}
@@ -24,10 +29,8 @@ export async function Nav() {
         </div>
 
         {/* 頁面連結：手機獨占第二行、可橫向捲；桌面接在品牌後面 */}
-        <div className="-mx-4 flex w-[calc(100%+2rem)] gap-x-5 overflow-x-auto whitespace-nowrap px-4 py-1 sm:mx-0 sm:w-auto sm:gap-x-6 sm:overflow-visible sm:px-0 sm:py-0">
-          <Link href="/" className="text-muted hover:text-ink">市集</Link>
-          {user && <Link href="/projects" className="text-muted hover:text-ink">我的專案</Link>}
-          {user && <Link href="/creator" className="text-muted hover:text-ink">我上架的 agent</Link>}
+        <div className="-mx-4 flex w-[calc(100%+2rem)] gap-x-1 overflow-x-auto whitespace-nowrap px-3 pb-1 sm:mx-0 sm:w-auto sm:overflow-visible sm:p-0">
+          <NavLinks links={links} />
         </div>
       </nav>
     </header>

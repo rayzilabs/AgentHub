@@ -1,5 +1,6 @@
 import { Markdown } from '@/components/markdown';
 import { Seal } from '@/components/seal';
+import { Avatar } from '@/components/ui/avatar';
 import type { DiscussionState, Speech } from '@/lib/agent-output';
 import { Collapsible } from './collapsible';
 import { ToolList } from './tool-list';
@@ -9,9 +10,12 @@ const STANCE_LINE = /\n?\s*立場\s*[:：]\s*(同意|有保留)\s*$/;
 function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
   const body = speech.text.replace(STANCE_LINE, '');
   return (
-    <div className="rounded border border-l-4 border-line bg-surface px-4 py-3" style={{ borderLeftColor: color }}>
+    <div className="panel px-5 py-4">
       <div className="flex items-center justify-between gap-3">
-        <span className="font-display text-xl font-bold" style={{ color }}>{speech.name}</span>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <Avatar name={speech.name} color={color} />
+          <span className="min-w-0 truncate font-semibold">{speech.name}</span>
+        </span>
         {speech.status === 'speaking' && <span className="chip chip-brand"><span className="dot-busy" aria-hidden />發言中</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
@@ -45,19 +49,19 @@ export function DiscussionView({ state, colorOf, failedText }: {
   }
   const rounds = [...new Set(state.speeches.map((s) => s.round))].sort((a, b) => a - b);
   return (
-    <section className="my-4 rounded border border-line bg-paper p-3 sm:p-4" aria-label="顧問討論">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-display text-xl">顧問討論</h3>
+    <section className="my-4 rounded-[24px] bg-sunken p-3 sm:p-5" aria-label="顧問討論">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <h3 className="text-xl font-semibold">顧問討論</h3>
         <span className={`chip ${state.finished ? '' : 'chip-brand'}`}>
           {state.finished
             ? `已結束，共 ${state.round} 輪`
             : <><span className="dot-busy" aria-hidden />第 {state.round} 輪，最多 3 輪</>}
         </span>
       </div>
-      <p className="mt-1 text-sm text-muted">{state.topic}</p>
+      <p className="mt-1 px-1 text-sm text-muted">{state.topic}</p>
       {rounds.map((round) => (
         <div key={round} className="mt-5">
-          <h4 className="mb-2 flex items-center gap-3 text-sm font-medium text-muted">
+          <h4 className="mb-2 flex items-center gap-3 px-1 text-sm font-medium text-muted">
             <span>{round === 1 ? '第 1 輪：各自提出意見' : `第 ${round} 輪：互相回應`}</span>
             <span aria-hidden className="h-px flex-1 bg-line" />
           </h4>
@@ -71,7 +75,7 @@ export function DiscussionView({ state, colorOf, failedText }: {
       {state.finished ? (
         state.error
           ? <p className="notice notice-error mt-4">討論提前結束：{state.error}</p>
-          : <p className="mt-4 text-sm text-muted">討論結束，主管接著整理總結。</p>
+          : <p className="mt-4 px-1 text-sm text-muted">討論結束，主管接著整理總結。</p>
       ) : failedText !== undefined && (
         <p className="notice notice-error mt-4">討論提前結束：{failedText}</p>
       )}

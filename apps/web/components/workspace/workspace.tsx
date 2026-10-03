@@ -3,6 +3,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
+import { Chevron } from '@/components/chevron';
+import { Avatar, MANAGER_COLOR } from '@/components/ui/avatar';
+import { BottomSheet } from '@/components/ui/bottom-sheet';
+import { useMediaQuery } from '@/components/ui/use-media-query';
 import { api } from '@/lib/client-api';
 import { consultantColor } from '@/lib/colors';
 import type { ProjectDetail } from '@/lib/services/projects';
@@ -10,6 +14,7 @@ import { AgentRoster } from './agent-roster';
 import { Chat } from './chat';
 import { FilePanel } from './file-panel';
 import { MemoryPanel } from './memory-panel';
+import { ThreadTabs } from './thread-tabs';
 
 // 準備超過這個時間仍未完成（例如背景部署被中斷），讓使用者可以重新準備
 const STALLED_MS = 120_000;
@@ -22,8 +27,10 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
   const [memoryTick, setMemoryTick] = useState(0);
   const [stalled, setStalled] = useState(false);
   const [provisionRun, setProvisionRun] = useState(0);
-  // 純呈現：手機上側欄三個面板的展開狀態，不影響資料流
+  // 純呈現：手機上底部面板的開關，不影響資料流
   const [panelOpen, setPanelOpen] = useState(false);
+  // 面板只渲染在一個地方：桌面在側欄、手機在底部面板，避免重複抓資料
+  const isDesktop = useMediaQuery('(min-width: 1024px)', true);
   const { project, agents, threads } = detail;
 
   const reload = useCallback(async () => {
@@ -50,6 +57,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
   const consultants = agents.filter((a) => a.role === 'consultant');
   const colorOf = (id: string) => consultantColor(Math.max(0, consultants.findIndex((a) => a.id === id)));
   const speaker = consultants.length > 1 ? '主管' : consultants[0]?.name ?? '顧問';
+  const speakerColor = consultants.length > 1 ? MANAGER_COLOR : colorOf(consultants[0]?.id ?? '');
 
   async function newThread() {
     try {
@@ -83,19 +91,28 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
     }
   }
 
+  const panels = (
+    <div className="space-y-8">
+      <AgentRoster agents={agents} colorOf={colorOf} />
+      <FilePanel projectId={project.id} />
+      <MemoryPanel projectId={project.id} refreshKey={memoryTick + threads.length} />
+      <button onClick={remove} className="btn btn-sm -ml-3 text-seal hover:bg-seal/10">刪除專案</button>
+    </div>
+  );
+
   return (
-    <div className="grid gap-6 py-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:gap-10 lg:py-8">
-      <aside className="min-w-0 lg:sticky lg:top-6 lg:-ml-1 lg:max-h-[calc(100vh-8rem)] lg:self-start lg:overflow-y-auto lg:pb-1 lg:pl-1 lg:pr-1">
+    <div className="grid gap-6 py-6 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-10 lg:py-8">
+      <aside className="min-w-0 lg:sticky lg:top-[calc(var(--nav-h,57px)+2rem)] lg:-ml-1 lg:max-h-[calc(100dvh-var(--nav-h,57px)-4rem)] lg:self-start lg:overflow-y-auto lg:pb-1 lg:pl-1 lg:pr-1">
         {/* 標題與環境狀態：手機也永遠看得到 */}
         <div>
-          <h1 className="font-display text-2xl leading-tight">{project.name}</h1>
+          <h1 className="font-display text-2xl font-bold">{project.name}</h1>
           {project.sprite_status === 'provisioning' && (
             <div role="status" className="notice notice-info mt-3">
-              <p className="flex items-center gap-2 text-ink"><span className="dot-busy" aria-hidden />正在準備 agent 的工作電腦，約需一分鐘</p>
-              <p className="mt-1">準備好之後就能送出訊息，這段時間可以先上傳資料。</p>
+              <p className="flex items-center gap-2 font-medium"><span className="dot-busy" aria-hidden />正在準備 agent 的工作電腦，約需一分鐘</p>
+              <p className="mt-1 text-muted">準備好之後就能送出訊息，這段時間可以先上傳資料。</p>
               {stalled && (
                 <>
-                  <p className="mt-2">準備時間比平常久，可以重新準備。</p>
+                  <p className="mt-2 text-muted">準備時間比平常久，可以重新準備。</p>
                   <button onClick={retry} className="btn btn-secondary btn-sm mt-2">重新準備</button>
                 </>
               )}
@@ -110,45 +127,38 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
           )}
         </div>
 
-        {/* 手機：一顆開關收合側欄面板；桌面：隱藏 */}
-        <button type="button" onClick={() => setPanelOpen((o) => !o)} aria-expanded={panelOpen} aria-controls="workspace-panels"
-          className="btn btn-secondary mt-4 w-full justify-between lg:hidden">
-          <span>顧問、資料與記憶</span>
-          <span aria-hidden className="text-muted">{panelOpen ? '收起' : '展開'}</span>
+        {/* 手機：一列按鈕叫出底部面板；桌面：面板直接放在側欄 */}
+        <button type="button" onClick={() => setPanelOpen(true)} aria-haspopup="dialog" aria-expanded={panelOpen}
+          className="panel mt-4 flex w-full items-center gap-3 px-4 py-3 text-left transition-transform duration-100 active:scale-[0.98] lg:hidden">
+          <span className="flex -space-x-2">
+            {consultants.slice(0, 3).map((a) => <span key={a.id} className="rounded-full ring-2 ring-surface"><Avatar name={a.name} color={colorOf(a.id)} size="sm" /></span>)}
+          </span>
+          <span className="min-w-0 flex-1 font-medium">顧問、資料與記憶</span>
+          <Chevron className="-rotate-90" />
         </button>
 
-        <div id="workspace-panels" className={`${panelOpen ? 'mt-6 block' : 'hidden'} space-y-8 lg:mt-8 lg:block`}>
-          <AgentRoster agents={agents} colorOf={colorOf} />
-          <FilePanel projectId={project.id} />
-          <MemoryPanel projectId={project.id} refreshKey={memoryTick + threads.length} />
-          <div className="border-t border-line pt-4">
-            <button onClick={remove} className="link text-sm text-seal hover:text-seal">刪除專案</button>
-          </div>
-        </div>
+        <div className="hidden lg:mt-8 lg:block">{isDesktop && panels}</div>
       </aside>
 
+      {!isDesktop && (
+        <BottomSheet open={panelOpen} onClose={() => setPanelOpen(false)} title="顧問、資料與記憶">
+          {panels}
+        </BottomSheet>
+      )}
+
       <section aria-label="對話" className="min-w-0">
-        <div className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center gap-2 border-b border-line bg-paper px-4 py-3 sm:mx-0 sm:px-0">
-          {threads.map((t, i) => (
-            <button key={t.id} onClick={() => setThreadId(t.id)} aria-current={t.id === threadId ? 'true' : undefined} title={t.title !== '新對話' ? t.title : undefined}
-              className={`btn btn-sm max-w-full ${t.id === threadId ? 'btn-primary' : 'btn-secondary'}`}>
-              <span className="truncate">{t.title === '新對話' ? `對話 ${threads.length - i}` : t.title}</span>
-            </button>
-          ))}
-          <button onClick={newThread} className="btn btn-sm border border-dashed border-line text-muted hover:border-ink hover:text-ink">開新對話</button>
-          {error && <p role="alert" className="notice notice-error w-full">{error}</p>}
-        </div>
+        <ThreadTabs threads={threads} threadId={threadId} onSelect={setThreadId} onNew={newThread} error={error} />
         {consultants.length === 0 ? (
           <div className="panel p-6">
-            <p className="font-display text-xl">這張工作桌還沒有顧問</p>
+            <p className="text-xl font-semibold">這張工作桌還沒有顧問</p>
             <p className="mt-1 text-muted">到市集挑一位加進來就能開始對話；加到第二位時會自動多一位主管幫你分工。</p>
             <Link href="/" className="btn btn-primary mt-4">到市集挑顧問</Link>
           </div>
         ) : threadId ? (
-          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} hasManager={consultants.length > 1} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
+          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} speakerColor={speakerColor} hasManager={consultants.length > 1} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
         ) : (
           <div className="panel p-6">
-            <p className="font-display text-xl">還沒有對話</p>
+            <p className="text-xl font-semibold">還沒有對話</p>
             <p className="mt-1 text-muted">開一個對話，說明你想完成的事，顧問就會開始工作。</p>
             <button onClick={newThread} className="btn btn-primary mt-4">開始第一個對話</button>
           </div>

@@ -6,7 +6,8 @@ import { api } from '@/lib/client-api';
 type Memory = { id: string; instance_id: string | null; agent_name: string | null; content: string; created_at: string };
 
 export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refreshKey: number }) {
-  const [memories, setMemories] = useState<Memory[]>([]);
+  // null = 還在載入，避免載入中先閃出「還沒有記憶」
+  const [memories, setMemories] = useState<Memory[] | null>(null);
   const [editing, setEditing] = useState<{ id: string; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,13 +39,13 @@ export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refr
 
   return (
     <section aria-labelledby="memory-title">
-      <h2 id="memory-title" className="font-display text-xl">記憶</h2>
-      <p className="text-sm text-muted">顧問記下你說過的事實與偏好，你可以修改或刪除。</p>
-      {error && <p role="alert" className="notice notice-error mt-2">{error}</p>}
-      <ul className="mt-2 space-y-2 text-sm">
-        {memories.length === 0 && <li className="text-sm text-muted">還沒有記憶。</li>}
-        {memories.map((m) => (
-          <li key={m.id} className="border-l-2 border-line pl-2">
+      <h2 id="memory-title" className="group-title">記憶</h2>
+      {error && <p role="alert" className="notice notice-error mb-2">{error}</p>}
+      <ul className="panel divide-y divide-line/70 px-4 py-1 text-sm">
+        {memories === null && <li className="py-3 text-muted">載入中…</li>}
+        {memories?.length === 0 && <li className="py-3 text-muted">還沒有記憶。</li>}
+        {memories?.map((m) => (
+          <li key={m.id} className="py-3">
             <div className="text-sm text-muted">{m.agent_name ? `${m.agent_name}（私有）` : '整個專案共用'}</div>
             {editing?.id === m.id ? (
               <div className="mt-1 space-y-1">
@@ -67,6 +68,7 @@ export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refr
           </li>
         ))}
       </ul>
+      <p className="hint px-1">顧問記下你說過的事實與偏好，你可以修改或刪除。</p>
     </section>
   );
 }
