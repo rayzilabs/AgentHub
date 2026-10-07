@@ -224,6 +224,12 @@ describe('roundPrompt / formatTranscript', () => {
     expect(p).toContain('立場：同意');
   });
 
+  it('每一輪都要求需要數據時先用工具取得，不可憑印象發言', () => {
+    for (const round of [1, 2, 3]) {
+      expect(roundPrompt('題目A', round, 'T')).toContain('先用你的工具取得');
+    }
+  });
+
   it('限制發言長度：第 1 輪 300 字，第 2 輪起 200 字', () => {
     const r1 = roundPrompt('題目A', 1, '');
     expect(r1).toContain('300 字');

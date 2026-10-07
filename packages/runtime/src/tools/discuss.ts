@@ -43,6 +43,8 @@ export function formatTranscript(state: DiscussionState): string {
     .join('\n\n');
 }
 
+const TOOLS_FIRST = '需要數據或計算結果時，先用你的工具取得再發言，不要憑印象，也不要假設你的工具沒有提供的條件。';
+
 export function roundPrompt(topic: string, round: number, transcript: string): string {
   if (round === 1) {
     return [
@@ -50,6 +52,7 @@ export function roundPrompt(topic: string, round: number, transcript: string): s
       `題目：${topic}`,
       '',
       '請從你的專業角度提出獨立意見，最多 300 字，用 3–5 個條列重點（重點、風險、建議）。不要冗長開場，不要標題。',
+      TOOLS_FIRST,
     ].join('\n');
   }
   return [
@@ -60,6 +63,7 @@ export function roundPrompt(topic: string, round: number, transcript: string): s
     transcript,
     '',
     '請回應其他人的意見，最多 200 字，只談同意的地方、反對的地方與需要修正之處。',
+    TOOLS_FIRST,
     '最後一行必須是「立場：同意」或「立場：有保留」。',
   ].join('\n');
 }
