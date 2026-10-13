@@ -1,6 +1,6 @@
 import type { UIMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { currentActivity, elapsedOf, foldSteps, formatElapsed, isStalled, stepOf } from '@/lib/progress';
+import { currentActivity, elapsedOf, foldSteps, formatElapsed, isRunningState, isStalled, settleStep, stepOf } from '@/lib/progress';
 
 const assistant = (parts: unknown[], metadata?: unknown) => ({ id: 'a', role: 'assistant', parts, metadata }) as unknown as UIMessage;
 
@@ -75,5 +75,21 @@ describe('isStalled', () => {
     expect(isStalled('2026-10-13T00:00:30Z', now)).toBe(true);
     expect(isStalled('2026-10-13T00:01:30Z', now)).toBe(false);
     expect(isStalled(null, now)).toBe(false);
+  });
+});
+
+describe('settleStep', () => {
+  const running = { tool: 'bash', state: 'input-available', description: '安裝套件', started_at: '2026-10-13T00:00:00.000Z' };
+  it('上層已結束（被中止）：還在跑的步驟改成中斷，不再算執行中、沒有經過時間', () => {
+    const s = settleStep(running, true);
+    expect(s).toMatchObject({ tool: 'bash', state: 'interrupted', description: '安裝套件' });
+    expect(isRunningState(s.state)).toBe(false);
+    expect(elapsedOf(s, Date.parse('2026-10-13T00:05:00.000Z'))).toBeUndefined();
+  });
+
+  it('上層還在跑、或步驟已完成：不變', () => {
+    expect(settleStep(running, false)).toBe(running);
+    const done = { tool: 'bash', state: 'output-available', started_at: 'S', ended_at: 'E' };
+    expect(settleStep(done, true)).toBe(done);
   });
 });

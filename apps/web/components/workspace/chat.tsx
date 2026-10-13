@@ -204,8 +204,9 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
             <p className="mt-2 text-sm">說過的事實與偏好會記在「記憶」面板，之後的對話都會沿用。</p>
           </div>
         )}
-        {messages.map((m) => (
-          <MessageView key={m.id} message={m} speaker={speaker} speakerColor={speakerColor} colorOf={colorOf} animateIn={!known.has(m.id)} />
+        {messages.map((m, i) => (
+          <MessageView key={m.id} message={m} speaker={speaker} speakerColor={speakerColor} colorOf={colorOf} animateIn={!known.has(m.id)}
+            live={busy && i === messages.length - 1} />
         ))}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted empty:hidden">
           {busy && (

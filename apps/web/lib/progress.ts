@@ -23,10 +23,18 @@ export function isRunningState(state: string): boolean {
   return state === 'input-streaming' || state === 'input-available';
 }
 
+/** 被中止的步驟：上層（派工、發言、整則回覆）已結束，這一步卻沒有結果 */
+export const INTERRUPTED = 'interrupted';
+
 export function elapsedOf(step: ToolEvent, now: number): number | undefined {
-  if (!step.started_at) return undefined;
+  if (!step.started_at || step.state === INTERRUPTED) return undefined;
   const end = step.ended_at ? Date.parse(step.ended_at) : now;
   return end - Date.parse(step.started_at);
+}
+
+/** 上層已結束時，還停在執行中的步驟其實是被中止了（串流中止時工具拿不到結果），改成中斷、不再計時 */
+export function settleStep(step: ToolEvent, ended: boolean): ToolEvent {
+  return ended && isRunningState(step.state) ? { ...step, state: INTERRUPTED } : step;
 }
 
 export function foldSteps<T>(steps: T[], max = 8, keep = 5): { hidden: number; visible: T[] } {

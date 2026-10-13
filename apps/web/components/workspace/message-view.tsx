@@ -7,19 +7,21 @@ import { Avatar } from '@/components/ui/avatar';
 import type { DelegationOutput, DiscussionState } from '@/lib/agent-output';
 import { DelegationCard } from './delegation-card';
 import { DiscussionView } from './discussion-view';
-import { isRunningPart, isToolPart, stepOf, toolNameOf, type ToolPartLike } from '@/lib/progress';
+import { isRunningPart, isToolPart, settleStep, stepOf, toolNameOf, type ToolPartLike } from '@/lib/progress';
 import { ToolStep } from './tool-steps';
 import { useNow } from './use-now';
 
-export function MessageView({ message, speaker, speakerColor, colorOf, animateIn }: {
+export function MessageView({ message, speaker, speakerColor, colorOf, animateIn, live }: {
   message: UIMessage;
   speaker: string;
   speakerColor: string;
   colorOf: (id: string) => string;
   /** 這次畫面上新出現的訊息才播進場動畫 */
   animateIn: boolean;
+  /** 這則回覆還在產生中；結束後還沒有結果的工具是被中止的 */
+  live: boolean;
 }) {
-  const now = useNow(message.parts.some((p) => isToolPart(p) && isRunningPart(p as unknown as ToolPartLike)));
+  const now = useNow(live && message.parts.some((p) => isToolPart(p) && isRunningPart(p as unknown as ToolPartLike)));
   if (message.role === 'user') {
     // 送出的訊息從右下角的輸入列方向長出來
     return (
@@ -52,14 +54,14 @@ export function MessageView({ message, speaker, speakerColor, colorOf, animateIn
         if (name === 'assign_task') {
           const output = tool.output as DelegationOutput | undefined;
           const consultantId = output?.consultant_id ?? (tool.input as { consultant_id?: string } | undefined)?.consultant_id ?? '';
-          return <DelegationCard key={i} output={output} task={(tool.input as { task?: string } | undefined)?.task} color={colorOf(consultantId)}
+          return <DelegationCard key={i} output={output} task={(tool.input as { task?: string } | undefined)?.task} color={colorOf(consultantId)} live={live}
             failedText={tool.state === 'output-error' ? tool.errorText ?? '顧問沒有完成這項工作' : undefined} />;
         }
         if (name === 'convene_discussion') {
-          return <DiscussionView key={i} state={tool.output as DiscussionState | undefined} colorOf={colorOf}
+          return <DiscussionView key={i} state={tool.output as DiscussionState | undefined} colorOf={colorOf} live={live}
             failedText={tool.state === 'output-error' ? tool.errorText ?? '主管沒能召集顧問' : undefined} />;
         }
-        return <ul key={i} className="my-2"><ToolStep step={stepOf(tool, message.metadata)} now={now} /></ul>;
+        return <ul key={i} className="my-2"><ToolStep step={settleStep(stepOf(tool, message.metadata), !live)} now={now} /></ul>;
       })}
     </motion.div>
   );

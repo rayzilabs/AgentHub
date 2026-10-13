@@ -7,7 +7,7 @@ import { ToolSteps } from './tool-steps';
 
 const STANCE_LINE = /\n?\s*立場\s*[:：]\s*(同意|有保留)\s*$/;
 
-function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
+function SpeechBlock({ speech, color, live }: { speech: Speech; color: string; live: boolean }) {
   const body = speech.text.replace(STANCE_LINE, '');
   return (
     <div className="panel px-5 py-4">
@@ -20,7 +20,7 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
         {speech.cutoff === 'stopped' && <span className="chip chip-seal">逾時</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
-      <ToolSteps tools={speech.tools} />
+      <ToolSteps tools={speech.tools} ended={!live || speech.status !== 'speaking'} />
       {speech.status === 'failed' && speech.cutoff !== 'stopped' ? (
         <p className="notice notice-error mt-3">未發言：{speech.error}</p>
       ) : (
@@ -36,8 +36,10 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
   );
 }
 
-export function DiscussionView({ state, colorOf, failedText }: {
+export function DiscussionView({ state, colorOf, failedText, live }: {
   state?: DiscussionState;
+  /** 整則回覆還在產生中；結束後還沒有結果的工具是被中止的 */
+  live: boolean;
   colorOf: (consultantId: string) => string;
   /** 召集討論的工具失敗時的原因：還沒開始就顯示「討論沒有開始」，進行到一半則顯示「提前結束」 */
   failedText?: string;
@@ -70,7 +72,7 @@ export function DiscussionView({ state, colorOf, failedText }: {
           </h4>
           <div className="space-y-3">
             {state.speeches.filter((s) => s.round === round).map((s) => (
-              <SpeechBlock key={`${s.consultant_id}-${s.round}`} speech={s} color={colorOf(s.consultant_id)} />
+              <SpeechBlock key={`${s.consultant_id}-${s.round}`} speech={s} color={colorOf(s.consultant_id)} live={live} />
             ))}
           </div>
         </div>
