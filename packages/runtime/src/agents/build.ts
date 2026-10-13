@@ -7,6 +7,7 @@ import type { Config } from '../config';
 import type { Db } from '../db';
 import { errorText } from '../errors';
 import { connectMcpServers } from '../mcp';
+import { withToolTimes } from '../tool-clock';
 import { agentDir, skillsDir } from '../sync';
 import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
@@ -79,7 +80,8 @@ function wrapAgent(agent: StreamableAgent, instructions: string, warnings: strin
     close,
     streamUI: async ({ messages, abortSignal }) => {
       const result = await agent.stream({ messages, abortSignal });
-      return withWarnings(result.toUIMessageStream({ generateMessageId: generateId, onError: errorText }), warnings);
+      const ui = result.toUIMessageStream({ generateMessageId: generateId, onError: errorText });
+      return withWarnings(withToolTimes(ui), warnings);
     },
   };
 }

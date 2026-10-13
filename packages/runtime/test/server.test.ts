@@ -93,6 +93,8 @@ describe('POST /chat', () => {
     expect(final.content).toBe('寫好了');
     expect(final.tool_events).toMatchObject([{ tool: 'write_file', state: 'output-available', tool_call_id: 'call-1' }]);
     expect(final.tool_events[0].input).toContain('memo.md');
+    expect(final.ui_message.metadata.tool_times['call-1'].ended_at).toBeTruthy();
+    expect(final.tool_events[0].started_at).toBeTruthy();
   });
 
   it('第二次對話帶入之前的問答', async () => {
