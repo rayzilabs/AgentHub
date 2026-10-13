@@ -1,7 +1,7 @@
 import { APIError, type Sprite } from '@fly/sprites';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, spriteName } from '@/lib/sprites';
+import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, sandboxSetupScript, spriteName } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
@@ -110,13 +110,14 @@ describe('installRuntime', () => {
   it('建立服務後重新啟動，讓已存在的 Sprite 載入新的 main.js；兩個 log 串流都讀完', async () => {
     for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'VERTEX_API_EXPRESS_MODE_KEY']) vi.stubEnv(k, 'x');
     const calls: string[] = [];
+    const written: Record<string, string> = {};
     const logStream = (label: string) => ({ processAll: async () => { calls.push(`${label}:drained`); } });
     const sprite = {
       execFile: async (_cmd: string, args: string[]) => {
-        calls.push(args[1].startsWith('printf') ? 'home' : 'download');
+        calls.push(args[1].startsWith('printf') ? 'home' : args[1].startsWith('set -euo pipefail') ? 'setup' : 'download');
         return { stdout: '/home/sprite\n' };
       },
-      filesystem: () => ({ writeFile: async (name: string) => { calls.push(`write:${name}`); } }),
+      filesystem: () => ({ writeFile: async (name: string, content: string) => { calls.push(`write:${name}`); written[name] = content; } }),
       createService: async (name: string, _config: unknown, duration?: string) => {
         calls.push(`create:${name}:${duration}`);
         return logStream('create');
@@ -132,9 +133,26 @@ describe('installRuntime', () => {
 
     expect(await installRuntime(db, sprite, 'p1')).toBe('/home/sprite/agenthub');
     expect(calls).toEqual([
-      'home', 'download', 'write:.env',
+      'home', 'download', 'write:.env', 'setup',
       'create:runtime:10s', 'create:drained',
       'restart:runtime:10s', 'restart:drained',
     ]);
+    expect(written['.env']).toContain('AGENTS_ROOT="/workspace/agents"');
+    expect(written['.env']).toContain('SHARED_ROOT="/workspace/shared"');
+    expect(written['.env']).toContain('SANDBOX_USER="agent"');
+  });
+});
+
+describe('sandboxSetupScript', () => {
+  it('建立沒有 sudo 的 agent 帳號與工作區，收緊 runtime 目錄，搬移舊工作區', () => {
+    const s = sandboxSetupScript('/home/sprite/agenthub');
+    expect(s.startsWith('set -euo pipefail')).toBe(true);
+    expect(s).toContain('useradd --create-home --shell /bin/bash agent');
+    expect(s).not.toMatch(/usermod -aG sudo/);
+    expect(s).toContain("cp -a '/home/sprite/agenthub/agents/.' /workspace/agents/");
+    expect(s).toContain('chown -R "$(id -un)":workspace /workspace');
+    expect(s).toContain('chmod 2770 /workspace/agents /workspace/shared');
+    expect(s).toContain("chmod 700 '/home/sprite/agenthub'");
+    expect(s).toContain("chmod 600 '/home/sprite/agenthub/.env'");
   });
 });

@@ -5,6 +5,8 @@ import { setSpriteState } from '@/lib/services/projects';
 import type { Db } from '@/lib/supabase/admin';
 
 export const RUNTIME_OBJECT = 'main.js';
+export const WORKSPACE = '/workspace';
+export const SANDBOX_USER = 'agent';
 const SERVICE = 'runtime';
 const HEALTH_TIMEOUT_MS = 90_000;
 const RETRYABLE = new Set([502, 503, 504]);
@@ -48,6 +50,33 @@ export function runtimeEnvFile(vars: Record<string, string>): string {
   return Object.entries(vars).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join('\n') + '\n';
 }
 
+/**
+ * 建立沙盒帳號與工作區（可重複執行），以 runtime 帳號透過 sudo 執行。
+ * 工作區由 runtime 帳號擁有、workspace 群組可寫；agent 只靠群組權限進入，沒有 sudo，進不了 runtime 目錄。
+ */
+export function sandboxSetupScript(base: string): string {
+  const q = (p: string) => `'${p}'`;
+  return [
+    'set -euo pipefail',
+    `id -u ${SANDBOX_USER} >/dev/null 2>&1 || sudo useradd --create-home --shell /bin/bash ${SANDBOX_USER}`,
+    'getent group workspace >/dev/null || sudo groupadd workspace',
+    `sudo usermod -aG workspace ${SANDBOX_USER}`,
+    `sudo mkdir -p ${WORKSPACE}/agents ${WORKSPACE}/shared`,
+    // 舊版的工作區在 runtime 目錄底下；搬過來，顧問寫出的檔案不會遺失
+    `if [ -d ${q(`${base}/agents`)} ]; then sudo cp -a ${q(`${base}/agents/.`)} ${WORKSPACE}/agents/ && sudo rm -rf ${q(`${base}/agents`)}; fi`,
+    `if [ -d ${q(`${base}/shared`)} ]; then sudo cp -a ${q(`${base}/shared/.`)} ${WORKSPACE}/shared/ && sudo rm -rf ${q(`${base}/shared`)}; fi`,
+    `sudo chown -R "$(id -un)":workspace ${WORKSPACE}`,
+    `sudo chmod -R g+rwX,o-rwx ${WORKSPACE}/agents ${WORKSPACE}/shared`,
+    `sudo find ${WORKSPACE}/agents ${WORKSPACE}/shared -type d -exec chmod g+s {} +`,
+    `sudo chmod 2770 ${WORKSPACE}/agents ${WORKSPACE}/shared`,
+    `sudo chmod 755 ${WORKSPACE}`,
+    // .env 可能由檔案 API 以別的帳號寫入，先改回 runtime 帳號再收緊
+    `sudo chown "$(id -un)" ${q(`${base}/.env`)}`,
+    `chmod 600 ${q(`${base}/.env`)}`,
+    `chmod 700 ${q(base)}`,
+  ].join('\n');
+}
+
 function client() {
   return new SpritesClient(env.spritesToken);
 }
@@ -62,10 +91,10 @@ async function getOrCreateSprite(name: string): Promise<Sprite> {
   return c.createSprite(name, { urlSettings: { auth: 'sprite' } });
 }
 
-export async function installRuntime(db: Db, sprite: Sprite, projectId: string): Promise<string> {
+export async function installRuntime(db: Db, sprite: Sprite, projectId: string, runtimeObject = RUNTIME_OBJECT): Promise<string> {
   const { stdout } = await sprite.execFile('bash', ['-lc', 'printf %s "$HOME"']);
   const base = `${String(stdout).trim()}/agenthub`;
-  const { data, error } = await db.storage.from('runtime').createSignedUrl(RUNTIME_OBJECT, 600);
+  const { data, error } = await db.storage.from('runtime').createSignedUrl(runtimeObject, 600);
   if (error) throw new Error(`找不到 runtime 安裝檔：${error.message}`);
   await sprite.execFile('bash', ['-lc', `mkdir -p '${base}' && curl -fsSL '${data.signedUrl}' -o '${base}/main.js'`]);
   await sprite.filesystem(base).writeFile('.env', runtimeEnvFile({
@@ -73,9 +102,11 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string):
     SUPABASE_URL: env.supabaseUrl,
     SUPABASE_SECRET_KEY: env.supabaseSecretKey,
     VERTEX_API_EXPRESS_MODE_KEY: env.vertexKey,
-    AGENTS_ROOT: `${base}/agents`,
-    SHARED_ROOT: `${base}/shared`,
+    AGENTS_ROOT: `${WORKSPACE}/agents`,
+    SHARED_ROOT: `${WORKSPACE}/shared`,
+    SANDBOX_USER,
   }));
+  await sprite.execFile('bash', ['-lc', sandboxSetupScript(base)]);
   const logs = await sprite.createService(SERVICE, {
     cmd: 'node',
     args: [`--env-file=${base}/.env`, `${base}/main.js`],

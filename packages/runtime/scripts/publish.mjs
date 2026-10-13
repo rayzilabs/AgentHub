@@ -10,7 +10,9 @@ const bundle = await readFile(fileURLToPath(new URL('../dist/main.js', import.me
 const version = execSync('git rev-parse --short HEAD').toString().trim();
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
-for (const path of ['main.js', `main-${version}.js`]) {
+// --versioned-only：只上傳 main-<sha>.js，不動新專案預設使用的 main.js（給上線前驗收用）
+const versionedOnly = process.argv.includes('--versioned-only');
+for (const path of versionedOnly ? [`main-${version}.js`] : ['main.js', `main-${version}.js`]) {
   const { error } = await db.storage.from('runtime').upload(path, bundle, { contentType: 'text/javascript', upsert: true });
   if (error) throw error;
   console.log(`已上傳 runtime/${path}（${bundle.length} bytes）`);

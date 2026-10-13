@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import type { Db } from '../src/db';
 import { SyncError } from '../src/errors';
 import { agentDir, skillsDir, syncSharedFiles, syncSkills } from '../src/sync';
 import { testDb, tmpRoots, uploadSkillsZip } from './helpers';
@@ -66,6 +67,23 @@ describe('syncSkills', () => {
 });
 
 describe('syncSharedFiles', () => {
+  it('專案檔案同步時，目標檔若是唯讀（agent 建立的同名檔）也能覆蓋', async () => {
+    const { sharedRoot } = await tmpRoots();
+    await mkdir(sharedRoot, { recursive: true });
+    await writeFile(path.join(sharedRoot, 'a.txt'), 'old');
+    await chmod(path.join(sharedRoot, 'a.txt'), 0o444);
+    const fakeDb = {
+      storage: {
+        from: () => ({
+          list: async () => ({ data: [{ id: '1', name: 'a.txt', updated_at: 't2' }], error: null }),
+          download: async () => ({ data: new Blob(['new']), error: null }),
+        }),
+      },
+    } as unknown as Db;
+    await syncSharedFiles(fakeDb, 'p1', sharedRoot);
+    expect(await readFile(path.join(sharedRoot, 'a.txt'), 'utf8')).toBe('new');
+  });
+
   it('新增、更新、刪除都會反映到本機', async () => {
     const { sharedRoot } = await tmpRoots();
     const projectId = randomUUID();

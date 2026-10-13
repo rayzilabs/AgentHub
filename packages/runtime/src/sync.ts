@@ -74,7 +74,10 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
     if (previous[o.name] !== stamp) {
       const { data: blob, error: downloadError } = await bucket.download(`${projectId}/${o.name}`);
       if (downloadError || !blob) throw new SyncError(`無法下載專案檔案 ${o.name}：${downloadError?.message ?? '空檔案'}`);
-      await writeFile(path.join(sharedRoot, o.name), Buffer.from(await blob.arrayBuffer()));
+      const target = path.join(sharedRoot, o.name);
+      // agent 可能建立了同名檔案（擁有者是 agent，runtime 不能改寫但可以刪），先刪再寫
+      await rm(target, { force: true });
+      await writeFile(target, Buffer.from(await blob.arrayBuffer()));
     }
     next[o.name] = stamp;
   }
