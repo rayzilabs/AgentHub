@@ -22,9 +22,42 @@ export const SANDBOX_WRAPPER_SCRIPT = [
   'PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
   'unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS',
   'user="$1"; shift',
+  'echo "$user" | /usr/bin/grep -Eqx \'agent(-[0-9a-f]{12})?\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
   '[ ! -S /.sprite/api.sock ] || /usr/bin/mount --bind /dev/null /.sprite/api.sock',
+  // 每個帳號一份私人 /tmp；實體目錄放在只有 root 能寫的地方，不能被搶先建立或換成 symlink
+  '/usr/bin/install -d -m 700 -o "$user" -g "$user" "/var/lib/agenthub/tmp/$user"',
+  '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp',
   'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
   '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
+  '',
+].join('\n');
+
+/** 與 packages/runtime/src/sandbox.ts 的 SANDBOX_ADDUSER 相同 */
+export const SANDBOX_ADDUSER = '/usr/local/bin/agenthub-sandbox-adduser';
+
+/**
+ * runtime 以 `sudo agenthub-sandbox-adduser <帳號> <目錄>` 呼叫：確保顧問帳號與工作目錄存在，且只有 runtime 與該顧問進得去。
+ * 參數不合格、目錄是 symlink 就失敗；可重複執行（1-A 時期的 workspace 群組目錄會轉成顧問群組）。
+ */
+export const SANDBOX_ADDUSER_SCRIPT = [
+  '#!/bin/sh',
+  'set -eu',
+  'PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
+  'unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS',
+  'user="$1"; dir="$2"; owner="${SUDO_USER:?必須由 runtime 以 sudo 呼叫}"',
+  'echo "$user" | /usr/bin/grep -Eqx \'agent-[0-9a-f]{12}\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
+  'echo "$dir" | /usr/bin/grep -Eqx \'/workspace/agents/[0-9a-f-]{36}\' || { echo "不合格的目錄：$dir" >&2; exit 2; }',
+  '[ ! -L "$dir" ] || { echo "目錄不能是 symlink：$dir" >&2; exit 2; }',
+  '/usr/bin/id -u "$user" >/dev/null 2>&1 || /usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user"',
+  '[ -d "$dir" ] || /usr/bin/mkdir "$dir"',
+  '/usr/bin/chown "$owner:$user" "$dir"',
+  '/usr/bin/chmod 2770 "$dir"',
+  // 1-A 時期的目錄是 workspace 群組：轉成顧問群組（-R 預設不跟隨 symlink）
+  'if [ -n "$(/usr/bin/find "$dir" -mindepth 1 ! -group "$user" -print -quit)" ]; then',
+  '  /usr/bin/chgrp -R "$user" "$dir"',
+  '  /usr/bin/chmod -R g+rwX,o-rwx "$dir"',
+  '  /usr/bin/find "$dir" -type d -exec /usr/bin/chmod g+s {} +',
+  'fi',
   '',
 ].join('\n');
 
@@ -90,15 +123,21 @@ export function sandboxSetupScript(base: string): string {
     // 舊版的工作區在 runtime 目錄底下；搬過來，顧問寫出的檔案不會遺失
     `if [ -d ${q(`${base}/agents`)} ]; then sudo cp -a ${q(`${base}/agents/.`)} ${WORKSPACE}/agents/ && sudo rm -rf ${q(`${base}/agents`)}; fi`,
     `if [ -d ${q(`${base}/shared`)} ]; then sudo cp -a ${q(`${base}/shared/.`)} ${WORKSPACE}/shared/ && sudo rm -rf ${q(`${base}/shared`)}; fi`,
-    `sudo chown -R "$(id -un)":workspace ${WORKSPACE}`,
-    `sudo chmod -R g+rwX,o-rwx ${WORKSPACE}/agents ${WORKSPACE}/shared`,
-    `sudo find ${WORKSPACE}/agents ${WORKSPACE}/shared -type d -exec chmod g+s {} +`,
-    `sudo chmod 2770 ${WORKSPACE}/agents ${WORKSPACE}/shared`,
+    `sudo chown "$(id -un)":workspace ${WORKSPACE} ${WORKSPACE}/agents`,
+    `sudo chown -R "$(id -un)":workspace ${WORKSPACE}/shared`,
+    `sudo chmod -R g+rwX,o-rwx ${WORKSPACE}/shared`,
+    `sudo find ${WORKSPACE}/shared -type d -exec chmod g+s {} +`,
+    `sudo chmod 2770 ${WORKSPACE}/shared`,
+    // 只有 runtime 能在這裡建立項目；各顧問目錄的擁有者與群組由 agenthub-sandbox-adduser 處理（不在這裡遞迴改回去）
+    `sudo chmod 0711 ${WORKSPACE}/agents`,
     `sudo chmod 755 ${WORKSPACE}`,
-    // runtime 透過這支腳本以沙盒帳號執行指令（見 packages/runtime/src/sandbox.ts）
+    // 私人 /tmp 的實體位置：父目錄只有 root 能寫，不能被搶先建立或換成 symlink
+    'sudo install -d -m 711 -o root -g root /var/lib/agenthub /var/lib/agenthub/tmp',
+    // runtime 透過這兩支腳本以沙盒帳號執行指令、建立顧問帳號（見 packages/runtime/src/sandbox.ts）
     `printf '%s' ${shellQuote(SANDBOX_WRAPPER_SCRIPT)} | sudo tee ${SANDBOX_WRAPPER} >/dev/null`,
-    `sudo chown root:root ${SANDBOX_WRAPPER}`,
-    `sudo chmod 755 ${SANDBOX_WRAPPER}`,
+    `printf '%s' ${shellQuote(SANDBOX_ADDUSER_SCRIPT)} | sudo tee ${SANDBOX_ADDUSER} >/dev/null`,
+    `sudo chown root:root ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
+    `sudo chmod 755 ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
     // .env 可能由檔案 API 以別的帳號寫入，先改回 runtime 帳號再收緊
     `sudo chown "$(id -un)" ${q(`${base}/.env`)}`,
     `chmod 600 ${q(`${base}/.env`)}`,

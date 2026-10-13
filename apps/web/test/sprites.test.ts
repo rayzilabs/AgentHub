@@ -1,7 +1,7 @@
 import { APIError, type Sprite } from '@fly/sprites';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, spriteName } from '@/lib/sprites';
+import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, spriteName } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
@@ -151,7 +151,11 @@ describe('sandboxSetupScript', () => {
     expect(s).not.toMatch(/usermod -aG sudo/);
     expect(s).toContain("cp -a '/home/sprite/agenthub/agents/.' /workspace/agents/");
     expect(s).toContain('chown -R "$(id -un)":workspace /workspace');
-    expect(s).toContain('chmod 2770 /workspace/agents /workspace/shared');
+    expect(s).toContain('sudo chmod 2770 /workspace/shared');
+    // 子專案 2：只有 runtime 能在 /workspace/agents 建立項目；私人 /tmp 的父目錄只有 root 能寫
+    expect(s).toContain('sudo chmod 0711 /workspace/agents');
+    expect(s).toContain('sudo install -d -m 711 -o root -g root /var/lib/agenthub /var/lib/agenthub/tmp');
+    expect(s).toContain('/usr/local/bin/agenthub-sandbox-adduser');
     expect(s).toContain("chmod 700 '/home/sprite/agenthub'");
     expect(s).toContain("chmod 600 '/home/sprite/agenthub/.env'");
     // 沙盒腳本：蓋掉 Sprite 內部 API 再降權
@@ -165,5 +169,20 @@ describe('sandboxSetupScript', () => {
     expect(lines[3]).toBe('unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind /dev/null /.sprite/api.sock');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('exec /usr/bin/setpriv');
+    // 子專案 2：只接受 agent 或顧問帳號；每個帳號一份私人 /tmp
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain("grep -Eqx 'agent(-[0-9a-f]{12})?'");
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/install -d -m 700 -o "$user" -g "$user" "/var/lib/agenthub/tmp/$user"');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp');
+  });
+});
+
+describe('SANDBOX_ADDUSER_SCRIPT', () => {
+  it('以 root 執行：重設環境、檢查參數、拒絕 symlink，建立沒有 sudo 的顧問帳號', () => {
+    expect(SANDBOX_ADDUSER_SCRIPT.split('\n')[2]).toBe('PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH');
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain("grep -Eqx 'agent-[0-9a-f]{12}'");
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain("grep -Eqx '/workspace/agents/[0-9a-f-]{36}'");
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain('[ ! -L "$dir" ]');
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain('/usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user"');
+    expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/sudo -/);
   });
 });
