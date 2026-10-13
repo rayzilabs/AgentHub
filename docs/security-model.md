@@ -40,7 +40,7 @@
 
 | 規則 | 狀態 |
 |---|---|
-| 沙盒拿不到平台金鑰 | 📝 子專案 1-A |
+| 沙盒拿不到平台金鑰 | 🚧 子專案 1-A：已實作並在暫時 Sprite 驗收通過，尚未上線 |
 | 平台金鑰外洩時，影響只限一個專案 | 📝 子專案 1-C |
 | 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared` | ⏳ 子專案 2 |
 | 創作者的腳本與資料留在遠端 MCP | ⏳ 子專案 3 |
@@ -84,16 +84,17 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 /workspace/shared/                 sprite+agent 群組  專案共用檔案
 ```
 
-- 以 `agent` 執行時，環境變數清空，只留 `PATH`、`HOME`、`LANG`。
+- 以 `agent` 執行時，環境變數清空，只留 `PATH`、`HOME`、`LANG`、`TZ`（加上 stdio MCP 自己的金鑰，經由環境變數而不是指令參數）。
+- 執行路徑：`sudo unshare --mount` → 沙盒腳本 `/usr/local/bin/agenthub-sandbox` 在獨立的掛載命名空間裡用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `agent`。Sprite 內部 API 能建立以 runtime 帳號（有 sudo）執行的服務，而它在唯讀掛載上、改不了權限，所以只能在命名空間裡蓋掉。
 - 「以哪個帳號執行」是參數。子專案 2 會改成每位顧問一個帳號（`agent-<顧問 id 前 8 碼>`），主管用只能讀 `/shared` 的帳號。
 
-**驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。
+**驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。
 
 ## 6. 子專案進度
 
 | # | 子專案 | 狀態 | 文件 |
 |---|---|---|---|
-| 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | 📝 已設計 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
+| 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | 🚧 A 已實作與驗收、待上線；C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
 | 2 | 顧問之間隔離 | ⏳ | — |
 | 3 | 遠端 MCP 的平台支援（代管、每位租用者的金鑰、用量計費、版本、大量資料下載） | ⏳ | — |
 | 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ⏳ | — |
