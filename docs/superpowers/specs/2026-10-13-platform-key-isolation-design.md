@@ -17,12 +17,13 @@
 | 1 | bash 繼承 runtime 的環境變數（含 `SUPABASE_SECRET_KEY`、`VERTEX_API_EXPRESS_MODE_KEY`） | `packages/runtime/src/tools/bash.ts` 的 `env: process.env` |
 | 2 | `.env` 放在 agent 工作目錄上兩層，所有帳號可讀 | `apps/web/lib/sprites.ts` 的 `installRuntime` |
 | 3 | `read_file` / `write_file` 在 runtime 程序內執行，可讀任意絕對路徑，也會跟著 symlink 走 | `packages/runtime/src/tools/files.ts` |
-| 4 | stdio MCP 由 runtime 啟動，繼承 runtime 的環境變數，創作者的程式碼拿得到平台金鑰 | `packages/runtime/src/mcp.ts` |
+| 4 | stdio MCP 以 runtime 同一個帳號執行（環境變數只帶 HOME、PATH 等與它自己的金鑰），可讀 `.env` 與 runtime 的 `/proc/<pid>/environ` | `packages/runtime/src/mcp.ts` |
 | 5 | agent 與 runtime 同一個 uid，可讀 `/proc/<runtime pid>/environ` | — |
 | 6 | agent 可 `sudo` 成 root | Sprite 預設 sudoers |
 | 7 | 平台金鑰權限是整個資料庫的最高權限（含 Auth 管理、Vault 解密、Storage 全部 bucket） | — |
+| 8 | Sprite 內部 API `/.sprite/api.sock`（`root:root 666`）任何帳號都能用，可建立以 runtime 帳號（有 sudo）執行的服務；它是唯讀 overlay 上的綁定掛載，改不了權限（2026-10-13 實測） | Sprite 平台 |
 
-A 處理 1–6；C 處理 7。
+A 處理 1–6、8；C 處理 7。
 
 ## 1. 決策紀錄
 
@@ -49,7 +50,7 @@ A 處理 1–6；C 處理 7。
 3. 建立 `/workspace/agents`、`/workspace/shared`，擁有者 `agent:workspace`，權限 `2770`（setgid，新檔案沿用 `workspace` 群組）。
 4. 舊的 `~/agenthub/agents`、`~/agenthub/shared` 若存在，搬到 `/workspace` 並修正擁有者與權限（已存在的專案重新佈建時不遺失顧問寫出的檔案）。
 5. `~/agenthub` 設為 `700`、`.env` 設為 `600`。
-6. 驗證 `/.sprite/api.sock` 的權限：`agent` 不能讀寫。若可以，改權限或擁有者使其只限 `sprite`（見 6. 待驗證）。
+6. 安裝沙盒腳本 `/usr/local/bin/agenthub-sandbox`（`root:root 755`，見 2.2）。
 
 `.env` 的 `AGENTS_ROOT`、`SHARED_ROOT` 改成 `/workspace/agents`、`/workspace/shared`。runtime 程序本身的 umask 設為 `002`，讓它寫進工作區的檔案 `agent` 也能讀寫。
 
@@ -65,8 +66,9 @@ export function sandboxSpawn(user: SandboxUser, argv: string[], opts: { cwd: str
 export function sandboxKill(user: SandboxUser, pgid: number): Promise<void>;
 ```
 
-- 實作：`sudo -n -u <user> -- env -i PATH=... HOME=/home/<user> LANG=C.UTF-8 [extraEnv...] setsid <argv...>`。
-- 逾時或中止時，用 `sudo -n -u <user> -- kill -KILL -<pgid>` 終止整個程序群組。`runBash` 現有的「孫行程佔住 stdout」處理保留。
+- 實作：`sudo -n -E -- unshare --mount --propagation private -- /usr/local/bin/agenthub-sandbox <user> <argv...>`。沙盒腳本以 root 在這個獨立的掛載命名空間裡用 `/dev/null` 蓋掉 `/.sprite/api.sock`（蓋不掉就失敗），再 `setpriv --reuid/--regid/--init-groups --inh-caps=-all` 降權成 `<user>`，`umask 002`，`PATH` 從 `SANDBOX_PATH` 還原（sudo 會把 PATH 重設成系統預設，`/.sprite/languages` 底下的 node、python 會找不到）。
+- 環境變數由 spawn 時給的白名單決定，`sudo -E` 原樣帶過去；祕密不放進指令參數（`/proc/<pid>/cmdline` 所有帳號都讀得到）。
+- 逾時或中止時，用 `sudo -n -u <user> -- kill -KILL -- -<pgid>` 終止整個程序群組。`runBash` 現有的「孫行程佔住 stdout」處理保留。
 
 ### 2.3 工具改用 `sandboxSpawn`
 
@@ -136,8 +138,8 @@ export function sandboxKill(user: SandboxUser, pgid: number): Promise<void>;
 ## 6. 實作前要先驗證
 
 1. **Supabase 能否自行簽發 JWT**：專案用新制 API 金鑰（`sb_secret_…`）。要確認能匯入自己的簽章私鑰，或仍可使用舊制 JWT secret。若都不行，改用替代做法：runtime 不直接連資料庫，改呼叫 Vercel 的專用 API（每個動作一個端點，依同一張權限表檢查），權限表不變。
-2. **`/.sprite/api.sock` 的權限**：`agent` 是否碰得到，碰得到時能否收緊而不影響 runtime 的 keepalive。
-3. **Sprite 的 service 是否會被 `useradd` 等系統變更影響**：重新佈建後 service 能正常啟動。
+2. **`/.sprite/api.sock` 的權限**：✅ 已驗證（2026-10-13）。agent 碰得到，且能建立服務；socket 在唯讀掛載上改不了權限 → 改用掛載命名空間蓋掉（見 2.2）。暫時 Sprite 實測：agent 連線失敗、無法 umount、runtime 帳號照常可用、掛載來源 `/tmp/sprite.sock` 不可見、`/proc/1/root` 拒絕存取。
+3. **Sprite 的 service 是否會被 `useradd` 等系統變更影響**：✅ 已驗證（2026-10-13）。重新佈建後 runtime 服務正常啟動（含沙盒帳號啟動檢查）。驗收腳本 `apps/web/scripts/probe-sandbox.ts` 12 項全部通過。
 
 ## 7. 部署
 
