@@ -3,7 +3,7 @@ import { Seal } from '@/components/seal';
 import { Avatar } from '@/components/ui/avatar';
 import type { DiscussionState, Speech } from '@/lib/agent-output';
 import { Collapsible } from './collapsible';
-import { ToolList } from './tool-list';
+import { ToolSteps } from './tool-steps';
 
 const STANCE_LINE = /\n?\s*立場\s*[:：]\s*(同意|有保留)\s*$/;
 
@@ -19,7 +19,7 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
         {speech.status === 'speaking' && <span className="chip chip-brand"><span className="dot-busy" aria-hidden />發言中</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
-      <ToolList tools={speech.tools} />
+      <ToolSteps tools={speech.tools} />
       {speech.status === 'failed' ? (
         <p className="notice notice-error mt-3">未發言：{speech.error}</p>
       ) : (

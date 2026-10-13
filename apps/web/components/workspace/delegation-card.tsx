@@ -3,7 +3,7 @@ import { Avatar } from '@/components/ui/avatar';
 import type { DelegationOutput } from '@/lib/agent-output';
 import { textOf } from '@/lib/text';
 import { Collapsible } from './collapsible';
-import { ToolList } from './tool-list';
+import { ToolSteps } from './tool-steps';
 
 export function DelegationCard({ output, task, color, failedText }: { output?: DelegationOutput; task?: string; color: string; failedText?: string }) {
   const name = output?.name ?? '顧問';
@@ -31,7 +31,7 @@ export function DelegationCard({ output, task, color, failedText }: { output?: D
             <p className="mt-1 whitespace-pre-wrap text-ink">{task}</p>
           </details>
         )}
-        <ToolList tools={output?.tools} />
+        <ToolSteps tools={output?.tools} />
         {failedText !== undefined && <p className="notice notice-error mt-3">{failedText}</p>}
         {output?.status === 'failed' && <p className="notice notice-error mt-3">{output.error}</p>}
         {output?.message && (
