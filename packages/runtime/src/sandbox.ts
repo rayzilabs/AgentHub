@@ -27,7 +27,16 @@ export function sandboxEnv(user: string | undefined, extraEnv: Record<string, st
   env.HOME = user ? `/home/${user}` : process.env.HOME ?? process.env.USERPROFILE ?? '/tmp';
   // sudo 會把 PATH 重設成系統預設；另外帶一份給沙盒腳本還原（node、python 裝在 /.sprite/languages 底下）
   if (user && env.PATH) env.SANDBOX_PATH = env.PATH;
-  return { ...env, ...extraEnv };
+  return { ...env, ...safeExtraEnv(extraEnv) };
+}
+
+/** extraEnv 的名稱來自創作者的 MCP 設定，不可信：不能蓋掉沙盒自己的變數，也不能注入會被載入或改變執行方式的變數 */
+const RESERVED_ENV = new Set(['PATH', 'HOME', 'SANDBOX_PATH', 'BASH_ENV', 'ENV', 'IFS', 'SHELLOPTS', 'BASHOPTS', 'CDPATH', 'GLOBIGNORE', 'PS4']);
+
+function safeExtraEnv(extraEnv: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(extraEnv).filter(([k]) => !RESERVED_ENV.has(k) && !k.startsWith('LD_') && !k.startsWith('BASH_FUNC_')),
+  );
 }
 
 /**

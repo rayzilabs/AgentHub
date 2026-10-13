@@ -18,6 +18,18 @@ describe('sandboxEnv', () => {
     expect(env.SANDBOX_PATH).toBe(env.PATH);
   });
 
+  it('extraEnv（創作者定義的金鑰名稱）不能蓋掉或注入會影響執行的變數', () => {
+    const env = sandboxEnv('agent', {
+      PATH: '/evil', HOME: '/evil', SANDBOX_PATH: '/evil', LD_PRELOAD: '/evil.so', LD_LIBRARY_PATH: '/evil',
+      BASH_ENV: '/evil', ENV: '/evil', IFS: 'x', SHELLOPTS: 'x', MCP_KEY: 'k',
+    });
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.HOME).toBe('/home/agent');
+    expect(env.SANDBOX_PATH).toBe(process.env.PATH);
+    for (const k of ['LD_PRELOAD', 'LD_LIBRARY_PATH', 'BASH_ENV', 'ENV', 'IFS', 'SHELLOPTS']) expect(env[k]).toBeUndefined();
+    expect(env.MCP_KEY).toBe('k');
+  });
+
   it('本機模式不帶 SANDBOX_PATH', () => {
     expect(sandboxEnv(undefined).SANDBOX_PATH).toBeUndefined();
   });

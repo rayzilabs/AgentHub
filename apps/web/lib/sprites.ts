@@ -18,10 +18,13 @@ export const SANDBOX_WRAPPER = '/usr/local/bin/agenthub-sandbox';
 export const SANDBOX_WRAPPER_SCRIPT = [
   '#!/bin/sh',
   'set -eu',
+  // 以 root 執行的這段不信任呼叫端的環境變數：重設 PATH、清掉會被載入的變數，指令一律用絕對路徑
+  'PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
+  'unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS',
   'user="$1"; shift',
-  '[ ! -S /.sprite/api.sock ] || mount --bind /dev/null /.sprite/api.sock',
-  'exec setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
-  '  env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" sh -c \'umask 002; exec "$@"\' sandbox "$@"',
+  '[ ! -S /.sprite/api.sock ] || /usr/bin/mount --bind /dev/null /.sprite/api.sock',
+  'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
+  '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
   '',
 ].join('\n');
 

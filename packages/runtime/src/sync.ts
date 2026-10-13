@@ -48,11 +48,17 @@ export async function syncSkills(
   await writeFile(path.join(dir, SKILLS_MARKER), instance.skills_zip_path);
 }
 
+/** 只接受單純的檔名：同步紀錄放在 agent 可寫的資料夾，內容不可信，不能讓它指到資料夾以外 */
+function isPlainName(name: string): boolean {
+  return name !== '' && name !== '.' && name !== '..' && !/[/\\]/.test(name);
+}
+
 /** 讀不到或損毀的同步紀錄都當成空的，等於重新下載全部檔案 */
 async function readSyncState(statePath: string): Promise<Record<string, string>> {
   try {
     const state: unknown = JSON.parse(await readFile(statePath, 'utf8'));
-    return state && typeof state === 'object' && !Array.isArray(state) ? (state as Record<string, string>) : {};
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return {};
+    return Object.fromEntries(Object.entries(state as Record<string, string>).filter(([name]) => isPlainName(name)));
   } catch {
     return {};
   }
@@ -84,6 +90,8 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
   for (const name of Object.keys(previous)) {
     if (!(name in next)) await rm(path.join(sharedRoot, name), { force: true });
   }
+  // agent 可能把紀錄檔換成 symlink；先刪再寫，才不會跟著寫到別的檔案
+  await rm(statePath, { force: true });
   await writeFile(statePath, JSON.stringify(next));
   return objects.map((o) => o.name);
 }

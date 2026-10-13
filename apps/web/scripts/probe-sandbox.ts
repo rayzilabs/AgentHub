@@ -69,6 +69,13 @@ try {
   const sockCmd = 'curl -sf --max-time 3 --unix-socket /.sprite/api.sock http://sprite/v1/tasks';
   const sock = await sh(sprite, asAgent(sockCmd));
   record('agent 碰不到 /.sprite/api.sock（它能建立以 runtime 帳號執行的服務）', sock.code !== 0, sock.out);
+  // 不只檢查 /.sprite/api.sock：找出沙盒看得到的每個 Unix socket，逐一試著呼叫內部 API
+  const anySock = await sh(sprite, asAgent(
+    'for s in $(find / \\( -path /proc -o -path /sys \\) -prune -o -type s -print 2>/dev/null); do ' +
+    'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 --unix-socket "$s" http://sprite/v1/tasks 2>/dev/null); ' +
+    'echo "$s $c"; done',
+  ));
+  record('沙盒看得到的 socket 都連不上內部 API', !/ 2\d\d$/m.test(anySock.out), anySock.out);
   const sockRuntime = await sh(sprite, sockCmd);
   record('runtime 帳號仍然能用 /.sprite/api.sock（保持喚醒需要）', sockRuntime.code === 0, sockRuntime.out);
 

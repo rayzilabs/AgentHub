@@ -159,5 +159,11 @@ describe('sandboxSetupScript', () => {
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('mount --bind /dev/null /.sprite/api.sock');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('set -eu');
+    // root 執行的這段不信任呼叫端的環境變數：先重設 PATH、清掉會被載入的變數，指令都用絕對路徑
+    const lines = SANDBOX_WRAPPER_SCRIPT.split('\n');
+    expect(lines[2]).toBe('PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH');
+    expect(lines[3]).toBe('unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind /dev/null /.sprite/api.sock');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('exec /usr/bin/setpriv');
   });
 });

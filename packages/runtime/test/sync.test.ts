@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
@@ -67,6 +67,31 @@ describe('syncSkills', () => {
 });
 
 describe('syncSharedFiles', () => {
+  const emptyBucketDb = {
+    storage: { from: () => ({ list: async () => ({ data: [], error: null }), download: async () => ({ data: null, error: null }) }) },
+  } as unknown as Db;
+
+  it('同步紀錄被竄改成含路徑的檔名：不會刪到共用資料夾以外的檔案', async () => {
+    const { sharedRoot } = await tmpRoots();
+    await mkdir(sharedRoot, { recursive: true });
+    const outside = path.join(sharedRoot, '..', 'outside.txt');
+    await writeFile(outside, 'keep');
+    await writeFile(path.join(sharedRoot, '.sync.json'), JSON.stringify({ '../outside.txt': 'x' }));
+    await syncSharedFiles(emptyBucketDb, 'p1', sharedRoot);
+    expect(await readFile(outside, 'utf8')).toBe('keep');
+  });
+
+  it('同步紀錄被換成 symlink：不會跟著寫到別的檔案', async () => {
+    const { sharedRoot } = await tmpRoots();
+    await mkdir(sharedRoot, { recursive: true });
+    const outside = path.join(sharedRoot, '..', 'target.txt');
+    await writeFile(outside, 'keep');
+    await symlink(outside, path.join(sharedRoot, '.sync.json'));
+    await syncSharedFiles(emptyBucketDb, 'p1', sharedRoot);
+    expect(await readFile(outside, 'utf8')).toBe('keep');
+    expect((await lstat(path.join(sharedRoot, '.sync.json'))).isSymbolicLink()).toBe(false);
+  });
+
   it('專案檔案同步時，目標檔若是唯讀（agent 建立的同名檔）也能覆蓋', async () => {
     const { sharedRoot } = await tmpRoots();
     await mkdir(sharedRoot, { recursive: true });
