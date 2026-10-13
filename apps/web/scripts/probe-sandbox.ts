@@ -82,7 +82,7 @@ try {
   const tools = await sh(sprite, asAgent('command -v node && command -v python3'));
   record('沙盒裡找得到 node 與 python3', tools.code === 0, tools.out);
   const legacy = await sh(sprite, asAgent(`cat ${WORKSPACE}/agents/legacy/report.md`));
-  record('舊工作區的檔案搬到 /workspace 且 agent 讀得到', legacy.out === 'kept', legacy.out);
+  record('舊工作區的檔案搬到 /workspace 且 agent 讀得到', legacy.code === 0 && legacy.out.trim() === 'kept', JSON.stringify(legacy));
   const write = await sh(sprite, [
     // runtime 程序的 umask 是 002（main.ts），這裡比照
     `umask 002 && echo r > ${WORKSPACE}/shared/from-runtime`,
