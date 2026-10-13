@@ -7,6 +7,7 @@ import { errorText } from './errors';
 import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
 import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
+import { createRunClock, type RunClock } from './run-clock';
 import {
   assertThreadInProject, createRun, deleteMessage, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
   type RunResult,
@@ -24,7 +25,7 @@ export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeout
 
 type PreparedRoot = { rootId: string; streamUI: BuiltAgent['streamUI']; close: () => Promise<void> };
 
-async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string): Promise<PreparedRoot> {
+async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string, clock: RunClock): Promise<PreparedRoot> {
   const { db, config, model } = deps;
   const instances = await loadInstances(db, config.PROJECT_ID);
   const consultants = instances.filter((i) => i.role === 'consultant');
@@ -40,6 +41,7 @@ async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string):
       db, model, config, instance: root, sharedFiles,
       secrets: groupSecrets(secrets, root.id),
       onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
+      wrapUpAt: clock.soloWrapUpAt,
     });
     return { rootId: root.id, streamUI: built.streamUI, close: built.close };
   }
@@ -59,8 +61,11 @@ async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string):
     });
   };
   const built = await buildManager({
-    db, model, config, manager, consultants, sharedFiles, record,
-    runner: createConsultantRunner({ db, model, config, runId, sharedFiles, secrets }),
+    db, model, config, manager, consultants, sharedFiles, record, clock,
+    runner: createConsultantRunner({
+      db, model, config, runId, sharedFiles, secrets,
+      wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt,
+    }),
     onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: manager }),
   });
   return { rootId: manager.id, streamUI: built.streamUI, close: built.close };
@@ -107,6 +112,7 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
 
   const keepAlive = await startKeepAlive(config.SPRITE_API_SOCK, `run-${runId}`);
   const runTimeoutMs = deps.runTimeoutMs ?? RUN_TIMEOUT_MS;
+  const clock = createRunClock(Date.now(), runTimeoutMs);
   // 時間到先通知 agent 中止；工具或串流卡住、中止沒有效果時，再過一段時間強制收尾
   const hardDeadlineMs = runTimeoutMs + Math.min(30_000, runTimeoutMs);
   const abort = new AbortController();
@@ -133,7 +139,7 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
       thread_id: req.threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: req.text,
       ui_message: { id: generateId(), role: 'user', parts: [{ type: 'text', text: req.text }] },
     });
-    const root = await prepareRootAgent(deps, runId, req.threadId);
+    const root = await prepareRootAgent(deps, runId, req.threadId, clock);
     closeAgent = root.close;
     rootId = root.rootId;
     // final 先插入，執行中定期更新，輪詢的前端隨時看得到進度

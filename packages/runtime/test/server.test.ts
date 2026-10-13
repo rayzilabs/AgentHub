@@ -301,6 +301,29 @@ describe('POST /chat：多顧問', () => {
     expect(new Set(usageRows.map((r) => r.instance_id))).toEqual(new Set([env.managerId, env.legalId]));
   });
 
+  it('時間預算：顧問逾時被停下，主管不能再用工具、改用已有結果彙整，run 成功', async () => {
+    const env = await seedTeam();
+    const model = mockModel(
+      toolTurn('assign_task', { consultant_id: env.legalId, task: '審查合約' }),
+      textTurn('法務意見：這份合約有很多條款需要逐條檢查'.repeat(4), 100),
+      textTurn('總結：法務顧問逾時，只拿到部分意見'),
+    );
+    // runTimeoutMs 7500：顧問 5500ms 收尾、6500ms 強制停止，主管有 1 秒收尾（中間要寫雲端 DB）；顧問那段文字要 8 秒才講完
+    await (await post(app(env, model, 7_500), { thread_id: env.threadId, text: '幫我看合約' })).text();
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run.status).toBe('succeeded');
+
+    const msgs = await messagesOf(env.threadId);
+    const delegation = msgs.find((m) => m.kind === 'delegation');
+    const final = msgs.find((m) => m.kind === 'final');
+    expect(delegation.content.startsWith('法務意見')).toBe(true);
+    expect(final.content).toBe('總結：法務顧問逾時，只拿到部分意見');
+    expect(model.doStreamCalls[2].toolChoice).toEqual({ type: 'none' });
+    expect(promptText(model, 2)).toContain('逾時，只完成部分工作');
+    const assign = final.ui_message.parts.find((p: { type: string }) => p.type === 'tool-assign_task');
+    expect(assign.output).toMatchObject({ status: 'failed', cutoff: 'stopped' });
+  });
+
   it('討論：第 1 輪平行、第 2 輪全部同意後結束，主管拿到完整紀錄', async () => {
     const env = await seedTeam();
     const model = mockModel(

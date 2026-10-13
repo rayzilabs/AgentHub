@@ -174,8 +174,12 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
   const tools: ToolSet = {
     read_file: readFileTool(ctx.config.SHARED_ROOT),
     ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id),
-    assign_task: assignTaskTool({ consultants: ctx.consultants, run: ctx.runner, record: ctx.record }),
-    convene_discussion: conveneDiscussionTool({ consultants: ctx.consultants, run: ctx.runner, record: ctx.record }),
+    assign_task: assignTaskTool({
+      consultants: ctx.consultants, run: ctx.runner, record: ctx.record, acceptUntil: ctx.clock?.consultantWrapUpAt,
+    }),
+    convene_discussion: conveneDiscussionTool({
+      consultants: ctx.consultants, run: ctx.runner, record: ctx.record, acceptUntil: ctx.clock?.consultantWrapUpAt,
+    }),
   };
   const agent = new ToolLoopAgent({
     model: ctx.model,
