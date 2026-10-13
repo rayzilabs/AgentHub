@@ -9,7 +9,7 @@ import type { ConsultantRunner } from '../src/consultant';
 import { usageRow } from '../src/usage';
 import type { AgentInstance } from '../src/types';
 import { seedConsultant, seedManager, seedProject, seedUser, testDb, tmpRoots } from './helpers';
-import { mockModel, promptText, textTurn } from './mock-model';
+import { mockModel, promptText, textTurn, toolTurn } from './mock-model';
 
 // 包一層 connectMcpServers，記錄 MCP 連線有沒有被關閉
 const mcpCloses = vi.hoisted(() => ({ count: 0 }));
@@ -130,6 +130,28 @@ describe('buildConsultant', () => {
       expect(model.doStreamCalls[0].toolChoice?.type === 'none').toBe(expectNone);
       expect(promptText(model).includes('時間已到，不能再使用工具')).toBe(expectNone);
     }
+  });
+
+  it('依 config 的 SANDBOX_USER 建立沙盒：bash 以該帳號執行', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const id = await seedConsultant(db, projectId);
+    const roots = await tmpRoots();
+    const model = mockModel(toolTurn('bash', { command: 'echo hi' }), textTurn('好'));
+    const built = await buildConsultant({
+      db, model,
+      config: { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot, SANDBOX_USER: 'agenthub-no-such-user' },
+      instance: instance({ id, project_id: projectId }), sharedFiles: [], secrets: {},
+    });
+    let last;
+    try {
+      for await (const m of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '跑一下' }] }) })) last = m;
+    } finally {
+      await built.close();
+    }
+    // 帳號不存在 → sudo 失敗；證明 bash 真的透過指定帳號執行，而不是直接以 runtime 帳號跑
+    const bash = last!.parts.find((p) => p.type === 'tool-bash') as { output?: { output: string; exitCode: number | null } };
+    expect(bash.output?.exitCode).not.toBe(0);
+    expect(bash.output?.output).not.toContain('hi');
   });
 
   it('MCP 連上之後組裝失敗：先關掉 MCP 連線再丟出錯誤', async () => {

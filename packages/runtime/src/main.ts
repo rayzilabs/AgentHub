@@ -4,9 +4,22 @@ import { loadConfig } from './config';
 import { createDb } from './db';
 import { errorText } from './errors';
 import { failRunningRuns } from './run-store';
+import { checkSandboxUser } from './sandbox';
 import { createApp } from './server';
 
 const config = loadConfig();
+
+// 沙盒帳號與 runtime 共用工作區，新檔案要讓同群組可寫
+process.umask(0o002);
+
+if (config.SANDBOX_USER) {
+  const check = await checkSandboxUser(config.SANDBOX_USER);
+  if (!check.ok) {
+    // 寧可起不來，也不要在沒有隔離的狀態下替 agent 執行指令
+    console.error(`[startup] 沙盒帳號 ${config.SANDBOX_USER} 無法使用：${check.error}`);
+    process.exit(1);
+  }
+}
 const db = createDb(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY);
 const vertex = createVertex({ apiKey: config.VERTEX_API_EXPRESS_MODE_KEY });
 

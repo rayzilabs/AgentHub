@@ -44,7 +44,7 @@ ${note}`;
 export type ConsultantContext = {
   db: Db;
   model: LanguageModel;
-  config: Pick<Config, 'PROJECT_ID' | 'AGENTS_ROOT' | 'SHARED_ROOT'>;
+  config: Pick<Config, 'PROJECT_ID' | 'AGENTS_ROOT' | 'SHARED_ROOT' | 'SANDBOX_USER'>;
   instance: AgentInstance;
   sharedFiles: string[];
   secrets: Record<string, Record<string, string>>;
@@ -109,7 +109,7 @@ function wrapAgent(agent: StreamableAgent, instructions: string, warnings: strin
 }
 
 export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgent> {
-  const sandbox = createSandbox();
+  const sandbox = createSandbox(ctx.config.SANDBOX_USER);
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
 
@@ -155,7 +155,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
 export type ManagerContext = {
   db: Db;
   model: LanguageModel;
-  config: Pick<Config, 'PROJECT_ID' | 'SHARED_ROOT'>;
+  config: Pick<Config, 'PROJECT_ID' | 'SHARED_ROOT' | 'SANDBOX_USER'>;
   manager: AgentInstance;
   consultants: AgentInstance[];
   sharedFiles: string[];
@@ -174,7 +174,7 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
     sharedFiles: ctx.sharedFiles,
   });
   const tools: ToolSet = {
-    read_file: readFileTool(ctx.config.SHARED_ROOT, createSandbox()),
+    read_file: readFileTool(ctx.config.SHARED_ROOT, createSandbox(ctx.config.SANDBOX_USER)),
     ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id),
     assign_task: assignTaskTool({
       consultants: ctx.consultants, run: ctx.runner, record: ctx.record, acceptUntil: ctx.clock?.consultantWrapUpAt,

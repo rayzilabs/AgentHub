@@ -10,6 +10,8 @@ const EnvSchema = z.object({
   SPRITE_API_SOCK: z.string().default('/.sprite/api.sock'),
   MODEL_ID: z.string().default('gemini-3.8-flash'),
   PORT: z.coerce.number().int().default(8080),
+  /** 沙盒帳號；Sprite 上一律是 agent，本機開發不設定 */
+  SANDBOX_USER: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

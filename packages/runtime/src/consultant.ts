@@ -15,7 +15,7 @@ export type RecordSpeech = (instance: AgentInstance, message: UIMessage, round: 
 export type ConsultantRunnerDeps = {
   db: Db;
   model: LanguageModel;
-  config: Pick<Config, 'PROJECT_ID' | 'AGENTS_ROOT' | 'SHARED_ROOT'>;
+  config: Pick<Config, 'PROJECT_ID' | 'AGENTS_ROOT' | 'SHARED_ROOT' | 'SANDBOX_USER'>;
   runId: string;
   sharedFiles: string[];
   secrets: SecretRow[];
