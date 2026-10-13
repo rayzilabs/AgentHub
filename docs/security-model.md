@@ -40,7 +40,7 @@
 
 | 規則 | 狀態 |
 |---|---|
-| 沙盒拿不到平台金鑰 | 🚧 子專案 1-A：已實作並在暫時 Sprite 驗收通過，尚未上線 |
+| 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
 | 平台金鑰外洩時，影響只限一個專案 | 📝 子專案 1-C |
 | 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared` | ⏳ 子專案 2 |
 | 創作者的腳本與資料留在遠端 MCP | ⏳ 子專案 3 |
@@ -94,7 +94,7 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 
 | # | 子專案 | 狀態 | 文件 |
 |---|---|---|---|
-| 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | 🚧 A 已實作與驗收、待上線；C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
+| 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；📝 C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
 | 2 | 顧問之間隔離 | ⏳ | — |
 | 3 | 遠端 MCP 的平台支援（代管、每位租用者的金鑰、用量計費、版本、大量資料下載） | ⏳ | — |
 | 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ⏳ | — |
@@ -102,5 +102,5 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 ## 7. 已知缺口與待辦
 
 - 單一顧問模式的原始工具輸入輸出會送到瀏覽器（見第 3 節）。
-- 子專案 1 上線前，所有 Sprite 的 `.env` 都存有平台金鑰，且 agent 可 sudo 成 root。舊專案要重新佈建（`redeploy-runtime`）才會套用新設定。
+- 2026-10-13 之前，agent 讀得到每台 Sprite `.env` 裡的平台金鑰且可 sudo 成 root；A 上線後已封住，但金鑰仍存在 `.env`（只有 runtime 讀得到），C 上線後才會移除。
 - 子專案 1 上線前，平台金鑰已存在每台 Sprite 的 `.env`；全部重新佈建後應輪換 Supabase secret key 與 Vertex 金鑰。
