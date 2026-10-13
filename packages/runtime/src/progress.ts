@@ -25,6 +25,9 @@ export function progressSaver(opts: {
   let lastSave = -Infinity;
   let saved = false;
   let stopped = false;
+  // 間隔內收到、還沒存的最新快照；間隔到時補存，之後就算沒有新快照（例如在跑很久的 bash）也不會停在舊畫面
+  let pending: UIMessage | undefined;
+  let trailing: ReturnType<typeof setTimeout> | undefined;
   // 所有寫入排成一條鏈，避免較舊的快照晚一步寫入、蓋掉較新的
   let chain: Promise<void> = Promise.resolve();
   const enqueue = (job: () => Promise<void>) => {
@@ -32,24 +35,34 @@ export function progressSaver(opts: {
   };
   const heartbeat = setInterval(() => enqueue(opts.touch), opts.heartbeatMs ?? HEARTBEAT_MS);
 
+  const flush = () => {
+    clearTimeout(trailing);
+    trailing = undefined;
+    if (!pending) return;
+    const snapshot = structuredClone(pending);
+    pending = undefined;
+    lastSave = Date.now();
+    enqueue(async () => {
+      await opts.save(snapshot);
+      saved = true;
+    });
+  };
+
   return {
     get saved() {
       return saved;
     },
     offer(m) {
       if (stopped || !hasContent(m)) return;
-      const now = Date.now();
-      if (now - lastSave < intervalMs) return;
-      lastSave = now;
-      const snapshot = structuredClone(m);
-      enqueue(async () => {
-        await opts.save(snapshot);
-        saved = true;
-      });
+      pending = m;
+      const wait = lastSave + intervalMs - Date.now();
+      if (wait <= 0) flush();
+      else trailing ??= setTimeout(flush, wait);
     },
     async stop() {
       stopped = true;
       clearInterval(heartbeat);
+      flush();
       await chain;
     },
   };

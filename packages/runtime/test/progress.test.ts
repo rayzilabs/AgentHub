@@ -9,17 +9,26 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const noop = async () => {};
 
 describe('progressSaver', () => {
-  it('第一份有內容的快照立刻存，之後依間隔節流；空白快照不存', async () => {
+  it('第一份有內容的快照立刻存，間隔內的最新快照在間隔到時補存；空白快照不存', async () => {
     const saved: string[] = [];
     const p = progressSaver({ save: async (m) => { saved.push(textOf(m)); }, touch: noop, intervalMs: 50, heartbeatMs: 10_000 });
     p.offer(empty);
     p.offer(msg('A'));
     p.offer(msg('AB'));
-    await sleep(60);
-    p.offer(msg('ABC'));
+    await sleep(80);
+    // 之後沒有新快照（例如正在跑一個很久的 bash），間隔內最後一份仍要存下來
+    expect(saved).toEqual(['A', 'AB']);
     await p.stop();
-    expect(saved).toEqual(['A', 'ABC']);
     expect(p.saved).toBe(true);
+  });
+
+  it('stop 時把還沒存的最新快照寫進去', async () => {
+    const saved: string[] = [];
+    const p = progressSaver({ save: async (m) => { saved.push(textOf(m)); }, touch: noop, intervalMs: 10_000, heartbeatMs: 10_000 });
+    p.offer(msg('A'));
+    p.offer(msg('AB'));
+    await p.stop();
+    expect(saved).toEqual(['A', 'AB']);
   });
 
   it('依序寫入：前一筆還沒寫完不會並行', async () => {
