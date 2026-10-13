@@ -64,13 +64,17 @@ try {
   await mustNotLeak('讀不到 runtime 的 /proc environ', 'for p in $(pgrep node); do cat /proc/$p/environ 2>/dev/null | tr "\\0" "\\n"; done');
   const sudo = await sh(sprite, asAgent('sudo -n true'));
   record('agent 不能 sudo', sudo.code !== 0, sudo.out);
-  const sock = await sh(sprite, asAgent('curl -s --max-time 3 --unix-socket /.sprite/api.sock http://sprite/v1/tasks'));
-  record('碰不到 /.sprite/api.sock', sock.code !== 0, sock.out);
+  const sockCmd = 'curl -sf --max-time 3 --unix-socket /.sprite/api.sock http://sprite/v1/tasks';
+  const sock = await sh(sprite, asAgent(sockCmd));
+  record('agent 碰不到 /.sprite/api.sock（它能建立以 runtime 帳號執行的服務）', sock.code !== 0, sock.out);
+  const sockRuntime = await sh(sprite, sockCmd);
+  record('runtime 帳號仍然能用 /.sprite/api.sock（保持喚醒需要）', sockRuntime.code === 0, sockRuntime.out);
 
   const legacy = await sh(sprite, asAgent(`cat ${WORKSPACE}/agents/legacy/report.md`));
   record('舊工作區的檔案搬到 /workspace 且 agent 讀得到', legacy.out === 'kept', legacy.out);
   const write = await sh(sprite, [
-    `echo r > ${WORKSPACE}/shared/from-runtime`,
+    // runtime 程序的 umask 是 002（main.ts），這裡比照
+    `umask 002 && echo r > ${WORKSPACE}/shared/from-runtime`,
     asAgent(`echo a >> ${WORKSPACE}/shared/from-runtime && echo b > ${WORKSPACE}/shared/from-agent`),
     `rm ${WORKSPACE}/shared/from-agent`,
   ].join(' && '));
@@ -82,7 +86,8 @@ try {
     'sudo -n -u agent -- kill -KILL -- -$pid; sleep 1',
     'pgrep -u agent sleep >/dev/null && echo still-running || echo all-killed',
   ].join('\n'));
-  record('以 agent 帳號送 SIGKILL 能終止整個程序群組', kill.out.endsWith('all-killed'), kill.out);
+  // bash 會在結果後面補印背景工作被終止的通知，所以不能只看最後一行
+  record('以 agent 帳號送 SIGKILL 能終止整個程序群組', kill.out.includes('all-killed') && !kill.out.includes('still-running'), kill.out);
 } finally {
   await destroyProjectSprite(name).catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
 }

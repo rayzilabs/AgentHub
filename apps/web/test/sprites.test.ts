@@ -154,5 +154,6 @@ describe('sandboxSetupScript', () => {
     expect(s).toContain('chmod 2770 /workspace/agents /workspace/shared');
     expect(s).toContain("chmod 700 '/home/sprite/agenthub'");
     expect(s).toContain("chmod 600 '/home/sprite/agenthub/.env'");
+    expect(s).toContain('sudo chmod 660 /.sprite/api.sock');
   });
 });

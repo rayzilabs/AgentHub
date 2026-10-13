@@ -1,6 +1,8 @@
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { checkSandboxUser, createSandbox, killArgv, runInSandbox, sandboxEnv, sudoArgv } from '../src/sandbox';
+import { checkSandboxUser, createSandbox, ensureSocketLocked, killArgv, runInSandbox, sandboxEnv, sudoArgv } from '../src/sandbox';
 
 afterEach(() => {
   delete process.env.AGENTHUB_FAKE_SECRET;
@@ -62,5 +64,43 @@ describe('checkSandboxUser', () => {
   it('帳號不存在或 sudo 不能用時回報錯誤，不丟例外', async () => {
     const r = await checkSandboxUser('agenthub-no-such-user');
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('ensureSocketLocked', () => {
+  async function tmpSocketFile(mode: number) {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'sock-'));
+    const file = path.join(dir, 'api.sock');
+    await writeFile(file, '');
+    await chmod(file, mode);
+    return file;
+  }
+
+  it('其他帳號可讀寫時，以 sudo 收緊成只有 runtime 群組可用', async () => {
+    const file = await tmpSocketFile(0o666);
+    const calls: string[][] = [];
+    const r = await ensureSocketLocked(file, 1001, async (argv) => { calls.push(argv); return { code: 0, stderr: '' }; });
+    expect(r).toEqual({ ok: true });
+    expect(calls).toEqual([
+      ['sudo', '-n', 'chgrp', '1001', file],
+      ['sudo', '-n', 'chmod', '660', file],
+    ]);
+  });
+
+  it('已經收緊：不做任何事', async () => {
+    const file = await tmpSocketFile(0o660);
+    const calls: string[][] = [];
+    expect(await ensureSocketLocked(file, 1001, async (argv) => { calls.push(argv); return { code: 0, stderr: '' }; })).toEqual({ ok: true });
+    expect(calls).toEqual([]);
+  });
+
+  it('收緊失敗：回報錯誤，不丟例外', async () => {
+    const file = await tmpSocketFile(0o666);
+    const r = await ensureSocketLocked(file, 1001, async () => ({ code: 1, stderr: 'sudo: a password is required' }));
+    expect(r).toEqual({ ok: false, error: 'sudo: a password is required' });
+  });
+
+  it('socket 不存在（本機開發）：視為不需要處理', async () => {
+    expect(await ensureSocketLocked(path.join(os.tmpdir(), 'no-such.sock'), 1001, async () => ({ code: 1, stderr: 'x' }))).toEqual({ ok: true });
   });
 });

@@ -70,6 +70,8 @@ export function sandboxSetupScript(base: string): string {
     `sudo find ${WORKSPACE}/agents ${WORKSPACE}/shared -type d -exec chmod g+s {} +`,
     `sudo chmod 2770 ${WORKSPACE}/agents ${WORKSPACE}/shared`,
     `sudo chmod 755 ${WORKSPACE}`,
+    // Sprite 內部 API 能建立以 runtime 帳號執行的服務；只留給 runtime 群組（runtime 啟動與每次 run 前也會再確認）
+    `if [ -S /.sprite/api.sock ]; then sudo chgrp "$(id -g)" /.sprite/api.sock && sudo chmod 660 /.sprite/api.sock; fi`,
     // .env 可能由檔案 API 以別的帳號寫入，先改回 runtime 帳號再收緊
     `sudo chown "$(id -un)" ${q(`${base}/.env`)}`,
     `chmod 600 ${q(`${base}/.env`)}`,
