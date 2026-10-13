@@ -1,7 +1,7 @@
 import { APIError, type Sprite } from '@fly/sprites';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, sandboxSetupScript, spriteName } from '@/lib/sprites';
+import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, spriteName } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
@@ -154,6 +154,10 @@ describe('sandboxSetupScript', () => {
     expect(s).toContain('chmod 2770 /workspace/agents /workspace/shared');
     expect(s).toContain("chmod 700 '/home/sprite/agenthub'");
     expect(s).toContain("chmod 600 '/home/sprite/agenthub/.env'");
-    expect(s).toContain('sudo chmod 660 /.sprite/api.sock');
+    // 沙盒腳本：蓋掉 Sprite 內部 API 再降權
+    expect(s).toContain('/usr/local/bin/agenthub-sandbox');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('mount --bind /dev/null /.sprite/api.sock');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('set -eu');
   });
 });

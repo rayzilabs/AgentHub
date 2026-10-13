@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { stat } from 'node:fs/promises';
+
+/** 佈建時安裝的沙盒腳本（內容在 apps/web/lib/sprites.ts 的 SANDBOX_WRAPPER_SCRIPT） */
+export const SANDBOX_WRAPPER = '/usr/local/bin/agenthub-sandbox';
 
 /** 以沙盒執行時保留的環境變數；其他（含平台金鑰）一律不帶 */
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'TZ'];
@@ -23,15 +25,18 @@ export function sandboxEnv(user: string | undefined, extraEnv: Record<string, st
     if (v !== undefined) env[k] = v;
   }
   env.HOME = user ? `/home/${user}` : process.env.HOME ?? process.env.USERPROFILE ?? '/tmp';
+  // sudo 會把 PATH 重設成系統預設；另外帶一份給沙盒腳本還原（node、python 裝在 /.sprite/languages 底下）
+  if (user && env.PATH) env.SANDBOX_PATH = env.PATH;
   return { ...env, ...extraEnv };
 }
 
 /**
- * 以 user 執行 argv。環境變數由 spawn 的 env 決定（-E 原樣帶過去），祕密不會出現在指令參數；
- * umask 002 讓 runtime 也能整理 agent 建立的檔案。
+ * 以 user 執行 argv：以 root 開一個獨立的掛載命名空間，由沙盒腳本蓋掉 Sprite 內部 API 的 socket
+ * （它能建立以 runtime 帳號執行的服務，且 socket 在唯讀掛載上、改不了權限），再降權成 user。
+ * 環境變數由 spawn 的 env 決定（-E 原樣帶過去），祕密不會出現在指令參數。
  */
 export function sudoArgv(user: string, argv: string[]): string[] {
-  return ['sudo', '-n', '-E', '-u', user, '--', 'sh', '-c', 'umask 002; exec "$@"', 'sandbox', ...argv];
+  return ['sudo', '-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, user, ...argv];
 }
 
 /** runtime 與沙盒是不同帳號，不能直接對沙盒的程序送訊號；改以沙盒帳號送出 */
@@ -84,36 +89,6 @@ export function runInSandbox(
     child.stdin?.on('error', () => undefined);
     child.stdin?.end(opts.input ?? '');
   });
-}
-
-type CommandRunner = (argv: string[]) => Promise<{ code: number | null; stderr: string }>;
-
-const runCommand: CommandRunner = (argv) =>
-  new Promise((resolve) => {
-    const [cmd, ...args] = argv;
-    const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (c: Buffer) => (stderr += c.toString('utf8')));
-    child.on('error', (e) => resolve({ code: null, stderr: e.message }));
-    child.on('close', (code) => resolve({ code, stderr }));
-  });
-
-/**
- * Sprite 的內部 API（/.sprite/api.sock）能建立以 runtime 帳號執行的服務，agent 碰得到就能繞過隔離。
- * 它每次開機都會以 666 重建，所以啟動與每次 run 前都要確認：其他帳號可存取就收緊成只有 runtime 群組可用。
- */
-export async function ensureSocketLocked(
-  socketPath: string,
-  gid: number,
-  run: CommandRunner = runCommand,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const info = await stat(socketPath).catch(() => null);
-  if (!info || (info.mode & 0o007) === 0) return { ok: true };
-  for (const argv of [['sudo', '-n', 'chgrp', String(gid), socketPath], ['sudo', '-n', 'chmod', '660', socketPath]]) {
-    const r = await run(argv);
-    if (r.code !== 0) return { ok: false, error: r.stderr.trim() || `結束碼 ${r.code}` };
-  }
-  return { ok: true };
 }
 
 /** 啟動時確認沙盒帳號真的能用，避免在沒有隔離的狀態下以為已隔離 */

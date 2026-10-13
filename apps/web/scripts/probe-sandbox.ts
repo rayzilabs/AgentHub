@@ -7,7 +7,7 @@ import { SpritesClient, type Sprite } from '@fly/sprites';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('@/lib/supabase/admin');
-const { destroyProjectSprite, installRuntime, WORKSPACE } = await import('@/lib/sprites');
+const { destroyProjectSprite, installRuntime, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/sprites');
 
 const runtimeObject = process.argv[2];
 if (!runtimeObject) throw new Error('請指定 runtime 物件名稱，例如 main-abc1234.js');
@@ -28,7 +28,9 @@ async function sh(sprite: Sprite, cmd: string): Promise<{ code: number; out: str
     return { code: err.exitCode ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim() };
   }
 }
-const asAgent = (cmd: string) => `sudo -n -u agent -- bash -c ${JSON.stringify(cmd)}`;
+// 與 runtime 的 sandbox.ts 相同的執行路徑：root 開獨立掛載命名空間 → 沙盒腳本蓋掉內部 API → 降權成 agent
+const sandboxPrefix = () => `SANDBOX_PATH="$PATH" sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} agent`;
+const asAgent = (cmd: string) => `${sandboxPrefix()} bash -c ${JSON.stringify(cmd)}`;
 
 async function health(url: string): Promise<string> {
   const deadline = Date.now() + 60_000;
@@ -70,6 +72,8 @@ try {
   const sockRuntime = await sh(sprite, sockCmd);
   record('runtime 帳號仍然能用 /.sprite/api.sock（保持喚醒需要）', sockRuntime.code === 0, sockRuntime.out);
 
+  const tools = await sh(sprite, asAgent('command -v node && command -v python3'));
+  record('沙盒裡找得到 node 與 python3', tools.code === 0, tools.out);
   const legacy = await sh(sprite, asAgent(`cat ${WORKSPACE}/agents/legacy/report.md`));
   record('舊工作區的檔案搬到 /workspace 且 agent 讀得到', legacy.out === 'kept', legacy.out);
   const write = await sh(sprite, [
@@ -81,7 +85,7 @@ try {
   record('runtime 與 agent 都能讀寫工作區', write.code === 0, write.out);
 
   const kill = await sh(sprite, [
-    `setsid sudo -n -E -u agent -- sh -c 'umask 002; exec "$@"' sandbox bash -c 'sleep 300 & sleep 300' &`,
+    `setsid ${sandboxPrefix()} bash -c 'sleep 300 & sleep 300' &`,
     'pid=$!; sleep 1',
     'sudo -n -u agent -- kill -KILL -- -$pid; sleep 1',
     'pgrep -u agent sleep >/dev/null && echo still-running || echo all-killed',

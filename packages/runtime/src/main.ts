@@ -4,7 +4,7 @@ import { loadConfig } from './config';
 import { createDb } from './db';
 import { errorText } from './errors';
 import { failRunningRuns } from './run-store';
-import { checkSandboxUser, ensureSocketLocked } from './sandbox';
+import { checkSandboxUser } from './sandbox';
 import { createApp } from './server';
 
 const config = loadConfig();
@@ -17,11 +17,6 @@ if (config.SANDBOX_USER) {
   if (!check.ok) {
     // 寧可起不來，也不要在沒有隔離的狀態下替 agent 執行指令
     console.error(`[startup] 沙盒帳號 ${config.SANDBOX_USER} 無法使用：${check.error}`);
-    process.exit(1);
-  }
-  const lock = await ensureSocketLocked(config.SPRITE_API_SOCK, process.getgid!());
-  if (!lock.ok) {
-    console.error(`[startup] 無法收緊 Sprite 內部 API 的權限：${lock.error}`);
     process.exit(1);
   }
 }

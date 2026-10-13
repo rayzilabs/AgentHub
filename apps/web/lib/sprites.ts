@@ -7,6 +7,28 @@ import type { Db } from '@/lib/supabase/admin';
 export const RUNTIME_OBJECT = 'main.js';
 export const WORKSPACE = '/workspace';
 export const SANDBOX_USER = 'agent';
+/** 與 packages/runtime/src/sandbox.ts 的 SANDBOX_WRAPPER 相同 */
+export const SANDBOX_WRAPPER = '/usr/local/bin/agenthub-sandbox';
+
+/**
+ * runtime 以 `sudo unshare --mount -- agenthub-sandbox <帳號> <指令...>` 呼叫（root、獨立掛載命名空間）。
+ * Sprite 內部 API 的 socket 能建立以 runtime 帳號執行的服務，且在唯讀掛載上改不了權限；
+ * 所以在這個命名空間裡用 /dev/null 蓋掉它，再降權成沙盒帳號。蓋不掉就失敗，不在沒有隔離的狀態下執行。
+ */
+export const SANDBOX_WRAPPER_SCRIPT = [
+  '#!/bin/sh',
+  'set -eu',
+  'user="$1"; shift',
+  '[ ! -S /.sprite/api.sock ] || mount --bind /dev/null /.sprite/api.sock',
+  'exec setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
+  '  env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" sh -c \'umask 002; exec "$@"\' sandbox "$@"',
+  '',
+].join('\n');
+
+/** 單引號包住，內容裡的單引號改成 '\'' */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
 const SERVICE = 'runtime';
 const HEALTH_TIMEOUT_MS = 90_000;
 const RETRYABLE = new Set([502, 503, 504]);
@@ -70,8 +92,10 @@ export function sandboxSetupScript(base: string): string {
     `sudo find ${WORKSPACE}/agents ${WORKSPACE}/shared -type d -exec chmod g+s {} +`,
     `sudo chmod 2770 ${WORKSPACE}/agents ${WORKSPACE}/shared`,
     `sudo chmod 755 ${WORKSPACE}`,
-    // Sprite 內部 API 能建立以 runtime 帳號執行的服務；只留給 runtime 群組（runtime 啟動與每次 run 前也會再確認）
-    `if [ -S /.sprite/api.sock ]; then sudo chgrp "$(id -g)" /.sprite/api.sock && sudo chmod 660 /.sprite/api.sock; fi`,
+    // runtime 透過這支腳本以沙盒帳號執行指令（見 packages/runtime/src/sandbox.ts）
+    `printf '%s' ${shellQuote(SANDBOX_WRAPPER_SCRIPT)} | sudo tee ${SANDBOX_WRAPPER} >/dev/null`,
+    `sudo chown root:root ${SANDBOX_WRAPPER}`,
+    `sudo chmod 755 ${SANDBOX_WRAPPER}`,
     // .env 可能由檔案 API 以別的帳號寫入，先改回 runtime 帳號再收緊
     `sudo chown "$(id -un)" ${q(`${base}/.env`)}`,
     `chmod 600 ${q(`${base}/.env`)}`,

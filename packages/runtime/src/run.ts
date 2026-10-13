@@ -8,7 +8,6 @@ import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
 import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
 import { createRunClock, type RunClock } from './run-clock';
-import { ensureSocketLocked } from './sandbox';
 import {
   assertThreadInProject, createRun, deleteMessage, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
   type RunResult,
@@ -109,11 +108,6 @@ function stoppable<T>(source: ReadableStream<T>): { stream: ReadableStream<T>; s
 export async function startRun(deps: RunDeps, req: { threadId: string; text: string }): Promise<Response> {
   const { db, config } = deps;
   await assertThreadInProject(db, req.threadId, config.PROJECT_ID);
-  if (config.SANDBOX_USER) {
-    // Sprite 暫停後恢復可能重建內部 API 的 socket（權限回到 666）；每次 run 前再確認一次
-    const lock = await ensureSocketLocked(config.SPRITE_API_SOCK, process.getgid!());
-    if (!lock.ok) throw new Error(`沙盒隔離檢查失敗：${lock.error}`);
-  }
   const runId = await createRun(db, req.threadId);
 
   const keepAlive = await startKeepAlive(config.SPRITE_API_SOCK, `run-${runId}`);

@@ -1,8 +1,6 @@
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
-import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { checkSandboxUser, createSandbox, ensureSocketLocked, killArgv, runInSandbox, sandboxEnv, sudoArgv } from '../src/sandbox';
+import { checkSandboxUser, createSandbox, killArgv, runInSandbox, SANDBOX_WRAPPER, sandboxEnv, sudoArgv } from '../src/sandbox';
 
 afterEach(() => {
   delete process.env.AGENTHUB_FAKE_SECRET;
@@ -16,13 +14,19 @@ describe('sandboxEnv', () => {
     expect(env.MCP_KEY).toBe('k');
     expect(env.HOME).toBe('/home/agent');
     expect(env.PATH).toBeTruthy();
+    // sudo 會把 PATH 重設成系統預設，另外帶一份給沙盒腳本還原（node、python 在 /.sprite/languages 底下）
+    expect(env.SANDBOX_PATH).toBe(env.PATH);
+  });
+
+  it('本機模式不帶 SANDBOX_PATH', () => {
+    expect(sandboxEnv(undefined).SANDBOX_PATH).toBeUndefined();
   });
 });
 
 describe('sudoArgv / killArgv', () => {
-  it('以指定帳號執行：保留呼叫端給的環境變數、umask 002，祕密不放進指令參數', () => {
+  it('以 root 開獨立的掛載命名空間，交給沙盒腳本蓋掉 Sprite 內部 API 再降權；祕密不放進指令參數', () => {
     expect(sudoArgv('agent', ['bash', '-c', 'ls'])).toEqual([
-      'sudo', '-n', '-E', '-u', 'agent', '--', 'sh', '-c', 'umask 002; exec "$@"', 'sandbox', 'bash', '-c', 'ls',
+      'sudo', '-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, 'agent', 'bash', '-c', 'ls',
     ]);
   });
 
@@ -56,7 +60,7 @@ describe('createSandbox（本機模式）', () => {
   it('command：指定帳號時改寫成 sudo', () => {
     const c = createSandbox('agent').command(['node', 'server.js']);
     expect(c.command).toBe('sudo');
-    expect(c.args).toEqual(['-n', '-E', '-u', 'agent', '--', 'sh', '-c', 'umask 002; exec "$@"', 'sandbox', 'node', 'server.js']);
+    expect(c.args).toEqual(['-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, 'agent', 'node', 'server.js']);
   });
 });
 
@@ -67,40 +71,3 @@ describe('checkSandboxUser', () => {
   });
 });
 
-describe('ensureSocketLocked', () => {
-  async function tmpSocketFile(mode: number) {
-    const dir = await mkdtemp(path.join(os.tmpdir(), 'sock-'));
-    const file = path.join(dir, 'api.sock');
-    await writeFile(file, '');
-    await chmod(file, mode);
-    return file;
-  }
-
-  it('其他帳號可讀寫時，以 sudo 收緊成只有 runtime 群組可用', async () => {
-    const file = await tmpSocketFile(0o666);
-    const calls: string[][] = [];
-    const r = await ensureSocketLocked(file, 1001, async (argv) => { calls.push(argv); return { code: 0, stderr: '' }; });
-    expect(r).toEqual({ ok: true });
-    expect(calls).toEqual([
-      ['sudo', '-n', 'chgrp', '1001', file],
-      ['sudo', '-n', 'chmod', '660', file],
-    ]);
-  });
-
-  it('已經收緊：不做任何事', async () => {
-    const file = await tmpSocketFile(0o660);
-    const calls: string[][] = [];
-    expect(await ensureSocketLocked(file, 1001, async (argv) => { calls.push(argv); return { code: 0, stderr: '' }; })).toEqual({ ok: true });
-    expect(calls).toEqual([]);
-  });
-
-  it('收緊失敗：回報錯誤，不丟例外', async () => {
-    const file = await tmpSocketFile(0o666);
-    const r = await ensureSocketLocked(file, 1001, async () => ({ code: 1, stderr: 'sudo: a password is required' }));
-    expect(r).toEqual({ ok: false, error: 'sudo: a password is required' });
-  });
-
-  it('socket 不存在（本機開發）：視為不需要處理', async () => {
-    expect(await ensureSocketLocked(path.join(os.tmpdir(), 'no-such.sock'), 1001, async () => ({ code: 1, stderr: 'x' }))).toEqual({ ok: true });
-  });
-});
