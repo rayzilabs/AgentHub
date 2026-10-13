@@ -22,11 +22,14 @@ export const SANDBOX_WRAPPER_SCRIPT = [
   'PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
   'unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS',
   'user="$1"; shift',
-  'echo "$user" | /usr/bin/grep -Eqx \'agent(-[0-9a-f]{12})?\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
+  // 整串比對（-z：整個參數視為一筆），多行參數不能靠其中一行合格混過去
+  'printf \'%s\' "$user" | /usr/bin/grep -Ezqx \'agent(-[0-9a-f]{12})?\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
   '[ ! -S /.sprite/api.sock ] || /usr/bin/mount --bind /dev/null /.sprite/api.sock',
-  // 每個帳號一份私人 /tmp；實體目錄放在只有 root 能寫的地方，不能被搶先建立或換成 symlink
+  // 每個帳號一份私人暫存區，同時掛到 /tmp、/var/tmp、/dev/shm；實體目錄放在只有 root 能寫的地方，不能被搶先建立或換成 symlink
   '/usr/bin/install -d -m 700 -o "$user" -g "$user" "/var/lib/agenthub/tmp/$user"',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp',
+  '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /var/tmp',
+  '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /dev/shm',
   'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
   '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
   '',
@@ -45,13 +48,14 @@ export const SANDBOX_ADDUSER_SCRIPT = [
   'PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
   'unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS',
   'user="$1"; dir="$2"; owner="${SUDO_USER:?必須由 runtime 以 sudo 呼叫}"',
-  'echo "$user" | /usr/bin/grep -Eqx \'agent-[0-9a-f]{12}\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
-  'echo "$dir" | /usr/bin/grep -Eqx \'/workspace/agents/[0-9a-f-]{36}\' || { echo "不合格的目錄：$dir" >&2; exit 2; }',
+  'printf \'%s\' "$user" | /usr/bin/grep -Ezqx \'agent-[0-9a-f]{12}\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
+  'printf \'%s\' "$dir" | /usr/bin/grep -Ezqx \'/workspace/agents/[0-9a-f-]{36}\' || { echo "不合格的目錄：$dir" >&2; exit 2; }',
   // skills 放在顧問工作目錄以外，顧問只能讀：runtime 解壓時顧問無法把它換成 symlink
   'skills="/workspace/skills/${dir##*/}"',
   '[ ! -L "$dir" ] || { echo "目錄不能是 symlink：$dir" >&2; exit 2; }',
   '[ ! -L "$skills" ] || { echo "目錄不能是 symlink：$skills" >&2; exit 2; }',
-  '/usr/bin/id -u "$user" >/dev/null 2>&1 || /usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user"',
+  // 兩個 run 同時替新顧問建立帳號時，後一個 useradd 會因帳號已存在而失敗；再確認一次，存在就算成功
+  '/usr/bin/id -u "$user" >/dev/null 2>&1 || /usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user" || /usr/bin/id -u "$user" >/dev/null',
   '[ -d "$dir" ] || /usr/bin/mkdir "$dir"',
   '[ -d "$skills" ] || /usr/bin/mkdir "$skills"',
   // 只處理頂層目錄：頂層權限就足以擋住其他帳號；不對顧問可控的目錄樹做遞迴操作（會被 symlink 搶時間利用）
@@ -130,6 +134,8 @@ export function sandboxSetupScript(base: string): string {
     `sudo chmod 2770 ${WORKSPACE}/shared`,
     // 只有 runtime 能在這裡建立項目；各顧問目錄的擁有者與群組由 agenthub-sandbox-adduser 處理（不在這裡遞迴改回去）
     `sudo chmod 0711 ${WORKSPACE}/agents ${WORKSPACE}/skills`,
+    // 已移出專案的顧問不會再經過 adduser；1-A 時期留下的 workspace 群組目錄收成只有 runtime 能進（只看最上層，不遞迴）
+    `sudo find ${WORKSPACE}/agents -mindepth 1 -maxdepth 1 -type d -group workspace -exec chmod 0700 {} +`,
     `sudo chmod 755 ${WORKSPACE}`,
     // 私人 /tmp 的實體位置：父目錄只有 root 能寫，不能被搶先建立或換成 symlink
     'sudo install -d -m 711 -o root -g root /var/lib/agenthub /var/lib/agenthub/tmp',

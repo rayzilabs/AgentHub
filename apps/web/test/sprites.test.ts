@@ -170,19 +170,34 @@ describe('sandboxSetupScript', () => {
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind /dev/null /.sprite/api.sock');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('exec /usr/bin/setpriv');
     // 子專案 2：只接受 agent 或顧問帳號；每個帳號一份私人 /tmp
-    expect(SANDBOX_WRAPPER_SCRIPT).toContain("grep -Eqx 'agent(-[0-9a-f]{12})?'");
+    // 整串比對（-z：整個參數視為一筆），多行參數不能靠其中一行合格混過去
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain("printf '%s' \"$user\" | /usr/bin/grep -Ezqx 'agent(-[0-9a-f]{12})?'");
+    expect(SANDBOX_WRAPPER_SCRIPT).not.toMatch(/grep -Eqx/);
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/install -d -m 700 -o "$user" -g "$user" "/var/lib/agenthub/tmp/$user"');
-    expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp');
+    // /tmp、/var/tmp、/dev/shm 都換成同一個私人目錄
+    for (const target of ['/tmp', '/var/tmp', '/dev/shm']) {
+      expect(SANDBOX_WRAPPER_SCRIPT).toContain(`/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" ${target}`);
+    }
+  });
+
+  it('把仍是 workspace 群組的舊顧問目錄（已移出專案、adduser 不會再處理）收成只有 runtime 能進', () => {
+    expect(sandboxSetupScript('/home/sprite/agenthub')).toContain(
+      'sudo find /workspace/agents -mindepth 1 -maxdepth 1 -type d -group workspace -exec chmod 0700 {} +',
+    );
   });
 });
 
 describe('SANDBOX_ADDUSER_SCRIPT', () => {
   it('以 root 執行：重設環境、檢查參數、拒絕 symlink，建立沒有 sudo 的顧問帳號', () => {
     expect(SANDBOX_ADDUSER_SCRIPT.split('\n')[2]).toBe('PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH');
-    expect(SANDBOX_ADDUSER_SCRIPT).toContain("grep -Eqx 'agent-[0-9a-f]{12}'");
-    expect(SANDBOX_ADDUSER_SCRIPT).toContain("grep -Eqx '/workspace/agents/[0-9a-f-]{36}'");
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain("printf '%s' \"$user\" | /usr/bin/grep -Ezqx 'agent-[0-9a-f]{12}'");
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain("printf '%s' \"$dir\" | /usr/bin/grep -Ezqx '/workspace/agents/[0-9a-f-]{36}'");
+    expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/grep -Eqx/);
     expect(SANDBOX_ADDUSER_SCRIPT).toContain('[ ! -L "$dir" ]');
-    expect(SANDBOX_ADDUSER_SCRIPT).toContain('/usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user"');
+    // 兩個 run 同時替新顧問建立帳號：後一個 useradd 失敗時，帳號已存在就算成功
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain(
+      '/usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user" || /usr/bin/id -u "$user" >/dev/null',
+    );
     expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/\bsudo -/);
   });
 
