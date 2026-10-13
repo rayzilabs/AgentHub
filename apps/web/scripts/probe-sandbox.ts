@@ -123,8 +123,14 @@ try {
   await sh(sprite, `umask 002 && mkdir -p ${skillsA}/s && echo MARK-SOP-A > ${skillsA}/s/SKILL.md`);
   const sk = await sh(sprite, asUser(A, `mkdir ${skillsA}/evil || mv ${skillsA}/s ${skillsA}/t`));
   record('顧問 A 不能在自己的 skills 目錄建立或改名項目（runtime 解壓時無法被換成 symlink）', sk.code !== 0, sk.out);
-  const aw = await sh(sprite, asUser(A, `echo MARK-WORK-A > ${dirA}/work.txt && echo MARK-TMP-A > /tmp/a.txt && echo shared-a > ${WORKSPACE}/shared/from-a.txt`));
-  record('顧問 A 能寫自己的目錄、/tmp、/shared', aw.code === 0, aw.out);
+  const aw = await sh(sprite, asUser(A, [
+    `echo MARK-WORK-A > ${dirA}/work.txt`,
+    'echo MARK-TMP-A > /tmp/a.txt',
+    'echo MARK-VARTMP-A > /var/tmp/a.txt',
+    'echo MARK-SHM-A > /dev/shm/a.txt',
+    `echo shared-a > ${WORKSPACE}/shared/from-a.txt`,
+  ].join(' && ')));
+  record('顧問 A 能寫自己的目錄、/tmp、/var/tmp、/dev/shm、/shared', aw.code === 0, aw.out);
   const ar = await sh(sprite, asUser(A, `cat ${skillsA}/s/SKILL.md`));
   record('顧問 A 讀得到自己的 skill', ar.code === 0 && ar.out.trim() === 'MARK-SOP-A', JSON.stringify(ar));
   for (const [label, cmd] of [
@@ -132,6 +138,8 @@ try {
     ['B 讀不到 A 的工作檔', `cat ${dirA}/work.txt`],
     ['B 讀不到 A 的私人 /tmp 實體目錄', `cat /var/lib/agenthub/tmp/${A}/a.txt`],
     ['B 的 /tmp 裡沒有 A 的檔案', 'cat /tmp/a.txt'],
+    ['B 的 /var/tmp 裡沒有 A 的檔案', 'cat /var/tmp/a.txt'],
+    ['B 的 /dev/shm 裡沒有 A 的檔案', 'cat /dev/shm/a.txt'],
   ] as const) {
     const r = await sh(sprite, asUser(B, cmd));
     record(label, r.code !== 0 && !r.out.includes('MARK-'), r.out);
@@ -156,6 +164,9 @@ try {
     ['adduser 拒絕 root 帳號', `root ${dirA}`],
     ['adduser 拒絕 /etc', `${A} /etc`],
     ['adduser 拒絕 ../ 路徑', `${A} ${WORKSPACE}/agents/../../etc`],
+    // 多行參數：第一行合格、第二行是 /etc；整串比對必須拒絕
+    ['adduser 拒絕多行目錄參數', `${A} "$(printf '%s\\n%s' ${dirA} /etc)"`],
+    ['adduser 拒絕多行帳號參數', `"$(printf '%s\\n%s' ${A} root)" ${dirA}`],
   ] as const) {
     const r = await sh(sprite, `sudo -n ${SANDBOX_ADDUSER} ${args}`);
     record(label, r.code !== 0, r.out);
