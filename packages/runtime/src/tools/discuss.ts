@@ -1,12 +1,15 @@
 import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
-import { errorText } from '../errors';
+import { ConsultantStoppedError, errorText } from '../errors';
+import { TIME_UP } from '../run-clock';
 import { DISCUSSION_SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
 import { textOf, toolEvents, type ToolEvent } from '../ui-stream';
 
 export const MAX_ROUNDS = 3;
+export const TIME_UP_DISCUSSION = '時間不足，提前結束討論';
+export const STOPPED_SPEECH = '逾時，只完成部分發言';
 
 export type Stance = 'agree' | 'reserve';
 
@@ -20,6 +23,8 @@ export type Speech = {
   /** 顧問用過的工具摘要；完整訊息只交給 record，不放進快照 */
   tools?: ToolEvent[];
   error?: string;
+  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
+  cutoff?: 'wrap-up' | 'stopped';
 };
 
 export type DiscussionState = { topic: string; round: number; finished: boolean; error?: string; speeches: Speech[] };
@@ -35,11 +40,11 @@ export function parseStance(text: string): Stance | undefined {
 export function formatTranscript(state: DiscussionState): string {
   return state.speeches
     .filter((s) => s.status !== 'speaking')
-    .map((s) =>
-      s.status === 'failed'
-        ? `【第 ${s.round} 輪｜${s.name}】（未發言：${s.error}）`
-        : `【第 ${s.round} 輪｜${s.name}】\n${s.text}`,
-    )
+    .map((s) => {
+      if (s.status === 'done') return `【第 ${s.round} 輪｜${s.name}】\n${s.text}`;
+      if (s.cutoff === 'stopped' && s.text) return `【第 ${s.round} 輪｜${s.name}】（${STOPPED_SPEECH}）\n${s.text}`;
+      return `【第 ${s.round} 輪｜${s.name}】（未發言：${s.error}）`;
+    })
     .join('\n\n');
 }
 
@@ -95,6 +100,7 @@ async function* speakConcurrently(
   run: ConsultantRunner,
   record: RecordSpeech,
   abortSignal?: AbortSignal,
+  acceptUntil?: number,
 ): AsyncGenerator<DiscussionState> {
   const feed = changeFeed();
   let pending = speakers.length;
@@ -115,9 +121,15 @@ async function* speakConcurrently(
       }
       speech.status = 'done';
       speech.stance = parseStance(speech.text);
+      if (acceptUntil !== undefined && Date.now() >= acceptUntil) speech.cutoff = 'wrap-up';
     } catch (e) {
       speech.status = 'failed';
-      speech.error = errorText(e);
+      if (e instanceof ConsultantStoppedError) {
+        speech.cutoff = 'stopped';
+        speech.error = STOPPED_SPEECH;
+      } else {
+        speech.error = errorText(e);
+      }
     }
     try {
       // 只要產生過內容就記錄（含失敗），記錄失敗不影響這次發言的結果
@@ -143,6 +155,8 @@ export async function* runDiscussion(opts: {
   run: ConsultantRunner;
   record: RecordSpeech;
   abortSignal?: AbortSignal;
+  /** 過了這個時間就不再開新的一輪、不再請下一位發言（RunClock.consultantWrapUpAt） */
+  acceptUntil?: number;
 }): AsyncGenerator<DiscussionState> {
   const state: DiscussionState = { topic: opts.topic, round: 1, finished: false, speeches: [] };
   const maxRounds = Math.min(Math.max(opts.maxRounds, 1), MAX_ROUNDS);
@@ -152,21 +166,26 @@ export async function* runDiscussion(opts: {
     state.error ??= '討論已中止';
     return true;
   };
+  const timeUp = () => {
+    if (opts.acceptUntil === undefined || Date.now() < opts.acceptUntil) return false;
+    state.error ??= TIME_UP_DISCUSSION;
+    return true;
+  };
 
   for (let round = 1; round <= maxRounds; round++) {
-    if (stopIfAborted()) break;
+    if (stopIfAborted() || (round > 1 && timeUp())) break;
     state.round = round;
     if (round === 1) {
       const prompt = roundPrompt(opts.topic, 1, '');
       yield* speakConcurrently(
         opts.participants.map((instance) => ({ instance, prompt })),
-        1, state, opts.run, opts.record, opts.abortSignal,
+        1, state, opts.run, opts.record, opts.abortSignal, opts.acceptUntil,
       );
     } else {
       for (const instance of opts.participants) {
-        if (stopIfAborted()) break;
+        if (stopIfAborted() || timeUp()) break;
         const prompt = roundPrompt(opts.topic, round, formatTranscript(state));
-        yield* speakConcurrently([{ instance, prompt }], round, state, opts.run, opts.record, opts.abortSignal);
+        yield* speakConcurrently([{ instance, prompt }], round, state, opts.run, opts.record, opts.abortSignal, opts.acceptUntil);
       }
       if (state.error) break;
     }
@@ -189,6 +208,8 @@ export function conveneDiscussionTool(opts: {
   run: ConsultantRunner;
   record: RecordSpeech;
   intervalMs?: number;
+  /** 過了這個時間就不再召集討論（RunClock.consultantWrapUpAt） */
+  acceptUntil?: number;
 }) {
   const byId = new Map(opts.consultants.map((c) => [c.id, c]));
   const ids = opts.consultants.map((c) => c.id) as [string, ...string[]];
@@ -202,13 +223,19 @@ export function conveneDiscussionTool(opts: {
       max_rounds: z.number().int().min(1).max(MAX_ROUNDS).default(MAX_ROUNDS),
     }),
     async *execute({ topic, participant_ids, max_rounds }, { abortSignal }): AsyncGenerator<DiscussionState> {
+      if (opts.acceptUntil !== undefined && Date.now() >= opts.acceptUntil) {
+        yield { topic, round: 0, finished: true, error: TIME_UP, speeches: [] };
+        return;
+      }
       const participants = [...new Set(participant_ids)].map((id) => byId.get(id)).filter((c): c is AgentInstance => !!c);
       if (participants.length < 2) {
         yield { topic, round: 0, finished: true, error: '討論至少需要兩位不同的顧問', speeches: [] };
         return;
       }
       yield* throttle(
-        runDiscussion({ topic, participants, maxRounds: max_rounds, run: opts.run, record: opts.record, abortSignal }),
+        runDiscussion({
+          topic, participants, maxRounds: max_rounds, run: opts.run, record: opts.record, abortSignal, acceptUntil: opts.acceptUntil,
+        }),
         opts.intervalMs ?? DISCUSSION_SNAPSHOT_INTERVAL_MS,
       );
     },

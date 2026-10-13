@@ -6,6 +6,8 @@ import {
 } from '../src/tools/discuss';
 import type { AgentInstance } from '../src/types';
 import { textOf } from '../src/ui-stream';
+import { ConsultantStoppedError } from '../src/errors';
+import { TIME_UP } from '../src/run-clock';
 
 const opts = { toolCallId: 't', messages: [] } as never;
 
@@ -130,6 +132,31 @@ describe('runDiscussion', () => {
     }));
     expect(state.speeches.find((s) => s.consultant_id === 'c-legal')).toMatchObject({ status: 'failed', error: '斷線' });
     expect(recorded.sort()).toEqual(['c-eng:E1', 'c-legal:寫到一半']);
+  });
+
+  it('過了受理時間：不開下一輪，帶「時間不足」錯誤；跨過時間才完成的發言標成 wrap-up', async () => {
+    const { run, calls } = scriptedRunner({ 'c-legal': ['L1', 'L2'], 'c-eng': ['E1', 'E2'] }, 30);
+    const state = await finalState(runDiscussion({
+      topic: 't', participants: [legal, eng], maxRounds: 3, run, record: noRecord, acceptUntil: Date.now() + 10,
+    }));
+    expect(calls.map((c) => c.id).sort()).toEqual(['c-eng', 'c-legal']);
+    expect(state).toMatchObject({ finished: true, round: 1, error: '時間不足，提前結束討論' });
+    expect(state.speeches.every((s) => s.cutoff === 'wrap-up')).toBe(true);
+  });
+
+  it('發言被強制停止：保留已寫出的內容，紀錄裡標明逾時', async () => {
+    const run: ConsultantRunner = async function* (instance) {
+      if (instance.id === 'c-legal') {
+        yield msg('寫到一半的意見');
+        throw new ConsultantStoppedError('x');
+      }
+      yield msg('E1');
+    };
+    const state = await finalState(runDiscussion({ topic: 't', participants: [legal, eng], maxRounds: 1, run, record: noRecord }));
+    expect(state.speeches.find((s) => s.consultant_id === 'c-legal')).toMatchObject({
+      status: 'failed', cutoff: 'stopped', text: '寫到一半的意見', error: '逾時，只完成部分發言',
+    });
+    expect(formatTranscript(state)).toContain('【第 1 輪｜法務】（逾時，只完成部分發言）\n寫到一半的意見');
   });
 
   it('某一輪全部失敗：中止並帶錯誤', async () => {
@@ -275,6 +302,14 @@ describe('convene_discussion 工具', () => {
     expect(out.type).toBe('text');
     expect(out.value).toContain('【第 2 輪｜工程】');
     expect(out.value).toContain('E2');
+  });
+
+  it('過了受理時間：不召集，直接回報時間不足', async () => {
+    const { run, calls } = scriptedRunner({ 'c-legal': ['L1'], 'c-eng': ['E1'] });
+    const t = conveneDiscussionTool({ consultants: [legal, eng], run, record: noRecord, intervalMs: 0, acceptUntil: Date.now() - 1 });
+    const states = await allStates(t.execute!({ topic: 't', participant_ids: ['c-legal', 'c-eng'], max_rounds: 3 }, opts) as AsyncIterable<DiscussionState>);
+    expect(states).toEqual([{ topic: 't', round: 0, finished: true, error: TIME_UP, speeches: [] }]);
+    expect(calls).toEqual([]);
   });
 
   it('重複的 participant_ids 合併後不足兩人：直接回報失敗，不請任何人發言', async () => {
