@@ -103,6 +103,8 @@
 
 **驗收結果（2026-10-14）**：`apps/web/scripts/probe-sandbox.ts`（runtime `main-a6d28b5.js`）30 項全部通過，含 1-A 的 13 項。
 
+**最終 review 後的調整（2026-10-14）**：skills 移到 `/workspace/skills/<id>`（`sprite:agent-<id12> 2750`，父目錄 `0711`），顧問只能讀、不能建立或改名項目——原本放在顧問可寫的工作目錄裡，惡意顧問可在 runtime 解壓時把它換成 symlink；adduser 移除遞迴 chgrp／chmod（root 對顧問可控的目錄樹做遞迴操作有 symlink 搶時間風險，頂層權限已足夠）。上線前後以 `probe-sandbox.ts` 驗收 31 項全部通過；8 台既有 Sprite 重新佈建後逐台驗證。
+
 ## 6. 部署
 
 | 順序 | 內容 | 方式 |
