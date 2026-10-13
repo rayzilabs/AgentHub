@@ -52,7 +52,9 @@ describe('threads service', () => {
     await db.from('messages').insert({ thread_id: thread.id, run_id: run!.id, kind: 'delegation', content: 'internal' });
 
     let r = await getThreadMessages(db, owner.id, thread.id);
-    expect(r).toEqual({ messages: [ui('u1', 'user', 'Q')], running: true, error: null });
+    expect(r).toMatchObject({ messages: [ui('u1', 'user', 'Q')], running: true, error: null });
+    expect(r.startedAt).toBeTruthy();
+    expect(r.updatedAt).toBeTruthy();
 
     await db.from('messages').insert({ thread_id: thread.id, run_id: run!.id, kind: 'final', content: 'A', ui_message: ui('a1', 'assistant', 'A') });
     await db.from('runs').update({ status: 'failed', error: '模型掛了' }).eq('id', run!.id);
@@ -60,6 +62,27 @@ describe('threads service', () => {
     expect(r.messages.map((m) => m.id)).toEqual(['u1', 'a1']);
     expect(r.running).toBe(false);
     expect(r.error).toBe('模型掛了');
+  });
+
+  it('startedAt 是最新 run 的開始時間；updatedAt 是該 run 訊息中最新的 updated_at（含還沒有內容的 final）', async () => {
+    const { owner, thread } = await setup();
+    const ui = (id: string, role: string, text: string) => ({ id, role, parts: [{ type: 'text', text }] });
+    const { data: old } = await db.from('runs')
+      .insert({ thread_id: thread.id, status: 'succeeded', started_at: '2026-10-13T00:00:00Z' }).select('id').single();
+    await db.from('messages').insert({
+      thread_id: thread.id, run_id: old!.id, kind: 'final', content: 'A', ui_message: ui('a0', 'assistant', 'A'), updated_at: '2026-10-13T00:09:00Z',
+    });
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const { data: run } = await db.from('runs').insert({ thread_id: thread.id, started_at: startedAt }).select('id').single();
+    await db.from('messages').insert([
+      { thread_id: thread.id, run_id: run!.id, kind: 'user', content: 'Q', ui_message: ui('u1', 'user', 'Q'), updated_at: '2026-10-13T01:00:00Z' },
+      { thread_id: thread.id, run_id: run!.id, kind: 'final', content: '', updated_at: '2026-10-13T01:00:30Z' },
+    ]);
+    const r = await getThreadMessages(db, owner.id, thread.id);
+    expect(r.running).toBe(true);
+    expect(Date.parse(r.startedAt!)).toBe(Date.parse(startedAt));
+    expect(Date.parse(r.updatedAt!)).toBe(Date.parse('2026-10-13T01:00:30Z'));
+    expect(r.messages.map((m) => m.id)).toEqual(['a0', 'u1']);
   });
 
   it('running 超過 20 分鐘視為失敗', async () => {

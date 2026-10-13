@@ -3,7 +3,15 @@ import { HttpError } from '@/lib/http';
 import type { Db } from '@/lib/supabase/admin';
 import { getOwnProject, type ProjectRow, type ThreadRow } from './projects';
 
-export type ThreadMessages = { messages: UIMessage[]; running: boolean; error: string | null };
+export type ThreadMessages = {
+  messages: UIMessage[];
+  running: boolean;
+  error: string | null;
+  /** 最新一次 run 的開始時間 */
+  startedAt: string | null;
+  /** 最新一次 run 的訊息最後更新時間（含 runtime 每 20 秒的心跳） */
+  updatedAt: string | null;
+};
 
 export type MemoryView = { id: string; instance_id: string | null; agent_name: string | null; content: string; created_at: string };
 
@@ -44,20 +52,26 @@ export async function getOwnThread(db: Db, userId: string, threadId: string): Pr
 export async function getThreadMessages(db: Db, userId: string, threadId: string): Promise<ThreadMessages> {
   await getOwnThread(db, userId, threadId);
   const [messagesResult, runResult] = await Promise.all([
-    db.from('messages').select('ui_message').eq('thread_id', threadId).in('kind', ['user', 'final']).order('created_at'),
-    db.from('runs').select('status, error, started_at').eq('thread_id', threadId).order('started_at', { ascending: false }).limit(1).maybeSingle(),
+    db.from('messages').select('ui_message, run_id, updated_at').eq('thread_id', threadId).in('kind', ['user', 'final']).order('created_at'),
+    db.from('runs').select('id, status, error, started_at').eq('thread_id', threadId).order('started_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (messagesResult.error) throw messagesResult.error;
   if (runResult.error) throw runResult.error;
 
-  const messages = messagesResult.data.map((m) => m.ui_message as UIMessage | null).filter((m): m is UIMessage => !!m);
+  const rows = messagesResult.data;
+  const messages = rows.map((m) => m.ui_message as UIMessage | null).filter((m): m is UIMessage => !!m);
   const run = runResult.data;
-  if (!run) return { messages, running: false, error: null };
+  if (!run) return { messages, running: false, error: null, startedAt: null, updatedAt: null };
+
+  const updatedAt = rows
+    .filter((m) => m.run_id === run.id)
+    .reduce<string | null>((max, m) => (max === null || Date.parse(m.updated_at) > Date.parse(max) ? m.updated_at : max), null);
+  const times = { startedAt: run.started_at as string, updatedAt };
   if (run.status === 'running') {
     const stale = Date.now() - new Date(run.started_at).getTime() > STALE_RUN_MS;
-    return { messages, running: !stale, error: stale ? '這次回覆超過 20 分鐘沒有完成' : null };
+    return { messages, running: !stale, error: stale ? '這次回覆超過 20 分鐘沒有完成' : null, ...times };
   }
-  return { messages, running: false, error: run.status === 'failed' ? run.error : null };
+  return { messages, running: false, error: run.status === 'failed' ? run.error : null, ...times };
 }
 
 export async function listMemories(db: Db, userId: string, projectId: string): Promise<MemoryView[]> {
