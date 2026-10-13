@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 /** 以沙盒執行時保留的環境變數；其他（含平台金鑰）一律不帶 */
 const ENV_ALLOWLIST = ['PATH', 'LANG', 'TZ'];
@@ -7,7 +7,7 @@ const WINDOWS_ENV = ['SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'USERPRO
 
 export type Sandbox = {
   /** 以沙盒帳號執行；子行程是新的程序群組領頭（pid 即 pgid） */
-  spawn(argv: string[], opts: { cwd: string; extraEnv?: Record<string, string> }): ChildProcess;
+  spawn(argv: string[], opts: { cwd: string; extraEnv?: Record<string, string> }): ChildProcessWithoutNullStreams;
   /** 終止 spawn 產生的整個程序群組 */
   kill(child: ChildProcess): void;
   /** 給 stdio MCP 用：把指令改寫成以沙盒帳號執行 */

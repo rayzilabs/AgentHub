@@ -9,6 +9,7 @@ import { errorText } from '../errors';
 import { connectMcpServers } from '../mcp';
 import { withToolTimes } from '../tool-clock';
 import { agentDir, skillsDir } from '../sync';
+import { createSandbox } from '../sandbox';
 import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
 import { loadMemories, memoryTools } from '../tools/memory';
@@ -125,7 +126,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
     });
 
     const tools: ToolSet = {
-      bash: bashTool(workDir),
+      bash: bashTool(workDir, createSandbox()),
       read_file: readFileTool(workDir),
       write_file: writeFileTool(workDir),
       ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),

@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { bashTool, MAX_OUTPUT, runBash, truncate } from '../src/tools/bash';
 import type { z } from 'zod';
 import { readFileTool, writeFileTool } from '../src/tools/files';
+import { createSandbox } from '../src/sandbox';
 import { tmpRoots } from './helpers';
 
 // 工具執行選項：測試只用得到這兩個欄位
 const opts = { toolCallId: 't', messages: [] } as never;
+const local = createSandbox();
 
 async function workDir() {
   const { agentsRoot } = await tmpRoots();
@@ -19,44 +21,54 @@ async function workDir() {
 describe('runBash', () => {
   it('在指定目錄執行', async () => {
     const cwd = await workDir();
-    await runBash('echo hi > out.txt', cwd);
+    await runBash(local, 'echo hi > out.txt', cwd);
     expect(await readFile(path.join(cwd, 'out.txt'), 'utf8')).toBe('hi\n');
   });
 
   it('非 0 結束碼回傳而不丟例外，並包含 stderr', async () => {
-    const r = await runBash('echo boom >&2; exit 3', await workDir());
+    const r = await runBash(local, 'echo boom >&2; exit 3', await workDir());
     expect(r.exitCode).toBe(3);
     expect(r.output).toContain('boom');
   });
 
   it('逾時會中止', async () => {
-    const r = await runBash('sleep 5', await workDir(), 200);
+    const r = await runBash(local, 'sleep 5', await workDir(), 200);
     expect(r.timedOut).toBe(true);
   });
 
   it('多位元組輸出不會被誤判為過長', async () => {
-    const r = await runBash('echo 你好', await workDir());
+    const r = await runBash(local, 'echo 你好', await workDir());
     expect(r.output).toBe('你好\n');
     expect(r.output).not.toContain('已截斷');
   });
 
   it('逾時會連子行程一起終止', async () => {
     const start = Date.now();
-    const r = await runBash('sleep 5; echo x', await workDir(), 200);
+    const r = await runBash(local, 'sleep 5; echo x', await workDir(), 200);
     expect(r.timedOut).toBe(true);
     expect(Date.now() - start).toBeLessThan(1500);
   });
 
   it('逾時時，脫離行程群組的孫行程佔住 stdout 也不會卡住', async () => {
     const start = Date.now();
-    const r = await runBash(`perl -e 'setpgrp; sleep 5' & echo started`, await workDir(), 300);
+    const r = await runBash(local, `perl -e 'setpgrp; sleep 5' & echo started`, await workDir(), 300);
     expect(r.timedOut).toBe(true);
     expect(r.output).toContain('started');
     expect(Date.now() - start).toBeLessThan(2000);
   });
 
+  it('看不到 runtime 的環境變數（平台金鑰不會帶進 bash）', async () => {
+    process.env.AGENTHUB_FAKE_SECRET = 'leak';
+    try {
+      const r = await runBash(local, 'echo "[$AGENTHUB_FAKE_SECRET]"', await workDir());
+      expect(r.output.trim()).toBe('[]');
+    } finally {
+      delete process.env.AGENTHUB_FAKE_SECRET;
+    }
+  });
+
   it('輸出過長會截斷', async () => {
-    const r = await runBash(`head -c 50000 /dev/zero | tr '\\0' a`, await workDir());
+    const r = await runBash(local, `head -c 50000 /dev/zero | tr '\\0' a`, await workDir());
     expect(r.output.length).toBeLessThan(MAX_OUTPUT + 100);
     expect(r.output).toContain('已截斷');
   });
@@ -93,7 +105,7 @@ describe('read_file / write_file', () => {
 describe('工具的 description 欄位', () => {
   it('bash 與 write_file 可選填 description，欄位說明要求寫一句中文', async () => {
     const dir = await workDir();
-    for (const t of [bashTool(dir), writeFileTool(dir)]) {
+    for (const t of [bashTool(dir, local), writeFileTool(dir)]) {
       const schema = t.inputSchema as unknown as z.ZodObject<z.ZodRawShape>;
       expect((schema.shape.description as z.ZodType).description).toContain('一句中文');
       expect(schema.safeParse({ command: 'ls', path: 'a.md', content: 'b' }).success).toBe(true);

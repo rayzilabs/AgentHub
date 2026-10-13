@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
 import { tool } from 'ai';
 import { z } from 'zod';
+import type { Sandbox } from '../sandbox';
 
 /** 給使用者看的步驟說明；選填，模型漏填時工具照常執行 */
 export const DESCRIPTION_FIELD = z
@@ -18,14 +18,15 @@ export function truncate(text: string, max = MAX_OUTPUT): string {
 }
 
 export function runBash(
+  sandbox: Sandbox,
   command: string,
   cwd: string,
   timeoutMs = BASH_TIMEOUT_MS,
   abortSignal?: AbortSignal,
 ): Promise<{ exitCode: number | null; output: string; timedOut: boolean }> {
   return new Promise((resolve) => {
-    // detached：讓 bash 成為獨立行程群組，逾時或中止時能連同子行程一起終止
-    const child = spawn('bash', ['-c', command], { cwd, env: process.env, detached: true });
+    // 以沙盒帳號執行，環境變數只剩白名單；逾時或中止時以同一個帳號終止整個程序群組
+    const child = sandbox.spawn(['bash', '-c', command], { cwd });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     let output = '';
@@ -40,13 +41,7 @@ export function runBash(
     };
     child.stdout.on('data', append);
     child.stderr.on('data', append);
-    const killGroup = () => {
-      try {
-        process.kill(-child.pid!, 'SIGKILL');
-      } catch {
-        child.kill('SIGKILL');
-      }
-    };
+    const killGroup = () => sandbox.kill(child);
     let settled = false;
     const done = (exitCode: number | null, extra = '') => {
       if (settled) return;
@@ -87,10 +82,10 @@ export function runBash(
   });
 }
 
-export function bashTool(cwd: string) {
+export function bashTool(cwd: string, sandbox: Sandbox) {
   return tool({
     description: '在你的工作目錄執行 bash 指令。單次最長 120 秒，輸出超過 20000 字元會被截斷。',
     inputSchema: z.object({ command: z.string().describe('要執行的 bash 指令'), description: DESCRIPTION_FIELD }),
-    execute: async ({ command }, { abortSignal }) => runBash(command, cwd, BASH_TIMEOUT_MS, abortSignal),
+    execute: async ({ command }, { abortSignal }) => runBash(sandbox, command, cwd, BASH_TIMEOUT_MS, abortSignal),
   });
 }
