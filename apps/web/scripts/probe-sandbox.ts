@@ -19,13 +19,16 @@ const client = new SpritesClient(token);
 const results: { check: string; pass: boolean; detail: string }[] = [];
 const record = (check: string, pass: boolean, detail: string) => results.push({ check, pass, detail: detail.slice(0, 300) });
 
+/** Sprite 的 ~/.bashrc 在非互動 shell 會印 bind 警告，混進輸出會讓比對失準；濾掉 */
+const clean = (s: string) => s.split('\n').filter((l) => !/\.bashrc: line \d+: bind: warning/.test(l)).join('\n').trim();
+
 async function sh(sprite: Sprite, cmd: string): Promise<{ code: number; out: string }> {
   try {
     const r = await sprite.execFile('bash', ['-lc', cmd]);
-    return { code: 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+    return { code: 0, out: clean(`${r.stdout ?? ''}${r.stderr ?? ''}`) };
   } catch (e) {
     const err = e as { exitCode?: number; stdout?: unknown; stderr?: unknown; message?: string };
-    return { code: err.exitCode ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim() };
+    return { code: err.exitCode ?? 1, out: clean(`${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`) };
   }
 }
 // 與 runtime 的 sandbox.ts 相同的執行路徑：root 開獨立掛載命名空間 → 沙盒腳本蓋掉內部 API → 降權成 agent
@@ -47,7 +50,8 @@ async function health(url: string): Promise<string> {
 
 try {
   const sprite = await client.createSprite(name, { urlSettings: { auth: 'sprite' } });
-  const base = `${(await sh(sprite, 'printf %s "$HOME"')).out}/agenthub`;
+  // 家目錄單獨一行輸出，不會跟 .bashrc 的警告黏在同一行
+  const base = `${(await sh(sprite, 'printf "%s\\n" "$HOME"')).out.split('\n')[0]}/agenthub`;
 
   // 模擬舊版佈建留下的工作區，確認重新佈建時檔案會搬到 /workspace
   await sh(sprite, `mkdir -p '${base}/agents/legacy' '${base}/shared' && echo kept > '${base}/agents/legacy/report.md'`);
@@ -115,11 +119,11 @@ try {
     record(`adduser 建立顧問帳號 ${u}`, r.code === 0, r.out);
   }
   // runtime 同步 skill（runtime 的 umask 是 002）
-  await sh(sprite, `umask 002 && mkdir -p ${dirA}/skills/s && echo sop > ${dirA}/skills/s/SKILL.md`);
-  const aw = await sh(sprite, asUser(A, `echo a-secret > ${dirA}/work.txt && echo a-tmp > /tmp/a.txt && echo shared-a > ${WORKSPACE}/shared/from-a.txt`));
+  await sh(sprite, `umask 002 && mkdir -p ${dirA}/skills/s && echo MARK-SOP-A > ${dirA}/skills/s/SKILL.md`);
+  const aw = await sh(sprite, asUser(A, `echo MARK-WORK-A > ${dirA}/work.txt && echo MARK-TMP-A > /tmp/a.txt && echo shared-a > ${WORKSPACE}/shared/from-a.txt`));
   record('顧問 A 能寫自己的目錄、/tmp、/shared', aw.code === 0, aw.out);
   const ar = await sh(sprite, asUser(A, `cat ${dirA}/skills/s/SKILL.md`));
-  record('顧問 A 讀得到自己的 skill', ar.code === 0 && ar.out.trim() === 'sop', JSON.stringify(ar));
+  record('顧問 A 讀得到自己的 skill', ar.code === 0 && ar.out.trim() === 'MARK-SOP-A', JSON.stringify(ar));
   for (const [label, cmd] of [
     ['B 讀不到 A 的 skill', `cat ${dirA}/skills/s/SKILL.md`],
     ['B 讀不到 A 的工作檔', `cat ${dirA}/work.txt`],
@@ -127,7 +131,7 @@ try {
     ['B 的 /tmp 裡沒有 A 的檔案', 'cat /tmp/a.txt'],
   ] as const) {
     const r = await sh(sprite, asUser(B, cmd));
-    record(label, r.code !== 0 && !r.out.includes('sop') && !r.out.includes('a-'), r.out);
+    record(label, r.code !== 0 && !r.out.includes('MARK-'), r.out);
   }
   const mgr = await sh(sprite, asUser('agent', `cat ${dirA}/work.txt`));
   record('主管讀不到顧問的工作檔', mgr.code !== 0, mgr.out);
@@ -138,7 +142,9 @@ try {
   const killA = await sh(sprite, [
     `setsid ${asUser(A, 'sleep 300')} &`,
     'pid=$!; sleep 1',
-    `${asUser(B, 'kill -KILL -- -$pid')}; sleep 1`,
+    'echo "pgid=$pid"; ps -eo user,pid,pgid,stat,cmd | grep -E "[s]leep 300|[s]udo -n -E"',
+    `${asUser(B, 'kill -KILL -- -$pid; echo kill-exit=$?')}; sleep 1`,
+    'ps -eo user,pid,pgid,stat,cmd | grep -E "[s]leep 300" || echo no-sleep',
     `pgrep -u ${A} sleep >/dev/null && echo a-alive || echo a-killed`,
     `sudo -n pkill -u ${A} sleep || true`,
   ].join('\n'));
