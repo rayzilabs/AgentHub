@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createConsultantRunner } from '../src/consultant';
+import { createConsultantRunner, type ConsultantRunnerDeps } from '../src/consultant';
+import { ConsultantStoppedError } from '../src/errors';
 import { createRun } from '../src/run-store';
 import { loadInstances } from '../src/project-store';
 import { textOf } from '../src/ui-stream';
@@ -16,11 +17,12 @@ async function setup(model: LanguageModel) {
   const consultantId = await seedConsultant(db, projectId, { system_prompt: '你是稅務顧問。' });
   const roots = await tmpRoots();
   const [instance] = await loadInstances(db, projectId);
-  const run = createConsultantRunner({
+  const makeRunner = (extra: Partial<ConsultantRunnerDeps> = {}) => createConsultantRunner({
     db, model, runId, sharedFiles: [], secrets: [],
     config: { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot },
+    ...extra,
   });
-  return { run, instance, runId, consultantId };
+  return { run: makeRunner(), makeRunner, instance, runId, consultantId };
 }
 
 describe('createConsultantRunner', () => {
@@ -45,5 +47,22 @@ describe('createConsultantRunner', () => {
       for await (const _ of run(instance, '任務')) { /* drain */ }
     };
     await expect(consume()).rejects.toThrow('顧問掛了');
+  });
+
+  it('超過 stopAt：中止顧問並丟出 ConsultantStoppedError', async () => {
+    const { makeRunner, instance } = await setup(mockModel(textTurn('一段要講很久很久很久很久很久的回答', 100)));
+    const run = makeRunner({ stopAt: Date.now() + 300 });
+    const consume = async () => {
+      for await (const _ of run(instance, '任務')) { /* drain */ }
+    };
+    await expect(consume()).rejects.toBeInstanceOf(ConsultantStoppedError);
+  });
+
+  it('在 stopAt 之前正常完成：不算逾時', async () => {
+    const { makeRunner, instance } = await setup(mockModel(textTurn('很快的回答')));
+    const run = makeRunner({ stopAt: Date.now() + 5_000 });
+    let last;
+    for await (const m of run(instance, '任務')) last = m;
+    expect(textOf(last)).toBe('很快的回答');
   });
 });

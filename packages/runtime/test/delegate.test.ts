@@ -4,6 +4,8 @@ import type { ConsultantRunner, RecordSpeech } from '../src/consultant';
 import { assignTaskTool, type DelegationOutput } from '../src/tools/delegate';
 import type { AgentInstance } from '../src/types';
 import { textOf } from '../src/ui-stream';
+import { ConsultantStoppedError } from '../src/errors';
+import { TIME_UP } from '../src/run-clock';
 
 const opts = { toolCallId: 't', messages: [] } as never;
 
@@ -77,6 +79,63 @@ describe('assign_task', () => {
     const t = assignTaskTool({ consultants: [legal], run, record: async (...a) => { recorded.push(a); }, intervalMs: 0 });
     await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
     expect(recorded).toEqual([]);
+  });
+
+  it('過了受理時間：不啟動顧問，直接回報時間不足', async () => {
+    let called = false;
+    const run: ConsultantRunner = async function* () {
+      called = true;
+      yield msg('不該被呼叫');
+    };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0, acceptUntil: Date.now() - 1 });
+    const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+    expect(outputs).toEqual([{ consultant_id: 'c-legal', name: '法務顧問', status: 'failed', error: TIME_UP }]);
+    expect(called).toBe(false);
+  });
+
+  it('顧問被強制停止：標成 stopped，交給主管已完成的步驟與已寫出的內容', async () => {
+    const step = (state: string, description: string, toolCallId: string) =>
+      ({ type: 'tool-bash', toolCallId, state, input: { command: 'x', description } });
+    const partial = {
+      id: 'm', role: 'assistant',
+      parts: [step('output-available', '計算評等', 'c1'), step('input-available', '安裝套件', 'c2'), { type: 'text', text: '初步結果：0050 流入最多' }],
+    } as unknown as UIMessage;
+    const run: ConsultantRunner = async function* () {
+      yield partial;
+      throw new ConsultantStoppedError('法務顧問 超過時間上限');
+    };
+    const recorded: UIMessage[] = [];
+    const t = assignTaskTool({ consultants: [legal], run, record: async (_i, m) => { recorded.push(m); }, intervalMs: 0 });
+    const last = (await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>)).at(-1)!;
+    expect(last).toMatchObject({ status: 'failed', cutoff: 'stopped', error: '逾時，只交回部分結果' });
+    expect(recorded).toHaveLength(1);
+    expect(t.toModelOutput!({ toolCallId: 't', input: { consultant_id: 'c-legal', task: 'x' }, output: last })).toEqual({
+      type: 'text',
+      value: '法務顧問 逾時，只完成部分工作。已完成的步驟：計算評等。已寫出的內容：初步結果：0050 流入最多',
+    });
+  });
+
+  it('被強制停止時什麼都還沒做：交給主管的內容寫「無」', async () => {
+    const run: ConsultantRunner = async function* () {
+      throw new ConsultantStoppedError('x');
+    };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0 });
+    const last = (await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>)).at(-1)!;
+    expect(t.toModelOutput!({ toolCallId: 't', input: { consultant_id: 'c-legal', task: 'x' }, output: last })).toEqual({
+      type: 'text', value: '法務顧問 逾時，只完成部分工作。已完成的步驟：無。已寫出的內容：無',
+    });
+  });
+
+  it('過了受理時間才完成：標成 wrap-up，結果照常交給主管', async () => {
+    const run: ConsultantRunner = async function* () {
+      await new Promise((r) => setTimeout(r, 30));
+      yield msg('收尾結論');
+    };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0, acceptUntil: Date.now() + 10 });
+    const last = (await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>)).at(-1)!;
+    expect(last).toMatchObject({ status: 'done', cutoff: 'wrap-up' });
+    expect(t.toModelOutput!({ toolCallId: 't', input: { consultant_id: 'c-legal', task: 'x' }, output: last }))
+      .toEqual({ type: 'text', value: '收尾結論' });
   });
 
   it('顧問 id 不存在：回傳錯誤而不是崩潰', async () => {

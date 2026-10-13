@@ -1,7 +1,8 @@
 import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
-import { errorText } from '../errors';
+import { ConsultantStoppedError, errorText } from '../errors';
+import { TIME_UP } from '../run-clock';
 import { SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
 import { textOf, textOnly, toolEvents, type ToolEvent } from '../ui-stream';
@@ -14,7 +15,17 @@ export type DelegationOutput = {
   message?: UIMessage;
   tools?: ToolEvent[];
   error?: string;
+  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
+  cutoff?: 'wrap-up' | 'stopped';
 };
+
+export const STOPPED_ERROR = '逾時，只交回部分結果';
+
+/** 顧問被強制停止時交給主管的內容：已完成的步驟與已寫出的文字 */
+export function stoppedSummary(o: DelegationOutput): string {
+  const steps = (o.tools ?? []).filter((t) => t.state === 'output-available').map((t) => t.description ?? t.tool);
+  return `${o.name} 逾時，只完成部分工作。已完成的步驟：${steps.length ? steps.join('；') : '無'}。已寫出的內容：${textOf(o.message) || '無'}`;
+}
 
 type DelegationView = { message: UIMessage; tools: ToolEvent[] };
 
@@ -40,6 +51,8 @@ export function assignTaskTool(opts: {
   run: ConsultantRunner;
   record: RecordSpeech;
   intervalMs?: number;
+  /** 過了這個時間就不再啟動顧問（RunClock.consultantWrapUpAt） */
+  acceptUntil?: number;
 }) {
   const byId = new Map(opts.consultants.map((c) => [c.id, c]));
   const ids = opts.consultants.map((c) => c.id) as [string, ...string[]];
@@ -54,6 +67,10 @@ export function assignTaskTool(opts: {
       const instance = byId.get(consultant_id);
       if (!instance) {
         yield { consultant_id, name: consultant_id, status: 'failed', error: '找不到這位顧問' };
+        return;
+      }
+      if (opts.acceptUntil !== undefined && Date.now() >= opts.acceptUntil) {
+        yield { consultant_id, name: instance.name, status: 'failed', error: TIME_UP };
         return;
       }
       const base = { consultant_id, name: instance.name };
@@ -75,15 +92,22 @@ export function assignTaskTool(opts: {
         }
       } catch (e) {
         await save();
-        yield { ...base, status: 'failed', ...lastView(), error: errorText(e) };
+        if (e instanceof ConsultantStoppedError) {
+          yield { ...base, status: 'failed', cutoff: 'stopped', ...lastView(), error: STOPPED_ERROR };
+        } else {
+          yield { ...base, status: 'failed', ...lastView(), error: errorText(e) };
+        }
         return;
       }
       await save();
-      yield { ...base, status: 'done', ...lastView() };
+      const wrappedUp = opts.acceptUntil !== undefined && Date.now() >= opts.acceptUntil;
+      yield { ...base, status: 'done', ...(wrappedUp ? { cutoff: 'wrap-up' as const } : {}), ...lastView() };
     },
-    toModelOutput: ({ output }) =>
-      output.status === 'failed'
+    toModelOutput: ({ output }) => {
+      if (output.cutoff === 'stopped') return { type: 'text', value: stoppedSummary(output) };
+      return output.status === 'failed'
         ? { type: 'error-text', value: `${output.name} 執行失敗：${output.error}` }
-        : { type: 'text', value: textOf(output.message) || '（顧問沒有回覆內容）' },
+        : { type: 'text', value: textOf(output.message) || '（顧問沒有回覆內容）' };
+    },
   });
 }
