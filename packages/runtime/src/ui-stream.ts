@@ -1,5 +1,6 @@
 import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai';
 import { errorText } from './errors';
+import { truncate } from './tools/bash';
 
 export type StreamOutcome = { final: UIMessage | undefined; failure: string | undefined };
 
@@ -13,13 +14,65 @@ export function textOnly(m: UIMessage): UIMessage {
   return { id: m.id, role: m.role, parts: m.parts.filter((p) => p.type === 'text') };
 }
 
-export type ToolEvent = { tool: string; state: string };
+/** 每次工具呼叫的開始與結束時間，存在 UIMessage 的 metadata.tool_times（見 tool-clock.ts） */
+export type ToolTimes = Record<string, { started_at: string; ended_at?: string }>;
+
+/** 給前端看的工具摘要：不含原始輸入與輸出（web 端 lib/agent-output.ts 有一份相同的型別） */
+export type ToolEvent = { tool: string; state: string; description?: string; started_at?: string; ended_at?: string };
+
+/** 只寫進 messages.tool_events 的完整紀錄，事後除錯用 */
+export type ToolRecord = ToolEvent & { tool_call_id: string; input?: string; output?: string };
+
+export const RECORD_TEXT_MAX = 2_000;
+
+type ToolPartLike = {
+  type: string;
+  toolName?: string;
+  toolCallId: string;
+  state: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+};
+
+function toolParts(m: UIMessage): ToolPartLike[] {
+  return m.parts.filter((p) => p.type === 'dynamic-tool' || p.type.startsWith('tool-')) as unknown as ToolPartLike[];
+}
+
+function toolTimesOf(m: UIMessage): ToolTimes {
+  return (m.metadata as { tool_times?: ToolTimes } | undefined)?.tool_times ?? {};
+}
+
+function eventOf(p: ToolPartLike, times: ToolTimes): ToolEvent {
+  const tool = p.type === 'dynamic-tool' ? p.toolName ?? 'tool' : p.type.slice('tool-'.length);
+  const description = (p.input as { description?: unknown } | undefined)?.description;
+  const t = times[p.toolCallId];
+  return {
+    tool,
+    state: p.state,
+    ...(typeof description === 'string' && description ? { description } : {}),
+    ...(t?.started_at ? { started_at: t.started_at } : {}),
+    ...(t?.ended_at ? { ended_at: t.ended_at } : {}),
+  };
+}
 
 export function toolEvents(m: UIMessage): ToolEvent[] {
-  return m.parts.flatMap((p) => {
-    if (p.type === 'dynamic-tool') return [{ tool: p.toolName, state: p.state }];
-    if (p.type.startsWith('tool-')) return [{ tool: p.type.slice('tool-'.length), state: (p as { state: string }).state }];
-    return [];
+  const times = toolTimesOf(m);
+  return toolParts(m).map((p) => eventOf(p, times));
+}
+
+const clip = (v: unknown): string => truncate(typeof v === 'string' ? v : JSON.stringify(v), RECORD_TEXT_MAX);
+
+export function toolRecords(m: UIMessage): ToolRecord[] {
+  const times = toolTimesOf(m);
+  return toolParts(m).map((p) => {
+    const output = p.state === 'output-error' ? p.errorText ?? '' : p.output;
+    return {
+      ...eventOf(p, times),
+      tool_call_id: p.toolCallId,
+      ...(p.input !== undefined ? { input: clip(p.input) } : {}),
+      ...(output !== undefined ? { output: clip(output) } : {}),
+    };
   });
 }
 

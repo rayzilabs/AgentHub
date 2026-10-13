@@ -10,7 +10,7 @@ import {
   assertThreadInProject, createRun, finishRun, insertMessage, loadHistory, type RunResult,
 } from './run-store';
 import { syncSharedFiles, syncSkills } from './sync';
-import { consumeToEnd, hasContent, textOf, toolEvents } from './ui-stream';
+import { consumeToEnd, hasContent, textOf, toolRecords } from './ui-stream';
 import { usageRecorder } from './usage';
 
 export const RUN_TIMEOUT_MS = 15 * 60_000;
@@ -53,7 +53,7 @@ async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string):
       kind: round === null ? 'delegation' : 'discussion',
       round,
       content: textOf(message),
-      tool_events: toolEvents(message),
+      tool_events: toolRecords(message),
     });
   };
   const built = await buildManager({
@@ -161,7 +161,7 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
     if (hasContent(final)) {
       await insertMessage(db, {
         thread_id: req.threadId, run_id: runId, speaker_instance_id: rootId, kind: 'final',
-        content: textOf(final), ui_message: final, tool_events: toolEvents(final),
+        content: textOf(final), ui_message: final, tool_events: toolRecords(final),
       }).catch((e) => { saveError = `無法儲存回覆：${errorText(e)}`; });
     }
     const error = timedOut

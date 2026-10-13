@@ -91,7 +91,8 @@ describe('POST /chat', () => {
     await expect(stat(path.join(env.roots.agentsRoot, env.consultantId, 'memo.md'))).resolves.toBeTruthy();
     const final = (await messagesOf(env.threadId)).find((m) => m.kind === 'final');
     expect(final.content).toBe('寫好了');
-    expect(final.tool_events).toEqual([{ tool: 'write_file', state: 'output-available' }]);
+    expect(final.tool_events).toMatchObject([{ tool: 'write_file', state: 'output-available', tool_call_id: 'call-1' }]);
+    expect(final.tool_events[0].input).toContain('memo.md');
   });
 
   it('第二次對話帶入之前的問答', async () => {
@@ -259,7 +260,7 @@ describe('POST /chat：多顧問', () => {
     expect(msgs.map((m) => m.kind)).toEqual(['user', 'delegation', 'final']);
     expect(msgs[1]).toMatchObject({ speaker_instance_id: env.legalId, content: '法務意見：第 5 條有違約金風險', round: null });
     expect(msgs[2]).toMatchObject({ speaker_instance_id: env.managerId, content: '總結：第 5 條要修改' });
-    expect(msgs[1].tool_events).toEqual([{ tool: 'write_file', state: 'output-available' }]);
+    expect(msgs[1].tool_events).toMatchObject([{ tool: 'write_file', state: 'output-available', tool_call_id: 'call-c1' }]);
     expect(promptText(model, 3)).toContain('法務意見：第 5 條有違約金風險');
 
     // 存下來的 ui_message 只帶顧問的文字與工具摘要，不帶顧問的工具呼叫本體
