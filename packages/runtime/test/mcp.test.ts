@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { createMCPClient } from '@ai-sdk/mcp';
 import { describe, expect, it } from 'vitest';
 import { connectMcpServers, sanitizeToolName, substituteSecrets } from '../src/mcp';
+import { createSandbox } from '../src/sandbox';
 import { tmpRoots } from './helpers';
 
 const fixture = fileURLToPath(new URL('./fixtures/echo-mcp.mjs', import.meta.url));
@@ -28,6 +29,7 @@ describe('connectMcpServers', () => {
       [{ name: 'echo-server', transport: 'stdio', command: process.execPath, args: [fixture] }],
       { 'echo-server': { ECHO_PREFIX: 'P:' } },
       agentsRoot,
+      createSandbox(),
     );
     try {
       expect(handle.warnings).toEqual([]);
@@ -49,9 +51,30 @@ describe('connectMcpServers', () => {
       [{ name: 'remote', transport: 'http', url: 'https://mcp.example.com', headers: { Authorization: 'Bearer ${API_KEY}' } }],
       { remote: { API_KEY: 'secret-1' } },
       '/tmp',
+      createSandbox(),
       fakeConnect,
     );
     expect(seen[0]).toEqual({ type: 'http', url: 'https://mcp.example.com', headers: { Authorization: 'Bearer secret-1' } });
+  });
+
+  it('stdio：指定沙盒帳號時以 sudo 啟動，金鑰放在環境變數而不是指令參數', async () => {
+    const seen: unknown[] = [];
+    const fakeConnect = (async (config: { transport: unknown }) => {
+      seen.push(config.transport);
+      return { tools: async () => ({}), close: async () => {} };
+    }) as unknown as typeof createMCPClient;
+    await connectMcpServers(
+      [{ name: 'local', transport: 'stdio', command: 'node', args: ['server.js'] }],
+      { local: { API_KEY: 'secret-1' } },
+      '/tmp',
+      createSandbox('agent'),
+      fakeConnect,
+    );
+    const params = (seen[0] as { serverParams: { command: string; args: string[]; env: Record<string, string> } }).serverParams;
+    expect(params.command).toBe('sudo');
+    expect(params.args.slice(-2)).toEqual(['node', 'server.js']);
+    expect(params.args.join(' ')).not.toContain('secret-1');
+    expect(params.env.API_KEY).toBe('secret-1');
   });
 
   it('啟動失敗不丟例外，改寫進 warnings，其他 MCP 照常可用', async () => {
@@ -64,6 +87,7 @@ describe('connectMcpServers', () => {
       ],
       {},
       agentsRoot,
+      createSandbox(),
     );
     try {
       expect(handle.warnings).toHaveLength(1);
@@ -82,7 +106,7 @@ describe('connectMcpServers', () => {
       return { tools: async () => ({}), close: async () => { closed = true; } };
     }) as unknown as typeof createMCPClient;
     const handle = await connectMcpServers(
-      [{ name: 'slow', transport: 'http', url: 'https://mcp.example.com' }], {}, '/tmp', slowConnect, 20,
+      [{ name: 'slow', transport: 'http', url: 'https://mcp.example.com' }], {}, '/tmp', createSandbox(), slowConnect, 20,
     );
     expect(handle.warnings[0]).toContain('MCP「slow」目前無法使用');
     expect(handle.warnings[0]).toContain('沒有回應');

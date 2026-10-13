@@ -2,6 +2,7 @@ import { createMCPClient } from '@ai-sdk/mcp';
 import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import type { ToolSet } from 'ai';
 import { errorText } from './errors';
+import type { Sandbox } from './sandbox';
 import type { McpServerConfig } from './types';
 
 export const MCP_CONNECT_TIMEOUT_MS = 60_000;
@@ -28,7 +29,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-function transportFor(server: McpServerConfig, secrets: Record<string, string>, cwd: string) {
+function transportFor(server: McpServerConfig, secrets: Record<string, string>, cwd: string, sandbox: Sandbox) {
   if (server.transport === 'http') {
     if (!server.url) throw new Error('缺少 url');
     const headers = Object.fromEntries(
@@ -37,13 +38,16 @@ function transportFor(server: McpServerConfig, secrets: Record<string, string>, 
     return { type: 'http' as const, url: server.url, headers };
   }
   if (!server.command) throw new Error('缺少 command');
-  return new Experimental_StdioMCPTransport({ command: server.command, args: server.args ?? [], env: secrets, cwd });
+  // 以沙盒帳號啟動：創作者的 MCP 程式讀不到 runtime 的檔案與平台金鑰
+  const { command, args, env } = sandbox.command([server.command, ...(server.args ?? [])], secrets);
+  return new Experimental_StdioMCPTransport({ command, args, env, cwd });
 }
 
 export async function connectMcpServers(
   servers: McpServerConfig[],
   secretsByServer: Record<string, Record<string, string>>,
   cwd: string,
+  sandbox: Sandbox,
   connect: typeof createMCPClient = createMCPClient,
   timeoutMs = MCP_CONNECT_TIMEOUT_MS,
 ): Promise<McpHandle> {
@@ -53,7 +57,7 @@ export async function connectMcpServers(
 
   for (const server of servers) {
     try {
-      const transport = transportFor(server, secretsByServer[server.name] ?? {}, cwd);
+      const transport = transportFor(server, secretsByServer[server.name] ?? {}, cwd, sandbox);
       const pending = connect({ transport });
       const client = await withTimeout(pending, timeoutMs, `MCP「${server.name}」`).catch((e: unknown) => {
         // 逾時後才連上的 client 已經沒人管，連上時直接關掉

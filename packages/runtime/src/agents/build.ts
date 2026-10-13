@@ -113,7 +113,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
 
-  const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir);
+  const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir, sandbox);
   try {
     const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
     const instructions = buildConsultantInstructions({
