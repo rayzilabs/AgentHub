@@ -37,7 +37,7 @@ export const SANDBOX_ADDUSER = '/usr/local/bin/agenthub-sandbox-adduser';
 
 /**
  * runtime 以 `sudo agenthub-sandbox-adduser <帳號> <目錄>` 呼叫：確保顧問帳號與工作目錄存在，且只有 runtime 與該顧問進得去。
- * 參數不合格、目錄是 symlink 就失敗；可重複執行（1-A 時期的 workspace 群組目錄會轉成顧問群組）。
+ * 參數不合格、目錄是 symlink 就失敗；可重複執行。也建立 /workspace/skills/<id>（顧問只能讀）。
  */
 export const SANDBOX_ADDUSER_SCRIPT = [
   '#!/bin/sh',
@@ -47,17 +47,17 @@ export const SANDBOX_ADDUSER_SCRIPT = [
   'user="$1"; dir="$2"; owner="${SUDO_USER:?必須由 runtime 以 sudo 呼叫}"',
   'echo "$user" | /usr/bin/grep -Eqx \'agent-[0-9a-f]{12}\' || { echo "不合格的帳號：$user" >&2; exit 2; }',
   'echo "$dir" | /usr/bin/grep -Eqx \'/workspace/agents/[0-9a-f-]{36}\' || { echo "不合格的目錄：$dir" >&2; exit 2; }',
+  // skills 放在顧問工作目錄以外，顧問只能讀：runtime 解壓時顧問無法把它換成 symlink
+  'skills="/workspace/skills/${dir##*/}"',
   '[ ! -L "$dir" ] || { echo "目錄不能是 symlink：$dir" >&2; exit 2; }',
+  '[ ! -L "$skills" ] || { echo "目錄不能是 symlink：$skills" >&2; exit 2; }',
   '/usr/bin/id -u "$user" >/dev/null 2>&1 || /usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user"',
   '[ -d "$dir" ] || /usr/bin/mkdir "$dir"',
-  '/usr/bin/chown "$owner:$user" "$dir"',
+  '[ -d "$skills" ] || /usr/bin/mkdir "$skills"',
+  // 只處理頂層目錄：頂層權限就足以擋住其他帳號；不對顧問可控的目錄樹做遞迴操作（會被 symlink 搶時間利用）
+  '/usr/bin/chown "$owner:$user" "$dir" "$skills"',
   '/usr/bin/chmod 2770 "$dir"',
-  // 1-A 時期的目錄是 workspace 群組：轉成顧問群組（-R 預設不跟隨 symlink）
-  'if [ -n "$(/usr/bin/find "$dir" -mindepth 1 ! -group "$user" -print -quit)" ]; then',
-  '  /usr/bin/chgrp -R "$user" "$dir"',
-  '  /usr/bin/chmod -R g+rwX,o-rwx "$dir"',
-  '  /usr/bin/find "$dir" -type d -exec /usr/bin/chmod g+s {} +',
-  'fi',
+  '/usr/bin/chmod 2750 "$skills"',
   '',
 ].join('\n');
 
@@ -119,17 +119,17 @@ export function sandboxSetupScript(base: string): string {
     `id -u ${SANDBOX_USER} >/dev/null 2>&1 || sudo useradd --create-home --shell /bin/bash ${SANDBOX_USER}`,
     'getent group workspace >/dev/null || sudo groupadd workspace',
     `sudo usermod -aG workspace ${SANDBOX_USER}`,
-    `sudo mkdir -p ${WORKSPACE}/agents ${WORKSPACE}/shared`,
+    `sudo mkdir -p ${WORKSPACE}/agents ${WORKSPACE}/skills ${WORKSPACE}/shared`,
     // 舊版的工作區在 runtime 目錄底下；搬過來，顧問寫出的檔案不會遺失
     `if [ -d ${q(`${base}/agents`)} ]; then sudo cp -a ${q(`${base}/agents/.`)} ${WORKSPACE}/agents/ && sudo rm -rf ${q(`${base}/agents`)}; fi`,
     `if [ -d ${q(`${base}/shared`)} ]; then sudo cp -a ${q(`${base}/shared/.`)} ${WORKSPACE}/shared/ && sudo rm -rf ${q(`${base}/shared`)}; fi`,
-    `sudo chown "$(id -un)":workspace ${WORKSPACE} ${WORKSPACE}/agents`,
+    `sudo chown "$(id -un)":workspace ${WORKSPACE} ${WORKSPACE}/agents ${WORKSPACE}/skills`,
     `sudo chown -R "$(id -un)":workspace ${WORKSPACE}/shared`,
     `sudo chmod -R g+rwX,o-rwx ${WORKSPACE}/shared`,
     `sudo find ${WORKSPACE}/shared -type d -exec chmod g+s {} +`,
     `sudo chmod 2770 ${WORKSPACE}/shared`,
     // 只有 runtime 能在這裡建立項目；各顧問目錄的擁有者與群組由 agenthub-sandbox-adduser 處理（不在這裡遞迴改回去）
-    `sudo chmod 0711 ${WORKSPACE}/agents`,
+    `sudo chmod 0711 ${WORKSPACE}/agents ${WORKSPACE}/skills`,
     `sudo chmod 755 ${WORKSPACE}`,
     // 私人 /tmp 的實體位置：父目錄只有 root 能寫，不能被搶先建立或換成 symlink
     'sudo install -d -m 711 -o root -g root /var/lib/agenthub /var/lib/agenthub/tmp',

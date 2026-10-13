@@ -21,6 +21,26 @@ describe('syncSkills', () => {
     expect(await readFile(path.join(skillsDir(agentsRoot, id), 'contract/check.sh'), 'utf8')).toBe('echo ok');
   });
 
+  it('skills 放在顧問工作目錄以外（顧問不能在裡面建立或改名項目），與 agents 同一層', () => {
+    expect(skillsDir('/workspace/agents', 'abc')).toBe(path.join('/workspace', 'skills', 'abc'));
+    expect(skillsDir('/workspace/agents', 'abc').startsWith(agentDir('/workspace/agents', 'abc'))).toBe(false);
+  });
+
+  it('重新同步時保留 skills 目錄本身（權限由佈建設定），只換掉裡面的內容', async () => {
+    const { agentsRoot } = await tmpRoots();
+    const id = randomUUID();
+    const dir = skillsDir(agentsRoot, id);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'stale.txt'), 'old');
+    await writeFile(path.join(dir, '.zip-path'), 'old.zip');
+    const zipPath = await uploadSkillsZip(db, { 'a/SKILL.md': 'A' });
+    const before = (await stat(dir)).ino;
+    await syncSkills(db, agentsRoot, { id, skills_zip_path: zipPath });
+    expect((await stat(dir)).ino).toBe(before);
+    expect(await exists(path.join(dir, 'stale.txt'))).toBe(false);
+    expect(await readFile(path.join(dir, 'a/SKILL.md'), 'utf8')).toBe('A');
+  });
+
   it('版本相同時不重新下載', async () => {
     const { agentsRoot } = await tmpRoots();
     const zipPath = await uploadSkillsZip(db, { 'a/SKILL.md': 'A' });

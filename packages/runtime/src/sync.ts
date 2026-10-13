@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
 import type { Db } from './db';
@@ -12,8 +12,12 @@ export function agentDir(agentsRoot: string, instanceId: string): string {
   return path.join(agentsRoot, instanceId);
 }
 
+/**
+ * skills 放在 agents 旁邊的 skills/<id>，不在顧問可寫的工作目錄裡：
+ * 顧問只能讀（佈建時設為 sprite:顧問群組 2750），無法在 runtime 解壓時把目錄換成 symlink。
+ */
 export function skillsDir(agentsRoot: string, instanceId: string): string {
-  return path.join(agentsRoot, instanceId, 'skills');
+  return path.join(path.dirname(agentsRoot), 'skills', instanceId);
 }
 
 export async function syncSkills(
@@ -38,8 +42,9 @@ export async function syncSkills(
     if (!target.startsWith(dir + path.sep)) throw new SyncError(`skill zip 內含不合法的路徑：${name}`);
   }
 
-  await rm(dir, { recursive: true, force: true });
+  // 保留目錄本身（擁有者、群組與 setgid 由佈建設定），只換掉裡面的內容
   await mkdir(dir, { recursive: true });
+  for (const name of await readdir(dir)) await rm(path.join(dir, name), { recursive: true, force: true });
   for (const [name, content] of entries) {
     const target = path.resolve(dir, name);
     await mkdir(path.dirname(target), { recursive: true });

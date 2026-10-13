@@ -183,6 +183,15 @@ describe('SANDBOX_ADDUSER_SCRIPT', () => {
     expect(SANDBOX_ADDUSER_SCRIPT).toContain("grep -Eqx '/workspace/agents/[0-9a-f-]{36}'");
     expect(SANDBOX_ADDUSER_SCRIPT).toContain('[ ! -L "$dir" ]');
     expect(SANDBOX_ADDUSER_SCRIPT).toContain('/usr/sbin/useradd --create-home --shell /bin/bash --groups workspace "$user"');
-    expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/sudo -/);
+    expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/\bsudo -/);
+  });
+
+  it('skills 目錄放在顧問工作目錄以外、顧問只能讀；不對顧問可控的目錄樹做遞迴操作', () => {
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain('skills="/workspace/skills/${dir##*/}"');
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain('[ ! -L "$skills" ]');
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain('/usr/bin/chown "$owner:$user" "$dir" "$skills"');
+    expect(SANDBOX_ADDUSER_SCRIPT).toContain('/usr/bin/chmod 2750 "$skills"');
+    expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/-R |find /);
+    expect(sandboxSetupScript('/home/sprite/agenthub')).toContain('sudo chmod 0711 /workspace/agents /workspace/skills');
   });
 });
