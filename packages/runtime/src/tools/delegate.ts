@@ -59,22 +59,26 @@ export function assignTaskTool(opts: {
       const base = { consultant_id, name: instance.name };
       let last: UIMessage | undefined;
       const lastView = () => (last ? viewOf(last) : { tools: [] });
+      // 顧問只要產生過內容，不論成功或失敗都記錄下來，事後查得到它做了哪些步驟
+      const save = async () => {
+        if (!last) return;
+        try {
+          await opts.record(instance, last, null);
+        } catch (e) {
+          console.error(`記錄 ${instance.name} 的派工發言失敗：${errorText(e)}`);
+        }
+      };
       try {
         const views = changedViews(opts.run(instance, task, abortSignal), (m) => (last = m));
         for await (const view of throttle(views, opts.intervalMs ?? SNAPSHOT_INTERVAL_MS)) {
           yield { ...base, status: 'working', ...view };
         }
       } catch (e) {
+        await save();
         yield { ...base, status: 'failed', ...lastView(), error: errorText(e) };
         return;
       }
-      if (last) {
-        try {
-          await opts.record(instance, last, null);
-        } catch (e) {
-          console.error(`記錄 ${instance.name} 的派工發言失敗：${errorText(e)}`);
-        }
-      }
+      await save();
       yield { ...base, status: 'done', ...lastView() };
     },
     toModelOutput: ({ output }) =>

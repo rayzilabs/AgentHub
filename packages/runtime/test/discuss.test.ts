@@ -5,6 +5,7 @@ import {
   conveneDiscussionTool, formatTranscript, parseStance, roundPrompt, runDiscussion, type DiscussionState,
 } from '../src/tools/discuss';
 import type { AgentInstance } from '../src/types';
+import { textOf } from '../src/ui-stream';
 
 const opts = { toolCallId: 't', messages: [] } as never;
 
@@ -112,6 +113,23 @@ describe('runDiscussion', () => {
     expect(state.speeches[0]).toMatchObject({ consultant_id: 'c-legal', status: 'failed', error: '逾時' });
     expect(state.speeches).toHaveLength(4);
     expect(formatTranscript(state)).toContain('【第 1 輪｜法務】（未發言：逾時）');
+  });
+
+  it('發言中途出錯：已產生的內容仍記錄，發言標成未發言', async () => {
+    const run: ConsultantRunner = async function* (instance) {
+      if (instance.id === 'c-legal') {
+        yield msg('寫到一半');
+        throw new Error('斷線');
+      }
+      yield msg('E1');
+    };
+    const recorded: string[] = [];
+    const state = await finalState(runDiscussion({
+      topic: 't', participants: [legal, eng], maxRounds: 1, run,
+      record: async (i, m) => { recorded.push(`${i.id}:${textOf(m)}`); },
+    }));
+    expect(state.speeches.find((s) => s.consultant_id === 'c-legal')).toMatchObject({ status: 'failed', error: '斷線' });
+    expect(recorded.sort()).toEqual(['c-eng:E1', 'c-legal:寫到一半']);
   });
 
   it('某一輪全部失敗：中止並帶錯誤', async () => {

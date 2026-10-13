@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ConsultantRunner, RecordSpeech } from '../src/consultant';
 import { assignTaskTool, type DelegationOutput } from '../src/tools/delegate';
 import type { AgentInstance } from '../src/types';
+import { textOf } from '../src/ui-stream';
 
 const opts = { toolCallId: 't', messages: [] } as never;
 
@@ -53,19 +54,29 @@ describe('assign_task', () => {
       .toEqual({ type: 'text', value: '初步看法：有風險' });
   });
 
-  it('顧問出錯：不丟例外，回傳錯誤給主管，不記錄發言', async () => {
+  it('顧問出錯：不丟例外，回傳錯誤給主管，已產生的內容仍記錄下來', async () => {
     const run: ConsultantRunner = async function* () {
       yield msg('寫到一半');
       throw new Error('MCP 斷線');
     };
-    const recorded: unknown[] = [];
-    const t = assignTaskTool({ consultants: [legal], run, record: async (...a) => { recorded.push(a); }, intervalMs: 0 });
+    const recorded: string[] = [];
+    const t = assignTaskTool({ consultants: [legal], run, record: async (_i, m) => { recorded.push(textOf(m)); }, intervalMs: 0 });
     const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
     const last = outputs.at(-1)!;
     expect(last).toMatchObject({ status: 'failed', error: 'MCP 斷線' });
-    expect(recorded).toEqual([]);
+    expect(recorded).toEqual(['寫到一半']);
     expect(t.toModelOutput!({ toolCallId: 't', input: { consultant_id: 'c-legal', task: 'x' }, output: last }))
       .toEqual({ type: 'error-text', value: '法務顧問 執行失敗：MCP 斷線' });
+  });
+
+  it('顧問一開始就出錯（沒有任何快照）：不記錄', async () => {
+    const run: ConsultantRunner = async function* () {
+      throw new Error('啟動失敗');
+    };
+    const recorded: unknown[] = [];
+    const t = assignTaskTool({ consultants: [legal], run, record: async (...a) => { recorded.push(a); }, intervalMs: 0 });
+    await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+    expect(recorded).toEqual([]);
   });
 
   it('顧問 id 不存在：回傳錯誤而不是崩潰', async () => {

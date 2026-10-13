@@ -120,8 +120,8 @@ async function* speakConcurrently(
       speech.error = errorText(e);
     }
     try {
-      // 記錄失敗不影響這次發言的結果
-      if (speech.status === 'done' && message) await record(instance, message, round);
+      // 只要產生過內容就記錄（含失敗），記錄失敗不影響這次發言的結果
+      if (message) await record(instance, message, round);
     } catch (e) {
       console.error(`記錄 ${instance.name} 第 ${round} 輪發言失敗：${errorText(e)}`);
     } finally {

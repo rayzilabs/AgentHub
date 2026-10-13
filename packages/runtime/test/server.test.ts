@@ -315,6 +315,24 @@ describe('POST /chat：多顧問', () => {
     }
   });
 
+  it('派工時顧問失敗：仍寫入 delegation，帶完整工具紀錄', async () => {
+    const env = await seedTeam();
+    const model = mockModel(
+      toolTurn('assign_task', { consultant_id: env.legalId, task: '審查合約' }),
+      toolTurn('write_file', { path: 'notes.md', content: '查到的條款', description: '記下查到的條款' }, 'call-c1'),
+      errorAfterTextTurn('查到一半', '模型壞掉'),
+      textTurn('總結：法務顧問沒有完成'),
+    );
+    await (await post(app(env, model), { thread_id: env.threadId, text: '幫我看合約' })).text();
+    await waitForRunDone(db, env.threadId);
+    const delegation = (await messagesOf(env.threadId)).find((m) => m.kind === 'delegation');
+    expect(delegation).toMatchObject({ speaker_instance_id: env.legalId, content: '查到一半' });
+    expect(delegation.tool_events[0]).toMatchObject({ tool: 'write_file', description: '記下查到的條款', tool_call_id: 'call-c1' });
+    expect(delegation.tool_events[0].input).toContain('notes.md');
+    expect(delegation.tool_events[0].output).toContain('notes.md');
+    expect(delegation.tool_events[0].started_at).toBeTruthy();
+  });
+
   it('2 位顧問但沒有主管資料列：回 500「找不到主管」', async () => {
     const env = await seedEnv();
     await seedConsultant(db, env.projectId, { name: '第二位' });
