@@ -7,7 +7,7 @@ import { SpritesClient, type Sprite } from '@fly/sprites';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('@/lib/supabase/admin');
-const { destroyProjectSprite, installRuntime, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/sprites');
+const { destroyProjectSprite, installRuntime, SANDBOX_ADDUSER, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/sprites');
 
 const runtimeObject = process.argv[2];
 if (!runtimeObject) throw new Error('請指定 runtime 物件名稱，例如 main-abc1234.js');
@@ -99,6 +99,68 @@ try {
   ].join('\n'));
   // bash 會在結果後面補印背景工作被終止的通知，所以不能只看最後一行
   record('以 agent 帳號送 SIGKILL 能終止整個程序群組', kill.out.includes('all-killed') && !kill.out.includes('still-running'), kill.out);
+
+  // ---- 子專案 2：顧問之間隔離（兩位顧問 A、B，主管是 agent）----
+  const userOf = (id: string) => `agent-${id.replace(/-/g, '').slice(0, 12)}`;
+  const adduser = (u: string, d: string) => sh(sprite, `sudo -n ${SANDBOX_ADDUSER} ${u} ${d}`);
+  const asUser = (u: string, cmd: string) =>
+    `SANDBOX_PATH="$PATH" sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} ${u} bash -c ${JSON.stringify(cmd)}`;
+  const idA = randomUUID();
+  const idB = randomUUID();
+  const A = userOf(idA);
+  const B = userOf(idB);
+  const dirA = `${WORKSPACE}/agents/${idA}`;
+  for (const [id, u] of [[idA, A], [idB, B]] as const) {
+    const r = await adduser(u, `${WORKSPACE}/agents/${id}`);
+    record(`adduser 建立顧問帳號 ${u}`, r.code === 0, r.out);
+  }
+  // runtime 同步 skill（runtime 的 umask 是 002）
+  await sh(sprite, `umask 002 && mkdir -p ${dirA}/skills/s && echo sop > ${dirA}/skills/s/SKILL.md`);
+  const aw = await sh(sprite, asUser(A, `echo a-secret > ${dirA}/work.txt && echo a-tmp > /tmp/a.txt && echo shared-a > ${WORKSPACE}/shared/from-a.txt`));
+  record('顧問 A 能寫自己的目錄、/tmp、/shared', aw.code === 0, aw.out);
+  const ar = await sh(sprite, asUser(A, `cat ${dirA}/skills/s/SKILL.md`));
+  record('顧問 A 讀得到自己的 skill', ar.code === 0 && ar.out.trim() === 'sop', JSON.stringify(ar));
+  for (const [label, cmd] of [
+    ['B 讀不到 A 的 skill', `cat ${dirA}/skills/s/SKILL.md`],
+    ['B 讀不到 A 的工作檔', `cat ${dirA}/work.txt`],
+    ['B 讀不到 A 的私人 /tmp 實體目錄', `cat /var/lib/agenthub/tmp/${A}/a.txt`],
+    ['B 的 /tmp 裡沒有 A 的檔案', 'cat /tmp/a.txt'],
+  ] as const) {
+    const r = await sh(sprite, asUser(B, cmd));
+    record(label, r.code !== 0 && !r.out.includes('sop') && !r.out.includes('a-'), r.out);
+  }
+  const mgr = await sh(sprite, asUser('agent', `cat ${dirA}/work.txt`));
+  record('主管讀不到顧問的工作檔', mgr.code !== 0, mgr.out);
+  const shared = await sh(sprite, asUser(B, `cat ${WORKSPACE}/shared/from-a.txt && echo b >> ${WORKSPACE}/shared/from-a.txt`));
+  record('B 讀得到也改得了 A 放在 /shared 的檔案', shared.code === 0 && shared.out.startsWith('shared-a'), shared.out);
+  const mk = await sh(sprite, asUser(B, `mkdir ${WORKSPACE}/agents/${randomUUID()}`));
+  record('顧問不能在 /workspace/agents 建立項目', mk.code !== 0, mk.out);
+  const killA = await sh(sprite, [
+    `setsid ${asUser(A, 'sleep 300')} &`,
+    'pid=$!; sleep 1',
+    `${asUser(B, 'kill -KILL -- -$pid')}; sleep 1`,
+    `pgrep -u ${A} sleep >/dev/null && echo a-alive || echo a-killed`,
+    `sudo -n pkill -u ${A} sleep || true`,
+  ].join('\n'));
+  record('B 終止不了 A 的程序', killA.out.includes('a-alive'), killA.out);
+  for (const [label, args] of [
+    ['adduser 拒絕 root 帳號', `root ${dirA}`],
+    ['adduser 拒絕 /etc', `${A} /etc`],
+    ['adduser 拒絕 ../ 路徑', `${A} ${WORKSPACE}/agents/../../etc`],
+  ] as const) {
+    const r = await sh(sprite, `sudo -n ${SANDBOX_ADDUSER} ${args}`);
+    record(label, r.code !== 0, r.out);
+  }
+  const badUser = await sh(sprite, `sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} root true`);
+  record('沙盒腳本拒絕 root 帳號', badUser.code !== 0, badUser.out);
+  // 1-A 時期的顧問目錄：workspace 群組、裡面有 agent 擁有的檔案 → 轉換後主管讀不到、該顧問讀得到
+  const idOld = randomUUID();
+  const dirOld = `${WORKSPACE}/agents/${idOld}`;
+  await sh(sprite, `sudo mkdir ${dirOld} && sudo chown "$(id -un)":workspace ${dirOld} && sudo chmod 2770 ${dirOld} && echo old | sudo -u agent tee ${dirOld}/old.txt >/dev/null`);
+  const conv = await adduser(userOf(idOld), dirOld);
+  const oldMgr = await sh(sprite, asUser('agent', `cat ${dirOld}/old.txt`));
+  const oldOwner = await sh(sprite, asUser(userOf(idOld), `cat ${dirOld}/old.txt`));
+  record('1-A 時期的目錄轉成顧問群組：主管讀不到、該顧問讀得到', conv.code === 0 && oldMgr.code !== 0 && oldOwner.out.trim() === 'old', `${conv.out} | ${oldMgr.out} | ${oldOwner.out}`);
 } finally {
   await destroyProjectSprite(name).catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
 }
