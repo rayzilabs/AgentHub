@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import path from 'node:path';
 
 /** 佈建時安裝的沙盒腳本（內容在 apps/web/lib/sprites.ts 的 SANDBOX_WRAPPER_SCRIPT） */
 export const SANDBOX_WRAPPER = '/usr/local/bin/agenthub-sandbox';
@@ -104,4 +105,48 @@ export function runInSandbox(
 export async function checkSandboxUser(user: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const r = await runInSandbox(createSandbox(user), ['true'], { cwd: '/' });
   return r.code === 0 ? { ok: true } : { ok: false, error: r.stderr.trim() || `結束碼 ${r.code}` };
+}
+
+/** 佈建時安裝的顧問帳號腳本（內容在 apps/web/lib/sprites.ts 的 SANDBOX_ADDUSER_SCRIPT） */
+export const SANDBOX_ADDUSER = '/usr/local/bin/agenthub-sandbox-adduser';
+
+/** 每位顧問一個 Linux 帳號，以 uid 隔開彼此的 skill 與工作目錄 */
+export function consultantUser(instanceId: string): string {
+  return `agent-${instanceId.replace(/-/g, '').slice(0, 12).toLowerCase()}`;
+}
+
+/** 顧問以自己的帳號執行；主管與本機開發用 config.SANDBOX_USER（本機為 undefined） */
+export function sandboxUserFor(config: { SANDBOX_USER?: string }, instanceId: string): string | undefined {
+  return config.SANDBOX_USER ? consultantUser(instanceId) : undefined;
+}
+
+export type CommandRunner = (argv: string[]) => Promise<{ code: number | null; stderr: string }>;
+
+const runCommand: CommandRunner = (argv) =>
+  new Promise((resolve) => {
+    const [cmd, ...args] = argv;
+    const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (c: Buffer) => (stderr += c.toString('utf8')));
+    child.on('error', (e) => resolve({ code: null, stderr: e.message }));
+    child.on('close', (code) => resolve({ code, stderr }));
+  });
+
+/** 已在這個 runtime 程序確認過的顧問；帳號與目錄建立後不會消失，不用每次 run 都呼叫 sudo */
+const ensured = new Set<string>();
+
+/** 確保每位顧問的沙盒帳號與目錄存在且權限正確；本機開發（沒有 SANDBOX_USER）不處理 */
+export async function ensureConsultantSandboxes(
+  sandboxUser: string | undefined,
+  agentsRoot: string,
+  instanceIds: string[],
+  run: CommandRunner = runCommand,
+): Promise<void> {
+  if (!sandboxUser) return;
+  for (const id of instanceIds) {
+    if (ensured.has(id)) continue;
+    const r = await run(['sudo', '-n', SANDBOX_ADDUSER, consultantUser(id), path.posix.join(agentsRoot, id)]);
+    if (r.code !== 0) throw new Error(`無法建立顧問的沙盒帳號：${r.stderr.trim() || `結束碼 ${r.code}`}`);
+    ensured.add(id);
+  }
 }

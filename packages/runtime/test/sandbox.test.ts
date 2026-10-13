@@ -1,6 +1,48 @@
 import os from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { checkSandboxUser, createSandbox, killArgv, runInSandbox, SANDBOX_WRAPPER, sandboxEnv, sudoArgv } from '../src/sandbox';
+import {
+  checkSandboxUser, type CommandRunner, consultantUser, createSandbox, ensureConsultantSandboxes, killArgv, runInSandbox,
+  SANDBOX_ADDUSER, SANDBOX_WRAPPER, sandboxEnv, sandboxUserFor, sudoArgv,
+} from '../src/sandbox';
+
+describe('consultantUser', () => {
+  it('agent- 加上去掉連字號後的前 12 個小寫十六進位字元', () => {
+    expect(consultantUser('5F0C2A9B-31D4-4e5f-8a9b-0c1d2e3f4a5b')).toBe('agent-5f0c2a9b31d4');
+  });
+});
+
+describe('ensureConsultantSandboxes', () => {
+  it('本機模式（沒有 SANDBOX_USER）：不執行任何指令', async () => {
+    const calls: string[][] = [];
+    await ensureConsultantSandboxes(undefined, '/workspace/agents', ['11111111-1111-1111-1111-111111111111'], async (a) => { calls.push(a); return { code: 0, stderr: '' }; });
+    expect(calls).toEqual([]);
+  });
+
+  it('以 sudo 呼叫 adduser；同一個 id 在同一個程序只呼叫一次', async () => {
+    const calls: string[][] = [];
+    const run: CommandRunner = async (a) => { calls.push(a); return { code: 0, stderr: '' }; };
+    const id = '22222222-2222-2222-2222-222222222222';
+    await ensureConsultantSandboxes('agent', '/workspace/agents', [id], run);
+    await ensureConsultantSandboxes('agent', '/workspace/agents', [id], run);
+    expect(calls).toEqual([['sudo', '-n', SANDBOX_ADDUSER, 'agent-222222222222', `/workspace/agents/${id}`]]);
+  });
+
+  it('失敗時丟出錯誤，且下次會重試', async () => {
+    const id = '33333333-3333-3333-3333-333333333333';
+    await expect(ensureConsultantSandboxes('agent', '/workspace/agents', [id], async () => ({ code: 1, stderr: 'useradd: 失敗' })))
+      .rejects.toThrow('useradd: 失敗');
+    const calls: string[][] = [];
+    await ensureConsultantSandboxes('agent', '/workspace/agents', [id], async (a) => { calls.push(a); return { code: 0, stderr: '' }; });
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe('sandboxUserFor', () => {
+  it('Sprite 上顧問用自己的帳號；本機不設定', () => {
+    expect(sandboxUserFor({ SANDBOX_USER: 'agent' }, '44444444-4444-4444-4444-444444444444')).toBe('agent-444444444444');
+    expect(sandboxUserFor({}, '44444444-4444-4444-4444-444444444444')).toBeUndefined();
+  });
+});
 
 afterEach(() => {
   delete process.env.AGENTHUB_FAKE_SECRET;
