@@ -83,21 +83,28 @@ describe('truncate', () => {
 describe('read_file / write_file', () => {
   it('寫入時自動建立資料夾，讀取支援相對與絕對路徑', async () => {
     const cwd = await workDir();
-    const w = await writeFileTool(cwd).execute!({ path: 'notes/a.md', content: '內容' }, opts);
+    const w = await writeFileTool(cwd, local).execute!({ path: 'notes/a.md', content: '內容' }, opts);
     expect(w).toMatchObject({ ok: true });
-    expect(await readFileTool(cwd).execute!({ path: 'notes/a.md' }, opts)).toEqual({ content: '內容' });
-    expect(await readFileTool(cwd).execute!({ path: path.join(cwd, 'notes/a.md') }, opts)).toEqual({ content: '內容' });
+    expect(await readFileTool(cwd, local).execute!({ path: 'notes/a.md' }, opts)).toEqual({ content: '內容' });
+    expect(await readFileTool(cwd, local).execute!({ path: path.join(cwd, 'notes/a.md') }, opts)).toEqual({ content: '內容' });
+  });
+
+  it('寫入的內容原樣保存（多位元組、換行、引號）', async () => {
+    const cwd = await workDir();
+    const content = '第一行\n"引號" $變數 `反引號`\n';
+    await writeFileTool(cwd, local).execute!({ path: 'q.md', content }, opts);
+    expect(await readFile(path.join(cwd, 'q.md'), 'utf8')).toBe(content);
   });
 
   it('檔案不存在時回傳錯誤而不丟例外', async () => {
-    const r = await readFileTool(await workDir()).execute!({ path: 'nope.txt' }, opts);
+    const r = await readFileTool(await workDir(), local).execute!({ path: 'nope.txt' }, opts);
     expect(r).toHaveProperty('error');
   });
 
   it('讀取過長的檔案會截斷', async () => {
     const cwd = await workDir();
     await writeFile(path.join(cwd, 'big.txt'), 'x'.repeat(50_000));
-    const r = (await readFileTool(cwd).execute!({ path: 'big.txt' }, opts)) as unknown as { content: string };
+    const r = (await readFileTool(cwd, local).execute!({ path: 'big.txt' }, opts)) as unknown as { content: string };
     expect(r.content).toContain('已截斷');
   });
 });
@@ -105,7 +112,7 @@ describe('read_file / write_file', () => {
 describe('工具的 description 欄位', () => {
   it('bash 與 write_file 可選填 description，欄位說明要求寫一句中文', async () => {
     const dir = await workDir();
-    for (const t of [bashTool(dir, local), writeFileTool(dir)]) {
+    for (const t of [bashTool(dir, local), writeFileTool(dir, local)]) {
       const schema = t.inputSchema as unknown as z.ZodObject<z.ZodRawShape>;
       expect((schema.shape.description as z.ZodType).description).toContain('一句中文');
       expect(schema.safeParse({ command: 'ls', path: 'a.md', content: 'b' }).success).toBe(true);

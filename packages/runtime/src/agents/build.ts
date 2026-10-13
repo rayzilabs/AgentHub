@@ -109,6 +109,7 @@ function wrapAgent(agent: StreamableAgent, instructions: string, warnings: strin
 }
 
 export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgent> {
+  const sandbox = createSandbox();
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
 
@@ -126,9 +127,9 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
     });
 
     const tools: ToolSet = {
-      bash: bashTool(workDir, createSandbox()),
-      read_file: readFileTool(workDir),
-      write_file: writeFileTool(workDir),
+      bash: bashTool(workDir, sandbox),
+      read_file: readFileTool(workDir, sandbox),
+      write_file: writeFileTool(workDir, sandbox),
       ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),
       ...mcp.tools,
     };
@@ -173,7 +174,7 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
     sharedFiles: ctx.sharedFiles,
   });
   const tools: ToolSet = {
-    read_file: readFileTool(ctx.config.SHARED_ROOT),
+    read_file: readFileTool(ctx.config.SHARED_ROOT, createSandbox()),
     ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id),
     assign_task: assignTaskTool({
       consultants: ctx.consultants, run: ctx.runner, record: ctx.record, acceptUntil: ctx.clock?.consultantWrapUpAt,
