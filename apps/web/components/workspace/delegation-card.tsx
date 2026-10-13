@@ -14,11 +14,13 @@ export function DelegationCard({ output, task, color, failedText }: { output?: D
           <Avatar name={name} color={color} />
           <span className="min-w-0 truncate font-semibold">{name}</span>
         </span>
-        {failedText !== undefined || output?.status === 'failed'
-          ? <span className="chip chip-seal">失敗</span>
-          : !output || output.status === 'working'
-            ? <span className="chip chip-brand"><span className="dot-busy" aria-hidden />處理中</span>
-            : <span className="chip chip-sage">完成</span>}
+        {output?.cutoff === 'stopped'
+          ? <span className="chip chip-seal">逾時</span>
+          : failedText !== undefined || output?.status === 'failed'
+            ? <span className="chip chip-seal">失敗</span>
+            : !output || output.status === 'working'
+              ? <span className="chip chip-brand"><span className="dot-busy" aria-hidden />處理中</span>
+              : <span className="chip chip-sage">完成</span>}
       </div>
       <div className="px-5 pb-5">
         {task && (
@@ -32,6 +34,7 @@ export function DelegationCard({ output, task, color, failedText }: { output?: D
           </details>
         )}
         <ToolSteps tools={output?.tools} />
+        {output?.cutoff === 'wrap-up' && <p className="notice notice-warn mt-3">時間到，已提前收尾</p>}
         {failedText !== undefined && <p className="notice notice-error mt-3">{failedText}</p>}
         {output?.status === 'failed' && <p className="notice notice-error mt-3">{output.error}</p>}
         {output?.message && (

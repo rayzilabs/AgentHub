@@ -17,10 +17,11 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
           <span className="min-w-0 truncate font-semibold">{speech.name}</span>
         </span>
         {speech.status === 'speaking' && <span className="chip chip-brand"><span className="dot-busy" aria-hidden />發言中</span>}
+        {speech.cutoff === 'stopped' && <span className="chip chip-seal">逾時</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
       <ToolSteps tools={speech.tools} />
-      {speech.status === 'failed' ? (
+      {speech.status === 'failed' && speech.cutoff !== 'stopped' ? (
         <p className="notice notice-error mt-3">未發言：{speech.error}</p>
       ) : (
         body && (
@@ -29,6 +30,8 @@ function SpeechBlock({ speech, color }: { speech: Speech; color: string }) {
           </div>
         )
       )}
+      {speech.cutoff === 'stopped' && <p className="notice notice-error mt-3">{speech.error}</p>}
+      {speech.cutoff === 'wrap-up' && <p className="notice notice-warn mt-3">時間到，已提前收尾</p>}
     </div>
   );
 }
