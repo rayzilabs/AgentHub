@@ -4,10 +4,12 @@ import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, type UIMessage } from 'ai';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
+import { currentActivity, formatElapsed, isStalled } from '@/lib/progress';
 import { textOf } from '@/lib/text';
 import { MessageView } from './message-view';
+import { useNow } from './use-now';
 
-type ThreadMessages = { messages: UIMessage[]; running: boolean; error: string | null };
+type ThreadMessages = { messages: UIMessage[]; running: boolean; error: string | null; startedAt: string | null; updatedAt: string | null };
 
 /** 輪詢失敗後的等待時間：3 秒、6 秒，之後每 10 秒；連續失敗 5 次才放棄。 */
 const POLL_INTERVAL_MS = 3000;
@@ -28,6 +30,9 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   const [input, setInput] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
+  // 這次回覆的開始時間（送出當下，或輪詢時伺服器回報的 run 開始時間）與伺服器最後更新時間
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   // 從伺服器載入的訊息不播進場動畫，只有這次畫面上新出現的訊息才播
@@ -121,6 +126,13 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           }
           return;
         }
+        if (data.startedAt) setStartedAt(Date.parse(data.startedAt));
+        setUpdatedAt(data.updatedAt);
+        // runtime 每 5 秒把進度存進 final：伺服器上已經有這次的回覆就直接顯示
+        if (data.messages.at(-1)?.role === 'assistant') {
+          markKnown(data.messages);
+          setMessages(data.messages);
+        }
         await sleep(POLL_INTERVAL_MS);
       }
     } finally {
@@ -137,7 +149,10 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         if (!alive.current) return;
         markKnown(data.messages);
         setMessages(data.messages);
-        if (data.running) void pollUntilDone();
+        if (data.running) {
+          if (data.startedAt) setStartedAt(Date.parse(data.startedAt));
+          void pollUntilDone();
+        }
         else if (data.error) setNotice(`上一次回覆沒有完成：${data.error}`);
       })
       .catch((e) => { if (alive.current) setNotice((e as Error).message); });
@@ -158,6 +173,10 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   }, [input]);
 
   const busy = status === 'submitted' || status === 'streaming' || waiting;
+  const now = useNow(busy);
+  const reply = messages.at(-1)?.role === 'assistant' ? messages.at(-1) : undefined;
+  // 串流連線還在就表示 runtime 活著；只有輪詢時才用更新時間判斷是否卡住
+  const stalled = waiting && isStalled(updatedAt, now);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -165,6 +184,8 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     if (!text || busy || !ready) return;
     draft.current = text;
     setNotice(null);
+    setStartedAt(Date.now());
+    setUpdatedAt(null);
     setInput('');
     void sendMessage({ text });
   }
@@ -186,14 +207,17 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         {messages.map((m) => (
           <MessageView key={m.id} message={m} speaker={speaker} speakerColor={speakerColor} colorOf={colorOf} animateIn={!known.has(m.id)} />
         ))}
-        <p role="status" className="flex items-center gap-2 text-sm text-muted empty:hidden">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted empty:hidden">
           {busy && (
             <>
               <span className="dot-busy" aria-hidden />
-              {waiting ? '回覆還在進行中，完成後會自動顯示' : `${speaker}正在處理`}
+              <span>{speaker}處理中</span>
+              {startedAt !== null && <span aria-hidden className="tabular-nums">· {formatElapsed(now - startedAt)}</span>}
+              <span role="status">· {currentActivity(reply)}</span>
             </>
           )}
-        </p>
+          {stalled && <span role="alert" className="text-ochre">已經 1 分鐘沒有新進度，可能卡住了</span>}
+        </div>
         {notice && <p role="alert" className="notice notice-error">{notice}</p>}
         <div ref={bottom} className="scroll-mb-32" />
       </div>
