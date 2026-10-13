@@ -46,8 +46,8 @@ async function messagesOf(threadId: string) {
   return data!;
 }
 
-function app(env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, runTimeoutMs?: number) {
-  return createApp({ db, model, config: env.config, runTimeoutMs });
+function app(env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, runTimeoutMs?: number, progressIntervalMs?: number) {
+  return createApp({ db, model, config: env.config, runTimeoutMs, progressIntervalMs });
 }
 
 describe('GET /health', () => {
@@ -138,6 +138,22 @@ describe('POST /chat', () => {
     expect(final.content).toBe('這是一段比較長的回答');
   });
 
+  it('執行中定期把進度存進 final，結束時寫入完整回覆', async () => {
+    const env = await seedEnv();
+    const text = '這是一段會慢慢串出來的回答'.repeat(2);
+    const res = await post(app(env, mockModel(textTurn(text, 100)), undefined, 200), { thread_id: env.threadId, text: '問題' });
+    const partial = await waitFor(async () => {
+      const { data } = await db.from('messages').select('content').eq('thread_id', env.threadId).eq('kind', 'final').maybeSingle();
+      return data && data.content.length > 0 && data.content.length < text.length ? data.content : undefined;
+    });
+    expect(text.startsWith(partial)).toBe(true);
+    await res.text();
+    expect((await waitForRunDone(db, env.threadId)).status).toBe('succeeded');
+    const finals = (await messagesOf(env.threadId)).filter((m) => m.kind === 'final');
+    expect(finals).toHaveLength(1);
+    expect(finals[0].content).toBe(text);
+  });
+
   it('模型出錯：run 標成 failed 並保留錯誤訊息', async () => {
     const env = await seedEnv();
     const res = await post(app(env, failingModel('模型掛了')), { thread_id: env.threadId, text: '問題' });
@@ -175,6 +191,7 @@ describe('POST /chat', () => {
     const run = await waitForRunDone(db, env.threadId);
     expect(run).toMatchObject({ status: 'failed', error: 'run 超過 15 分鐘' });
     expect(Date.now() - start).toBeLessThan(10_000);
+    expect((await messagesOf(env.threadId)).map((m) => m.kind)).toEqual(['user']);
   });
 
   it('超過時間上限而中止：錯誤訊息是逾時，不是一般中止', async () => {
@@ -259,14 +276,16 @@ describe('POST /chat：多顧問', () => {
     const run = await waitForRunDone(db, env.threadId);
     expect(run.status).toBe('succeeded');
     const msgs = await messagesOf(env.threadId);
-    expect(msgs.map((m) => m.kind)).toEqual(['user', 'delegation', 'final']);
-    expect(msgs[1]).toMatchObject({ speaker_instance_id: env.legalId, content: '法務意見：第 5 條有違約金風險', round: null });
-    expect(msgs[2]).toMatchObject({ speaker_instance_id: env.managerId, content: '總結：第 5 條要修改' });
-    expect(msgs[1].tool_events).toMatchObject([{ tool: 'write_file', state: 'output-available', tool_call_id: 'call-c1' }]);
+    expect(msgs.map((m) => m.kind)).toEqual(['user', 'final', 'delegation']);
+    const delegation = msgs.find((m) => m.kind === 'delegation');
+    const managerFinal = msgs.find((m) => m.kind === 'final');
+    expect(delegation).toMatchObject({ speaker_instance_id: env.legalId, content: '法務意見：第 5 條有違約金風險', round: null });
+    expect(managerFinal).toMatchObject({ speaker_instance_id: env.managerId, content: '總結：第 5 條要修改' });
+    expect(delegation.tool_events).toMatchObject([{ tool: 'write_file', state: 'output-available', tool_call_id: 'call-c1' }]);
     expect(promptText(model, 3)).toContain('法務意見：第 5 條有違約金風險');
 
     // 存下來的 ui_message 只帶顧問的文字與工具摘要，不帶顧問的工具呼叫本體
-    const final = msgs[2].ui_message;
+    const final = managerFinal.ui_message;
     expect(JSON.stringify(final)).not.toContain('tool-write_file');
     const assign = final.parts.find((p: { type: string }) => p.type === 'tool-assign_task');
     expect(assign.output).toMatchObject({
@@ -301,13 +320,13 @@ describe('POST /chat：多顧問', () => {
     const discussion = msgs.filter((m) => m.kind === 'discussion');
     expect(discussion.map((m) => m.round).sort()).toEqual([1, 1, 2, 2]);
     expect(discussion.filter((m) => m.round === 2).map((m) => m.speaker_instance_id)).toEqual([env.legalId, env.engId]);
-    expect(msgs.at(-1)).toMatchObject({ kind: 'final', speaker_instance_id: env.managerId });
-    expect(msgs.at(-1).content).toContain('## 仍有分歧');
+    expect(msgs.find((m) => m.kind === 'final')).toMatchObject({ kind: 'final', speaker_instance_id: env.managerId });
+    expect(msgs.find((m) => m.kind === 'final').content).toContain('## 仍有分歧');
     const managerSecondPrompt = promptText(model, 5);
     expect(managerSecondPrompt).toContain('法務：可以上線');
     expect(managerSecondPrompt).toContain('【第 2 輪｜工程顧問】');
 
-    const convene = msgs.at(-1).ui_message.parts.find((p: { type: string }) => p.type === 'tool-convene_discussion');
+    const convene = msgs.find((m) => m.kind === 'final').ui_message.parts.find((p: { type: string }) => p.type === 'tool-convene_discussion');
     expect(convene.output.speeches).toHaveLength(4);
     for (const speech of convene.output.speeches) {
       expect(speech).not.toHaveProperty('message');

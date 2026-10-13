@@ -54,6 +54,24 @@ export async function insertMessage(db: Db, m: NewMessage): Promise<string> {
   return data.id;
 }
 
+export type MessagePatch = { content: string; ui_message: unknown; tool_events: unknown[] };
+
+export async function updateMessage(db: Db, id: string, patch: MessagePatch): Promise<void> {
+  const { error } = await db.from('messages').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw error;
+}
+
+/** 只推進 updated_at，當作 runtime 還活著的心跳 */
+export async function touchMessage(db: Db, id: string): Promise<void> {
+  const { error } = await db.from('messages').update({ updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteMessage(db: Db, id: string): Promise<void> {
+  const { error } = await db.from('messages').delete().eq('id', id);
+  if (error) throw error;
+}
+
 export async function loadHistory(db: Db, threadId: string, limit = 50): Promise<ModelMessage[]> {
   const { data, error } = await db
     .from('messages')
@@ -66,8 +84,10 @@ export async function loadHistory(db: Db, threadId: string, limit = 50): Promise
   const rows = data.reverse();
   // 截斷後的視窗可能從 assistant 回覆開始，對話歷史必須從使用者發言開始
   const firstUser = rows.findIndex((m) => m.kind === 'user');
+  // 沒有內容的 final 是 runtime 中途崩潰留下的佔位列，不放進對話歷史
   return rows
     .slice(firstUser === -1 ? rows.length : firstUser)
+    .filter((m) => m.kind === 'user' || m.content !== '')
     .map((m): ModelMessage => (m.kind === 'user' ? { role: 'user', content: m.content } : { role: 'assistant', content: m.content }));
 }
 

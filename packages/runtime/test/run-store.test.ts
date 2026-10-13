@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, RunConflictError } from '../src/errors';
 import {
-  assertThreadInProject, createRun, failRunningRuns, finishRun, insertMessage, loadHistory,
+  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, insertMessage, loadHistory, touchMessage,
+  updateMessage,
 } from '../src/run-store';
 import { seedProject, seedThread, seedUser, testDb } from './helpers';
 
@@ -84,5 +85,38 @@ describe('run-store', () => {
     const { data } = await db.from('runs').select('id, status, error').in('id', [runA, runB]);
     expect(data!.find((r) => r.id === runA)).toMatchObject({ status: 'failed', error: 'runtime 重啟' });
     expect(data!.find((r) => r.id === runB)).toMatchObject({ status: 'running' });
+  });
+});
+
+describe('進度存檔', () => {
+  async function newRun() {
+    const threadId = await seedThread(db, await seedProject(db, await seedUser(db)));
+    return { threadId, runId: await createRun(db, threadId) };
+  }
+
+  it('updateMessage 更新內容；touchMessage 只推進 updated_at；deleteMessage 刪除', async () => {
+    const { threadId, runId } = await newRun();
+    const id = await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'final', content: '' });
+    const read = async () => (await db.from('messages').select('content, ui_message, tool_events, updated_at').eq('id', id).single()).data!;
+
+    await updateMessage(db, id, { content: '進行中', ui_message: { id: 'm', role: 'assistant', parts: [] }, tool_events: [{ tool: 'bash' }] });
+    const updated = await read();
+    expect(updated).toMatchObject({ content: '進行中', ui_message: { id: 'm' }, tool_events: [{ tool: 'bash' }] });
+
+    await new Promise((r) => setTimeout(r, 20));
+    await touchMessage(db, id);
+    const touched = await read();
+    expect(touched.content).toBe('進行中');
+    expect(Date.parse(touched.updated_at)).toBeGreaterThan(Date.parse(updated.updated_at));
+
+    await deleteMessage(db, id);
+    expect((await db.from('messages').select('id').eq('id', id)).data).toEqual([]);
+  });
+
+  it('loadHistory 略過沒有內容的 final（runtime 崩潰時留下的佔位列）', async () => {
+    const { threadId, runId } = await newRun();
+    await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: '問題' });
+    await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'final', content: '' });
+    expect(await loadHistory(db, threadId)).toEqual([{ role: 'user', content: '問題' }]);
   });
 });

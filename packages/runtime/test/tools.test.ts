@@ -95,7 +95,7 @@ describe('工具的 description 欄位', () => {
     const dir = await workDir();
     for (const t of [bashTool(dir), writeFileTool(dir)]) {
       const schema = t.inputSchema as unknown as z.ZodObject<z.ZodRawShape>;
-      expect(schema.shape.description.description).toContain('一句中文');
+      expect((schema.shape.description as z.ZodType).description).toContain('一句中文');
       expect(schema.safeParse({ command: 'ls', path: 'a.md', content: 'b' }).success).toBe(true);
       expect(schema.safeParse({ command: 'ls', path: 'a.md', content: 'b', description: '列出檔案' }).success).toBe(true);
     }

@@ -1,4 +1,4 @@
-import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessageChunk } from 'ai';
+import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessage, type UIMessageChunk } from 'ai';
 import { buildConsultant, buildManager, type BuiltAgent } from './agents/build';
 import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
@@ -6,8 +6,10 @@ import type { Db } from './db';
 import { errorText } from './errors';
 import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
+import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
 import {
-  assertThreadInProject, createRun, finishRun, insertMessage, loadHistory, type RunResult,
+  assertThreadInProject, createRun, deleteMessage, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
+  type RunResult,
 } from './run-store';
 import { syncSharedFiles, syncSkills } from './sync';
 import { consumeToEnd, hasContent, textOf, toolRecords } from './ui-stream';
@@ -17,8 +19,8 @@ export const RUN_TIMEOUT_MS = 15 * 60_000;
 const TIMEOUT_ERROR = 'run 超過 15 分鐘';
 const NO_REPLY_ERROR = '模型沒有產生回覆';
 
-/** runTimeoutMs 只給測試縮短時間用，正式環境一律是 RUN_TIMEOUT_MS */
-export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeoutMs?: number };
+/** runTimeoutMs、progressIntervalMs 只給測試縮短時間用，正式環境一律用預設值 */
+export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeoutMs?: number; progressIntervalMs?: number };
 
 type PreparedRoot = { rootId: string; streamUI: BuiltAgent['streamUI']; close: () => Promise<void> };
 
@@ -124,6 +126,7 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
 
   let uiStream: ReadableStream<UIMessageChunk>;
   let rootId: string;
+  let finalId: string;
   try {
     const history = await loadHistory(db, req.threadId);
     await insertMessage(db, {
@@ -133,6 +136,10 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
     const root = await prepareRootAgent(deps, runId, req.threadId);
     closeAgent = root.close;
     rootId = root.rootId;
+    // final 先插入，執行中定期更新，輪詢的前端隨時看得到進度
+    finalId = await insertMessage(db, {
+      thread_id: req.threadId, run_id: runId, speaker_instance_id: rootId, kind: 'final', content: '',
+    });
     uiStream = await root.streamUI({
       messages: [...history, { role: 'user', content: req.text }],
       abortSignal: abort.signal,
@@ -144,25 +151,33 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
 
   const { stream, stop } = stoppable(uiStream);
   const [forClient, forServer] = stream.tee();
+  const saveFinal = (m: UIMessage) => updateMessage(db, finalId, { content: textOf(m), ui_message: m, tool_events: toolRecords(m) });
+  const dropFinal = () => deleteMessage(db, finalId).catch((e) => console.error('[run] 無法刪除空白回覆', errorText(e)));
+  const progress = progressSaver({
+    save: saveFinal,
+    touch: () => touchMessage(db, finalId),
+    intervalMs: deps.progressIntervalMs ?? PROGRESS_INTERVAL_MS,
+  });
 
   const settle = async (): Promise<RunResult> => {
     const deadline = new Promise<'deadline'>((resolve) => {
       hardTimer = setTimeout(() => resolve('deadline'), hardDeadlineMs);
     });
-    const outcome = await Promise.race([consumeToEnd(forServer), deadline]);
+    const outcome = await Promise.race([consumeToEnd(forServer, (m) => progress.offer(m)), deadline]);
+    // 串流結束當下就判定是否逾時，不受之後寫入資料庫花的時間影響
+    const timedOut = abort.signal.aborted;
+    await progress.stop();
     if (outcome === 'deadline') {
       stop();
+      if (!progress.saved) await dropFinal();
       return { status: 'failed', error: TIMEOUT_ERROR };
     }
     const { final, failure } = outcome;
-    // 串流結束當下就判定是否逾時，不受之後寫入資料庫花的時間影響
-    const timedOut = abort.signal.aborted;
     let saveError: string | undefined;
     if (hasContent(final)) {
-      await insertMessage(db, {
-        thread_id: req.threadId, run_id: runId, speaker_instance_id: rootId, kind: 'final',
-        content: textOf(final), ui_message: final, tool_events: toolRecords(final),
-      }).catch((e) => { saveError = `無法儲存回覆：${errorText(e)}`; });
+      await saveFinal(final).catch((e) => { saveError = `無法儲存回覆：${errorText(e)}`; });
+    } else {
+      await dropFinal();
     }
     const error = timedOut
       ? TIMEOUT_ERROR
@@ -178,7 +193,8 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
       console.error('[run] persist crashed', errorText(e));
       result = { status: 'failed', error: `run 收尾時發生錯誤：${errorText(e)}` };
     } finally {
-      // 無論收尾成功與否都要釋放 run，否則這串對話會一直卡在 running
+      // 無論收尾成功與否都要停掉心跳並釋放 run，否則這串對話會一直卡在 running
+      await progress.stop();
       await finish(result);
     }
   })().catch((e) => console.error('[run] persist crashed', errorText(e)));

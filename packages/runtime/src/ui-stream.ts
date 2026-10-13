@@ -105,9 +105,15 @@ export async function* readSnapshots(
   return { final, failure };
 }
 
-export async function consumeToEnd(stream: ReadableStream<UIMessageChunk>): Promise<StreamOutcome> {
+export async function consumeToEnd(
+  stream: ReadableStream<UIMessageChunk>,
+  onSnapshot?: (m: UIMessage) => void,
+): Promise<StreamOutcome> {
   const it = readSnapshots(stream);
   let r = await it.next();
-  while (!r.done) r = await it.next();
+  while (!r.done) {
+    onSnapshot?.(r.value);
+    r = await it.next();
+  }
   return r.value;
 }
