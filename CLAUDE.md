@@ -26,7 +26,7 @@
 
 - **瀏覽器只打 Vercel `/api/*`**，不直接連 Supabase（唯一例外：檔案上傳用 Storage 簽名網址 PUT）。所有資料表開 RLS 且沒有 policy，只有伺服器端用 secret key（`adminDb()`）存取；權限檢查寫在 `lib/services/*`（`user.id` 比對擁有者）。
 - **runtime 跑在 Sprite 裡**，由 Vercel 從 Storage `runtime/main.js` 安裝成服務。runtime 直接讀寫 Supabase（run、訊息、記憶、檔案同步）。
-- 沙盒：agent 代為執行的一切（bash、read_file／write_file、stdio MCP）都透過 `packages/runtime/src/sandbox.ts` 以 `SANDBOX_USER`（Sprite 上是 `agent`，本機不設定）執行：獨立掛載命名空間、蓋掉 Sprite 內部 API、環境變數只剩白名單；工作區在 `/workspace`。佈建腳本在 `apps/web/lib/sprites.ts`，改了要用 `apps/web/scripts/probe-sandbox.ts` 在暫時 Sprite 上驗收。權限規則見 `docs/security-model.md`。
+- 沙盒：agent 代為執行的一切（bash、read_file／write_file、stdio MCP）都透過 `packages/runtime/src/sandbox.ts` 以沙盒帳號執行（Sprite 上顧問用 `agent-<顧問 id 前 12 碼>`、主管用 `SANDBOX_USER`＝`agent`；本機不設定 `SANDBOX_USER` 就以目前帳號執行）；顧問帳號由 runtime 每次 run 前以 `agenthub-sandbox-adduser` 確保存在；獨立掛載命名空間、蓋掉 Sprite 內部 API、環境變數只剩白名單；工作區在 `/workspace`（顧問目錄只有 runtime 與該顧問進得去，`/shared` 共用），每個帳號有私人 `/tmp`。佈建腳本在 `apps/web/lib/sprites.ts`，改了要用 `apps/web/scripts/probe-sandbox.ts` 在暫時 Sprite 上驗收。權限規則見 `docs/security-model.md`。
 - 對話串流：runtime 把 UI stream tee 成兩路，一路回瀏覽器、一路寫 DB，所以瀏覽器斷線不影響結果；前端串流中斷時改輪詢 `/api/threads/:id/messages`。
 - 主管（或單一顧問）的 `final` 在 run 開始就插入，執行中每 5 秒更新一次、每 20 秒更新 `updated_at` 當心跳（`packages/runtime/src/progress.ts`），所以輪詢時看得到進度；`messages` 裡 `final` 會排在同一個 run 的 `delegation` / `discussion` 之前。`messages.tool_events` 存完整工具紀錄（`toolRecords`，含截短的輸入輸出）；送給瀏覽器的只有 `toolEvents` 摘要。
 - 派工 / 討論是 generator tool，用 preliminary output 推送快照（`DelegationOutput` 在 `packages/runtime/src/tools/delegate.ts`、`DiscussionState` 在 `tools/discuss.ts`），前端在 `components/workspace/` 渲染。**web 端在 `apps/web/lib/agent-output.ts` 有一份相同的型別，改形狀時兩邊要一起改。**

@@ -27,7 +27,7 @@
 | 主管帳號 | 沿用 `agent`（`SANDBOX_USER`），只在 `workspace` 群組 |
 | 單一顧問模式 | 顧問用自己的帳號 |
 | 建立時機 | runtime 每次 run 開始時，對專案裡每位顧問呼叫一次 `agenthub-sandbox-adduser`（同一個 runtime 程序成功過就不再呼叫）；在同步 skill 之前 |
-| 私人 `/tmp` | 沙盒腳本把 `/var/tmp/agenthub/<帳號>`（`700`，擁有者是該帳號）掛到 `/tmp` |
+| 私人 `/tmp` | 沙盒腳本把 `/var/lib/agenthub/tmp/<帳號>`（`700`，擁有者是該帳號）掛到 `/tmp`；父目錄只有 root 能寫（不放 `/var/tmp`：人人可寫，會被搶先建立或換成 symlink） |
 | 失敗處理 | 建立帳號或目錄失敗 → 這次 run 失敗，不在沒有隔離的狀態下執行 |
 | 不處理 | 顧問之間看得到彼此的程序清單（名稱與參數）；祕密不放在參數裡，記為已知限制 |
 
@@ -35,11 +35,12 @@
 
 | 路徑 | 擁有者 | 權限 | 誰能進 |
 |---|---|---|---|
+| `/workspace/agents/` | `sprite:workspace` | `0711` | 只有 runtime 能建立項目；顧問只能進入自己的目錄（避免顧問先放 symlink 或搶佔別人的目錄名稱） |
 | `/workspace/agents/<顧問id>/` | `sprite:agent-<id12>` | `2770` | runtime、該顧問 |
 | `/workspace/shared/` | `sprite:workspace` | `2770` | runtime、所有顧問、主管 |
 | `/home/agent-<id12>/` | 該顧問 | `750`（Ubuntu 預設） | 該顧問 |
-| `/var/tmp/agenthub/` | `root:root` | `711` | 只能進入已知名稱的子目錄 |
-| `/var/tmp/agenthub/<帳號>/` | 該帳號 | `700` | 該帳號（在沙盒裡看到的是 `/tmp`） |
+| `/var/lib/agenthub/tmp/` | `root:root` | `711` | 只能進入已知名稱的子目錄 |
+| `/var/lib/agenthub/tmp/<帳號>/` | 該帳號 | `700` | 該帳號（在沙盒裡看到的是 `/tmp`） |
 
 - 目錄的 setgid 讓 runtime 寫入的檔案（同步下來的 skills）沿用顧問群組；runtime 的 umask 是 `002`，顧問讀寫得到。
 - 顧問建立的檔案擁有者是顧問；runtime 是目錄擁有者，可以刪除（同步時先刪再寫，沿用 1-A 的做法）。
@@ -61,9 +62,8 @@
 在降權前多一步：建立並掛載私人 `/tmp`。
 
 ```sh
-/usr/bin/install -d -m 711 -o root -g root /var/tmp/agenthub
-/usr/bin/install -d -m 700 -o "$user" -g "$user" "/var/tmp/agenthub/$user"
-/usr/bin/mount --bind "/var/tmp/agenthub/$user" /tmp
+/usr/bin/install -d -m 700 -o "$user" -g "$user" "/var/lib/agenthub/tmp/$user"   # 父目錄由佈建時以 root 建立（711）
+/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp
 ```
 
 其餘（重設環境變數、蓋掉 `/.sprite/api.sock`、`setpriv` 降權）不變。帳號名稱檢查：只接受 `agent` 或 `^agent-[0-9a-f]{12}$`。
@@ -84,6 +84,8 @@
 | 私人 `/tmp` 建立或掛載失敗 | 沙盒腳本 `set -eu` 失敗 → 指令失敗（與蓋不掉 api.sock 相同的處理） |
 | 顧問被移出專案 | 帳號與目錄留著，不影響其他顧問；不自動刪除 |
 
+另外：佈建腳本不再遞迴修改整個 `/workspace`（1-A 的寫法會在每次重新佈建時把顧問目錄改回 `workspace` 群組），只處理 `/workspace`、`/workspace/agents` 本身與 `/workspace/shared`；顧問目錄一律交給 adduser。adduser 拒絕處理 symlink。
+
 ## 5. 測試
 
 1. **單元測試（Vitest）**
@@ -98,6 +100,8 @@
    - B 終止不了 A 的程序。
    - adduser 腳本拒絕不合格的帳號與目錄（例如 `root`、`/etc`、`../`）。
    - 1-A 的 12 項檢查仍然全部通過。
+
+**驗收結果（2026-10-14）**：`apps/web/scripts/probe-sandbox.ts`（runtime `main-a6d28b5.js`）30 項全部通過，含 1-A 的 13 項。
 
 ## 6. 部署
 
