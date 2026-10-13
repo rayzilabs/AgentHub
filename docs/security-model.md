@@ -42,7 +42,7 @@
 |---|---|
 | 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
 | 平台金鑰外洩時，影響只限一個專案 | 📝 子專案 1-C |
-| 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared` | ⏳ 子專案 2 |
+| 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared`；每個帳號有私人 `/tmp` | 📝 子專案 2 |
 | 創作者的腳本與資料留在遠端 MCP | ⏳ 子專案 3 |
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
 | 單一顧問模式下，主管／顧問本身的原始工具輸入輸出仍會隨串流送到瀏覽器 | ⏳ 已知缺口 |
@@ -76,7 +76,8 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 | 帳號 | 用途 | sudo |
 |---|---|---|
 | `sprite` | runtime | 有 |
-| `agent` | 代表 agent 執行的一切：`bash`、`read_file`／`write_file`、stdio MCP | 沒有 |
+| `agent` | 主管的 `read_file`；子專案 2 之前也代表所有顧問 | 沒有 |
+| `agent-<顧問 id 去掉連字號後前 12 碼>` | 子專案 2 起：該顧問的 `bash`、`read_file`／`write_file`、stdio MCP；runtime 每次 run 時以 `agenthub-sandbox-adduser` 確保存在 | 沒有 |
 
 ```text
 /home/sprite/agenthub/       700  sprite            runtime 專用：main.js、.env（600，只剩不敏感的設定）
@@ -86,7 +87,8 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 
 - 以 `agent` 執行時，環境變數清空，只留 `PATH`、`HOME`、`LANG`、`TZ`（加上 stdio MCP 自己的金鑰，經由環境變數而不是指令參數）。
 - 執行路徑：`sudo unshare --mount` → 沙盒腳本 `/usr/local/bin/agenthub-sandbox` 在獨立的掛載命名空間裡用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `agent`。Sprite 內部 API 能建立以 runtime 帳號（有 sudo）執行的服務，而它在唯讀掛載上、改不了權限，所以只能在命名空間裡蓋掉。
-- 「以哪個帳號執行」是參數。子專案 2 會改成每位顧問一個帳號（`agent-<顧問 id 前 8 碼>`），主管用只能讀 `/shared` 的帳號。
+- 「以哪個帳號執行」是參數：顧問用自己的帳號，主管用 `agent`。顧問目錄 `/workspace/agents/<id>` 是 `sprite:agent-<id12> 2770`，只有 runtime 與該顧問進得去；`/shared` 所有帳號共用（子專案 2，見 `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md`）。
+- 已知限制：顧問之間看得到彼此的程序清單（名稱與參數）；祕密一律不放在參數裡。
 
 **驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。
 
@@ -95,7 +97,7 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 | # | 子專案 | 狀態 | 文件 |
 |---|---|---|---|
 | 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；📝 C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
-| 2 | 顧問之間隔離 | ⏳ | — |
+| 2 | 顧問之間隔離 | 📝 已設計 | `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md` |
 | 3 | 遠端 MCP 的平台支援（代管、每位租用者的金鑰、用量計費、版本、大量資料下載） | ⏳ | — |
 | 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ⏳ | — |
 
