@@ -114,6 +114,24 @@ describe('buildConsultant', () => {
     }
   });
 
+  it('過了收尾時間：不准再用工具，指示帶收尾說明；還沒到則照常', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const id = await seedConsultant(db, projectId);
+    const roots = await tmpRoots();
+    const config = { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot };
+    for (const [wrapUpAt, expectNone] of [[Date.now() - 1, true], [Date.now() + 60_000, false]] as const) {
+      const model = mockModel(textTurn('結論'));
+      const built = await buildConsultant({ db, model, config, instance: instance({ id, project_id: projectId }), sharedFiles: [], secrets: {}, wrapUpAt });
+      try {
+        for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '你好' }] }) })) { /* drain */ }
+      } finally {
+        await built.close();
+      }
+      expect(model.doStreamCalls[0].toolChoice?.type === 'none').toBe(expectNone);
+      expect(promptText(model).includes('時間已到，不能再使用工具')).toBe(expectNone);
+    }
+  });
+
   it('MCP 連上之後組裝失敗：先關掉 MCP 連線再丟出錯誤', async () => {
     const roots = await tmpRoots();
     const brokenDb = { from: () => { throw new Error('資料庫掛了'); } } as unknown as Db;
@@ -171,5 +189,25 @@ describe('buildManager', () => {
       'assign_task', 'convene_discussion', 'read_file', 'recall', 'remember',
     ]);
     expect(promptText(model)).toContain('（id: c-1）');
+  });
+
+  it('過了 consultantStopAt：主管不准再用工具，要彙整已有結果', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const managerId = await seedManager(db, projectId);
+    const roots = await tmpRoots();
+    const model = mockModel(textTurn('總結'));
+    const built = await buildManager({
+      db, model,
+      config: { PROJECT_ID: projectId, SHARED_ROOT: roots.sharedRoot },
+      manager: instance({ id: managerId, project_id: projectId, role: 'manager', name: '主管' }),
+      consultants: [instance({ id: 'c-1', name: 'A' }), instance({ id: 'c-2', name: 'B' })],
+      sharedFiles: [],
+      runner: async function* () {},
+      record: async () => {},
+      clock: { consultantWrapUpAt: Date.now() - 2, consultantStopAt: Date.now() - 1 },
+    });
+    for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '嗨' }] }) })) { /* drain */ }
+    expect(model.doStreamCalls[0].toolChoice).toEqual({ type: 'none' });
+    expect(promptText(model)).toContain('彙整各顧問已交回的內容');
   });
 });
