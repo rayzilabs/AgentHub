@@ -9,7 +9,7 @@ import { errorText } from '../errors';
 import { connectMcpServers } from '../mcp';
 import { withToolTimes } from '../tool-clock';
 import { agentDir, skillsDir } from '../sync';
-import { createSandbox } from '../sandbox';
+import { createSandbox, sandboxUserFor } from '../sandbox';
 import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
 import { loadMemories, memoryTools } from '../tools/memory';
@@ -109,7 +109,7 @@ function wrapAgent(agent: StreamableAgent, instructions: string, warnings: strin
 }
 
 export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgent> {
-  const sandbox = createSandbox(ctx.config.SANDBOX_USER);
+  const sandbox = createSandbox(sandboxUserFor(ctx.config, ctx.instance.id));
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
 

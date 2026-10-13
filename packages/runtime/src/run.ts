@@ -8,6 +8,7 @@ import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
 import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
 import { createRunClock, type RunClock } from './run-clock';
+import { ensureConsultantSandboxes } from './sandbox';
 import {
   assertThreadInProject, createRun, deleteMessage, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
   type RunResult,
@@ -31,6 +32,8 @@ async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string, 
   const consultants = instances.filter((i) => i.role === 'consultant');
   if (consultants.length === 0) throw new Error('專案裡還沒有任何顧問');
 
+  // 每位顧問一個沙盒帳號；建立失敗就不執行（不在沒有隔離的狀態下替顧問跑指令）
+  await ensureConsultantSandboxes(config.SANDBOX_USER, config.AGENTS_ROOT, consultants.map((c) => c.id));
   const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT);
   for (const i of consultants) await syncSkills(db, config.AGENTS_ROOT, i);
   const secrets = await loadSecrets(db, config.PROJECT_ID);
