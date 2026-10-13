@@ -2,6 +2,12 @@ import { spawn } from 'node:child_process';
 import { tool } from 'ai';
 import { z } from 'zod';
 
+/** 給使用者看的步驟說明；選填，模型漏填時工具照常執行 */
+export const DESCRIPTION_FIELD = z
+  .string()
+  .optional()
+  .describe('每次都要填：用一句中文說明這一步在做什麼，給使用者看進度用，不要包含指令或程式碼本身');
+
 export const BASH_TIMEOUT_MS = 120_000;
 export const MAX_OUTPUT = 20_000;
 const KILL_GRACE_MS = 200;
@@ -84,7 +90,7 @@ export function runBash(
 export function bashTool(cwd: string) {
   return tool({
     description: '在你的工作目錄執行 bash 指令。單次最長 120 秒，輸出超過 20000 字元會被截斷。',
-    inputSchema: z.object({ command: z.string().describe('要執行的 bash 指令') }),
+    inputSchema: z.object({ command: z.string().describe('要執行的 bash 指令'), description: DESCRIPTION_FIELD }),
     execute: async ({ command }, { abortSignal }) => runBash(command, cwd, BASH_TIMEOUT_MS, abortSignal),
   });
 }

@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { MAX_OUTPUT, runBash, truncate } from '../src/tools/bash';
+import { bashTool, MAX_OUTPUT, runBash, truncate } from '../src/tools/bash';
+import type { z } from 'zod';
 import { readFileTool, writeFileTool } from '../src/tools/files';
 import { tmpRoots } from './helpers';
 
@@ -86,5 +87,17 @@ describe('read_file / write_file', () => {
     await writeFile(path.join(cwd, 'big.txt'), 'x'.repeat(50_000));
     const r = (await readFileTool(cwd).execute!({ path: 'big.txt' }, opts)) as unknown as { content: string };
     expect(r.content).toContain('已截斷');
+  });
+});
+
+describe('工具的 description 欄位', () => {
+  it('bash 與 write_file 可選填 description，欄位說明要求寫一句中文', async () => {
+    const dir = await workDir();
+    for (const t of [bashTool(dir), writeFileTool(dir)]) {
+      const schema = t.inputSchema as unknown as z.ZodObject<z.ZodRawShape>;
+      expect(schema.shape.description.description).toContain('一句中文');
+      expect(schema.safeParse({ command: 'ls', path: 'a.md', content: 'b' }).success).toBe(true);
+      expect(schema.safeParse({ command: 'ls', path: 'a.md', content: 'b', description: '列出檔案' }).success).toBe(true);
+    }
   });
 });

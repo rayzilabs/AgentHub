@@ -3,7 +3,7 @@ import path from 'node:path';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { errorText } from '../errors';
-import { truncate } from './bash';
+import { DESCRIPTION_FIELD, truncate } from './bash';
 
 export function readFileTool(cwd: string) {
   return tool({
@@ -22,7 +22,7 @@ export function readFileTool(cwd: string) {
 export function writeFileTool(cwd: string) {
   return tool({
     description: '寫入檔案（覆蓋），需要的資料夾會自動建立。相對路徑以你的工作目錄為基準。',
-    inputSchema: z.object({ path: z.string(), content: z.string() }),
+    inputSchema: z.object({ path: z.string(), content: z.string(), description: DESCRIPTION_FIELD }),
     execute: async ({ path: p, content }) => {
       try {
         const target = path.resolve(cwd, p);
