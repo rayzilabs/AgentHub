@@ -243,7 +243,7 @@ export async function destroyProjectSprite(name: string): Promise<void> {
 export async function forwardChat(
   spriteUrl: string,
   body: { thread_id: string; text: string },
-  opts: { token?: string; projectToken?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
+  opts: { token?: string; projectToken?: string; dbToken?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
 ): Promise<Response> {
   const token = opts.token ?? env.spritesToken;
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -257,6 +257,7 @@ export async function forwardChat(
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
           ...(opts.projectToken ? { 'x-agenthub-token': opts.projectToken } : {}),
+          ...(opts.dbToken ? { 'x-agenthub-db-token': opts.dbToken } : {}),
         },
         body: JSON.stringify(body),
       });

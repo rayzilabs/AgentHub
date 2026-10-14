@@ -82,6 +82,12 @@ describe('forwardChat', () => {
     expect(calls[0].init.headers).not.toHaveProperty('x-agenthub-token');
   });
 
+  it('有資料庫通行證時放在 x-agenthub-db-token', async () => {
+    const { impl, calls } = fakeFetch([200]);
+    await forwardChat('https://s.example', body, { token: 'tok', dbToken: 'db1', fetchImpl: impl, retryDelayMs: 0 });
+    expect((calls[0].init.headers as Record<string, string>)['x-agenthub-db-token']).toBe('db1');
+  });
+
   it('有專案通行證時放在 x-agenthub-token', async () => {
     const { impl, calls } = fakeFetch([200]);
     await forwardChat('https://s.example', body, { token: 'tok', projectToken: 'pt', fetchImpl: impl, retryDelayMs: 0 });
