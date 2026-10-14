@@ -1,8 +1,11 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* dark: 只看切換按鈕設的 data-theme，不看系統設定 */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme {
-  /* 底色是淺灰，內容放在白色群組上；深色模式在下方 :root 重新定義同一組 token */
+  /* 底色是淺灰，內容放在白色群組上；深色模式在下方 :root[data-theme="dark"] 重新定義同一組 token */
   --color-paper: #f5f5f7;
   --color-surface: #ffffff;
   --color-sunken: #f0f0f3;
@@ -46,25 +49,28 @@
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-paper: #000000;
-    --color-surface: #1c1c1e;
-    --color-sunken: #2c2c2e;
-    --color-ink: #f5f5f7;
-    --color-muted: #a1a1a6;
-    --color-line: #3a3a3c;
-    --color-brand: #0071e3;
-    --color-brand-strong: #0077ed;
-    --color-brand-soft: #0d2a4a;
-    --color-link: #2997ff;
-    --color-seal: #ff6961;
-    --color-ochre: #ffb340;
-    --color-sage: #30d158;
-    --shadow-float: 0 0 0 1px rgb(255 255 255 / 0.06), 0 4px 16px rgb(0 0 0 / 0.5);
-    --shadow-sheet: 0 0 0 1px rgb(255 255 255 / 0.08), 0 -8px 40px rgb(0 0 0 / 0.6);
-    color-scheme: dark;
-  }
+/* 預設淺色；導覽列的切換按鈕在 <html> 設 data-theme="dark" 才換成深色 */
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --color-paper: #000000;
+  --color-surface: #1c1c1e;
+  --color-sunken: #2c2c2e;
+  --color-ink: #f5f5f7;
+  --color-muted: #a1a1a6;
+  --color-line: #3a3a3c;
+  --color-brand: #0071e3;
+  --color-brand-strong: #0077ed;
+  --color-brand-soft: #0d2a4a;
+  --color-link: #2997ff;
+  --color-seal: #ff6961;
+  --color-ochre: #ffb340;
+  --color-sage: #30d158;
+  --shadow-float: 0 0 0 1px rgb(255 255 255 / 0.06), 0 4px 16px rgb(0 0 0 / 0.5);
+  --shadow-sheet: 0 0 0 1px rgb(255 255 255 / 0.08), 0 -8px 40px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
 }
 
 html {

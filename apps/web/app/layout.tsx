@@ -13,15 +13,19 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f5f5f7' },
-    { media: '(prefers-color-scheme: dark)', color: '#000000' },
-  ],
+  themeColor: '#f5f5f7',
 };
+
+const themeScript = `try{if(localStorage.getItem('theme')==='dark')document.documentElement.dataset.theme='dark'}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-Hant-TW" className={`${wenkai.variable} ${noto.variable}`}>
+    // data-theme 由下面的 script 在 hydration 前設定，伺服器端不知道，所以忽略這個差異
+    <html lang="zh-Hant-TW" className={`${wenkai.variable} ${noto.variable}`} suppressHydrationWarning>
+      <head>
+        {/* 在畫面出來前套用上次選的模式，避免重新整理時先閃一下淺色 */}
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="min-h-screen">
         <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-full focus:bg-surface focus:shadow-float focus:px-3 focus:py-2 focus:text-link">跳到主要內容</a>
         <Providers>

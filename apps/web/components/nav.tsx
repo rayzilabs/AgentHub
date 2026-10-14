@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { signOut } from '@/app/login/actions';
 import { currentUser } from '@/lib/auth';
 import { NavLinks } from './nav-links';
+import { ThemeToggle } from './theme-toggle';
 
 export async function Nav() {
   const user = await currentUser();
@@ -16,6 +17,7 @@ export async function Nav() {
 
         {/* 帳號區在手機排第一行右側，桌面排最右 */}
         <div className="ml-auto flex items-center gap-3 text-sm sm:order-last">
+          <ThemeToggle />
           {user ? (
             <>
               <span className="hidden text-muted md:inline">{user.email}</span>
