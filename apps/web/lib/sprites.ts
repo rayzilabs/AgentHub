@@ -174,6 +174,8 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string, 
   await sprite.filesystem(base).writeFile('.env', runtimeEnvFile({
     PROJECT_ID: projectId,
     SUPABASE_URL: env.supabaseUrl,
+    // 過渡期：新 runtime 用 publishable key＋通行證；舊 runtime 仍用下面兩把金鑰。全部重新佈建後移除金鑰
+    SUPABASE_PUBLISHABLE_KEY: env.supabasePublishableKey,
     SUPABASE_SECRET_KEY: env.supabaseSecretKey,
     VERTEX_API_EXPRESS_MODE_KEY: env.vertexKey,
     AGENTS_ROOT: `${WORKSPACE}/agents`,

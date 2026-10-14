@@ -121,7 +121,7 @@ describe('installRuntime', () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
   it('建立服務後重新啟動，讓已存在的 Sprite 載入新的 main.js；兩個 log 串流都讀完', async () => {
-    for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'VERTEX_API_EXPRESS_MODE_KEY']) vi.stubEnv(k, 'x');
+    for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'VERTEX_API_EXPRESS_MODE_KEY', 'SUPABASE_PUBLISHABLE_KEY']) vi.stubEnv(k, 'x');
     for (const k of ['PLATFORM_URL', 'VERCEL_PROJECT_PRODUCTION_URL']) vi.stubEnv(k, '');
     const calls: string[] = [];
     const written: Record<string, string> = {};
@@ -155,6 +155,8 @@ describe('installRuntime', () => {
     expect(written['.env']).toContain('SHARED_ROOT="/workspace/shared"');
     expect(written['.env']).toContain('SANDBOX_USER="agent"');
     expect(written['.env']).toContain('PLATFORM_URL="https://agenthub-kappa-pink.vercel.app"');
+    // 新 runtime 需要 publishable key（過渡期舊金鑰仍在，讓舊 runtime 也起得來）
+    expect(written['.env']).toContain('SUPABASE_PUBLISHABLE_KEY="x"');
   });
 });
 
