@@ -4,7 +4,7 @@
 
 Production：https://agenthub-kappa-pink.vercel.app
 
-> 這是 MVP：沒有金流，也刻意不處理安全性（見[已知限制](#已知限制)）。不要放真實客戶的機密資料。
+> 這是 MVP：沒有金流、沒有上架審核和限流，安全隔離仍在進行中（見[已知限制](#已知限制)）。不要放真實客戶的機密資料。
 
 ## 功能
 
@@ -12,8 +12,10 @@ Production：https://agenthub-kappa-pink.vercel.app
 - **一鍵啟用**：啟用時只複製 system prompt、skills 和 MCP 設定；執行環境與記憶都是專案自己的。MCP 需要金鑰時由使用者填寫。
 - **單一顧問**：直接對話，回覆即時串流。顧問可以讀寫專案檔案、執行指令，並自己決定要記住什麼。
 - **多顧問**：加入第二位顧問時自動建立主管。主管可以：
-  - **派工**：把工作交給某位顧問，畫面上即時顯示交辦內容、用到的工具與完成狀態。
+  - **派工**：把工作交給某位顧問，畫面上即時顯示交辦內容、每一步工具（一句說明＋經過時間）與完成狀態。
   - **召開討論**：第一輪所有顧問同時發言，之後依序回應，最多 3 輪；全員表態「同意」就提早結束。主管最後依「各面向建議／共識方案／仍有分歧」寫總結。
+- **執行進度**：狀態列顯示經過時間與目前動作，串流中斷改輪詢時也看得到進度（每 5 秒存一次）。
+- **時間預算**：每次 run 最長 15 分鐘。第 11 分鐘起顧問不再用工具、主管不再派工或開討論，改為整理已有結果；第 13 分鐘顧問強制停止，已寫出的內容交給主管，畫面上標示逾時或提前收尾。
 - **深淺色**：預設淺色，不跟系統設定；導覽列右上角的按鈕可以切換深色，選擇會記在瀏覽器裡。
 
 ## 架構
@@ -23,14 +25,15 @@ Production：https://agenthub-kappa-pink.vercel.app
                      │
                      └─ 轉送對話 ──▶ Fly Sprite（每個專案一台）
                                        └─ agent runtime（Hono + Vercel AI SDK）
-                                            ├─ Google Vertex AI（Gemini）
+                                            ├─ 模型：Vercel 代理 /api/runtime/model ──▶ Google Vertex AI（Gemini）
+                                            ├─ 資料庫：以專案專用 runtime 帳號直連 Supabase
                                             ├─ 工具：bash、檔案、記憶、MCP
                                             └─ 主管工具：派工、召開討論
 
 Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP 名稱> ──▶ 創作者自己架的 MCP server
 ```
 
-- 瀏覽器只呼叫 Vercel 的 `/api/*`；唯一例外是上傳檔案時直接 PUT 到 Storage 的簽名網址。Supabase 的資料表全部開啟 RLS 且沒有 policy，只有伺服器端用 secret key 存取。
+- 瀏覽器只呼叫 Vercel 的 `/api/*`；唯一例外是上傳檔案時直接 PUT 到 Storage 的簽名網址。Supabase 的資料表全部開啟 RLS：Vercel 用 secret key 存取；runtime 用專案專用帳號的通行證，policy 只放行自己專案需要的欄位與動作。
 - 建立專案時，Vercel 會建立一台 Sprite、從 Storage 下載 `runtime/main.js` 並註冊成服務。Sprite 閒置會休眠，收到請求時自動喚醒。
 - runtime 把對話串流同時送回瀏覽器和寫進資料庫，瀏覽器斷線不會遺失結果；串流中斷時前端改成輪詢。
 - agent 代為執行的指令與 stdio MCP 都在沙盒帳號裡跑，每位顧問一個帳號，拿不到平台金鑰，也讀不到其他顧問的檔案。權限規則見 [安全模型](docs/security-model.md)。
@@ -190,12 +193,14 @@ description: 用 5P 架構評估中小企業授信案件
 
 - **Sprite 上沒有平台金鑰**：runtime 用專案專用帳號的通行證存取資料庫、模型走平台代理（見 [安全模型](docs/security-model.md)）。舊金鑰曾存在 Sprite 上，尚待輪換。沒有上架審核和限流。
 - **遠端 MCP 單次工具呼叫最長 300 秒**；平台代管 MCP（給不會架 server 的創作者）尚未提供。
-- **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，完成後顯示完整結果。
+- **每次 run 最長 15 分鐘**：快到時會收尾並交出部分結果，不保證完成所有派工。
+- **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，輪詢時一樣看得到進度。
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。
 
 ## 文件
 
 - [技術規格](docs/superpowers/specs/2026-10-02-agenthub-mvp-design.md)
+- [執行進度與時間預算規格](docs/superpowers/specs/2026-10-13-run-progress-and-time-budget-design.md)
 - [安全模型](docs/security-model.md)、[遠端 MCP 規格](docs/superpowers/specs/2026-10-14-remote-mcp-design.md)、[創作者：接上遠端 MCP](docs/creator/remote-mcp.md)
 - 實作計畫：[基礎與 runtime](docs/superpowers/plans/2026-10-02-agenthub-plan1-foundation-runtime.md)、[多顧問](docs/superpowers/plans/2026-10-02-agenthub-plan2-multi-agent.md)、[網站](docs/superpowers/plans/2026-10-02-agenthub-plan3-web.md)、[Demo 與端對端](docs/superpowers/plans/2026-10-02-agenthub-plan4-demo-e2e.md)
 - [Production 驗證紀錄](docs/superpowers/reports/2026-10-02-production-e2e.md)
