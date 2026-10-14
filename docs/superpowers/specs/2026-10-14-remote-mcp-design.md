@@ -21,7 +21,7 @@
 | 項目 | 決定 |
 |---|---|
 | 代管方式 | 創作者自己架、平台代管兩種都支援；一次設計，分 3a／3b／3c 實作 |
-| 連線路徑 | 一律經過平台閘道 `/api/mcp/<顧問id>`；runtime 不直接連創作者 |
+| 連線路徑 | 一律經過平台閘道 `/api/mcp/<顧問id>/<MCP 名稱>`；runtime 不直接連創作者 |
 | runtime → 閘道 | 專案通行證：Vercel 每次轉送對話時簽發，只對該專案有效、20 分鐘過期（1-C 會沿用同一張） |
 | 閘道 → 創作者 | 創作者通行證：ES256 JWT，平台簽發，5 分鐘過期；平台在 `/.well-known/jwks.json` 公開公鑰 |
 | 原本的 `http` 型 | 保留，用於「租用者自己的第三方服務」（金鑰仍由租用者填）；創作者自己的 MCP 改用新的 `remote` 型 |
@@ -50,10 +50,10 @@ MCP 設定新增 `transport: 'remote'`：
 
 ### 2.3 runtime
 
-- `connectMcpServers` 遇到 `remote` 型：以 streamable HTTP 連 `${PLATFORM_URL}/api/mcp/${instanceId}`，標頭 `Authorization: Bearer <專案通行證>`。
+- `connectMcpServers` 遇到 `remote` 型：以 streamable HTTP 連 `${PLATFORM_URL}/api/mcp/${instanceId}/${MCP 名稱}`，標頭 `Authorization: Bearer <專案通行證>`。
 - 工具名稱、前綴規則與其他 MCP 相同。
 
-### 2.4 閘道 `/api/mcp/[instanceId]`（Vercel 路由）
+### 2.4 閘道 `/api/mcp/[instanceId]/[name]`（Vercel 路由）
 
 1. 驗證專案通行證；查 `agent_instances`：存在、`role = 'consultant'`、`project_id` 與通行證相同。不符 → 401／403（取消租用後立即失效）。
 2. 從伺服器端讀出這位顧問鎖定的遠端 MCP 目標（3a：創作者網址；3b：代管 Sprite 網址）。
@@ -70,7 +70,7 @@ MCP 設定新增 `transport: 'remote'`：
 ### 2.5 資料庫
 
 - 新表 `remote_mcp_targets`：`instance_id`、`mcp_name`、`kind ('self' | 'hosted')`、`url`（自己架）或 `hosted_version_id`（代管）。租用時（`hire_agent`）從範本複製。只有 `service_role` 能讀（runtime 讀不到；寫進 `docs/security-model.md` 權限表）。
-- 範本端：`agent_templates.remote_mcp`（jsonb，`[{ name, url }]`），創作者頁面維護；`mcp_servers` 裡對應的項目只有 `{ name, transport: 'remote' }`。
+- 範本端：網址存在範本的 `mcp_servers`（`{ name, transport: 'remote', url }`，網址須為 https）；公開範本頁本來就會去掉網址。租用時 `hire_agent` 把網址搬到 `remote_mcp_targets`，`agent_instances.mcp_servers` 只留 `{ name, transport: 'remote' }`。
 - 新表 `mcp_usage`：`id`、`created_at`、`project_id`、`instance_id`、`template_id`、`creator_id`、`mcp_name`、`tool`、`ok`、`duration_ms`。只能新增；創作者頁面依 `template_id` 彙總。
 
 ### 2.6 簽章金鑰與公鑰
