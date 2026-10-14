@@ -155,8 +155,10 @@ describe('installRuntime', () => {
     expect(written['.env']).toContain('SHARED_ROOT="/workspace/shared"');
     expect(written['.env']).toContain('SANDBOX_USER="agent"');
     expect(written['.env']).toContain('PLATFORM_URL="https://agenthub-kappa-pink.vercel.app"');
-    // 新 runtime 需要 publishable key（過渡期舊金鑰仍在，讓舊 runtime 也起得來）
+    // Sprite 上不放平台金鑰：資料庫用 runtime 帳號通行證、模型走平台代理
     expect(written['.env']).toContain('SUPABASE_PUBLISHABLE_KEY="x"');
+    expect(written['.env']).not.toContain('SUPABASE_SECRET_KEY');
+    expect(written['.env']).not.toContain('VERTEX_API_EXPRESS_MODE_KEY');
   });
 });
 

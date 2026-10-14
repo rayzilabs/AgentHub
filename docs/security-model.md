@@ -50,7 +50,7 @@
 
 ## 4. runtime 的資料庫權限（子專案 1-C）
 
-runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**只對該專案有效、約 20 分鐘過期**的通行證；權限由資料庫的自訂角色與列級權限（RLS）強制執行，不靠 runtime 的程式自律。
+runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統帳號（`app_metadata.agenthub_runtime_project` = 專案 id）；Vercel 每次轉送對話時替它取得通行證（Supabase 簽發，效期依 Supabase 設定，目前 1 小時，轉送時保證至少剩 20 分鐘），放在 `x-agenthub-db-token` 交給 runtime。權限由欄位層級 grant 與列級權限（RLS，條件 `runtime_project()`）強制執行，不靠 runtime 的程式自律；一般使用者（含專案擁有者）與匿名者在所有表上都沒有權限。實作：`supabase/migrations/20261014000002_runtime_scoped_access.sql`，驗證：`supabase/tests/runtime_access.sql`。
 
 「自己專案」指通行證上寫的專案。
 
@@ -62,11 +62,12 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 | `instance_secrets`／Vault | 只能透過 `get_project_secrets` | ❌ | ❌ | ❌ | 函式本身檢查只能取自己專案 |
 | `threads` | ✅ | ❌ | ❌ | ❌ | 自己專案 |
 | `runs` | ✅ | ✅ | 只能改 `status`、`error`、`finished_at` | ❌ | 自己專案的對話 |
-| `messages` | 只能讀 `kind`、`content` | ✅ | 只能改還在執行中的 run 的 `final` 的 `content`、`ui_message`、`tool_events`、`updated_at` | 只能刪還在執行中的 run 的空白 `final` | 已結束的歷史訊息不能改、不能刪 |
+| `messages` | 只能讀 `id`、`thread_id`、`run_id`、`kind`、`content`、`created_at` | ✅ | 只能改還在執行中的 run 的 `final` 的 `content`、`ui_message`、`tool_events`、`updated_at` | 只能刪還在執行中的 run 的空白 `final` | 已結束的歷史訊息不能改、不能刪 |
 | `memories` | ✅ | ✅ | ❌ | ❌ | 自己專案；修改與刪除由使用者在網頁上操作 |
 | `usage_events` | ❌ | ✅ | ❌ | ❌ | 只能新增；計費帳本不能被竄改或偷看 |
 | `remote_mcp_targets` | ❌ | ❌ | ❌ | ❌ | 創作者 MCP 的網址／代管版本；只有閘道（`service_role`）讀得到（子專案 3） |
 | `mcp_usage` | ❌ | ❌ | ❌ | ❌ | 由閘道寫入；runtime 不碰（子專案 3） |
+| `project_runtime_accounts` | ❌ | ❌ | ❌ | ❌ | runtime 帳號的密碼與通行證快取；只有 Vercel（`service_role`）讀得到 |
 | Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip |
 | Storage `project-files` | 列出、下載 | ❌ | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；上傳由網頁處理 |
 | Storage `runtime` | ❌ | ❌ | ❌ | ❌ | 安裝時由 Vercel 給一次性下載連結 |

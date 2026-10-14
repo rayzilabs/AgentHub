@@ -74,7 +74,7 @@ docs/superpowers/      規格、實作計畫、production 驗證紀錄
 | `SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_…`，登入用 |
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`，伺服器端存取資料庫與 Storage |
 | `FLY_SPRITES_TOKEN` | 建立、管理 Sprite |
-| `VERTEX_API_EXPRESS_MODE_KEY` | Vertex AI express mode 金鑰，會帶進每台 Sprite |
+| `VERTEX_API_EXPRESS_MODE_KEY` | Vertex AI express mode 金鑰；只在 Vercel，由模型代理使用，不進 Sprite |
 | `RUNTIME_TOKEN_SECRET` | 簽專案通行證（HS256，至少 32 個字元的隨機值；太短視為未設定）。**必填**：runtime 用它呼叫模型（平台代理）與 remote 型 MCP，沒設定時對話回 503 |
 | `MCP_SIGNING_KEY` | 簽創作者通行證的 ES256 私鑰（P-256，PKCS8 PEM）；公鑰公開在 `/.well-known/jwks.json` |
 | `MCP_SIGNING_KEY_PREVIOUS` | 選填。輪換金鑰時放舊私鑰，公鑰網址會新舊並列，創作者端快取的舊公鑰仍能驗證 |
@@ -187,7 +187,7 @@ description: 用 5P 架構評估中小企業授信案件
 
 ## 已知限制
 
-- **runtime 仍持有資料庫最高權限金鑰**：agent 的沙盒拿不到，但 runtime 本身用的還是 `SUPABASE_SECRET_KEY`（改成每專案短期通行證的工作尚未完成，見 [安全模型](docs/security-model.md)）。沒有上架審核和限流。
+- **Sprite 上沒有平台金鑰**：runtime 用專案專用帳號的通行證存取資料庫、模型走平台代理（見 [安全模型](docs/security-model.md)）。舊金鑰曾存在 Sprite 上，尚待輪換。沒有上架審核和限流。
 - **遠端 MCP 單次工具呼叫最長 300 秒**；平台代管 MCP（給不會架 server 的創作者）尚未提供。
 - **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，完成後顯示完整結果。
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。

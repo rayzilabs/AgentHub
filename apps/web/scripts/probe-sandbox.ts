@@ -64,6 +64,9 @@ try {
   };
 
   record('runtime 服務起得來（含沙盒帳號啟動檢查）', (await health(sprite.url!)).includes(projectId), await health(sprite.url!));
+  // 子專案 1-C：.env 本身就不該有平台金鑰（資料庫用 runtime 帳號通行證、模型走平台代理）
+  const envFile = await sh(sprite, `cat '${base}/.env'`);
+  record('.env 不含平台金鑰', envFile.code === 0 && !/sb_secret_|SUPABASE_SECRET_KEY|VERTEX/.test(envFile.out), envFile.out.replace(/=.*/g, '=…'));
   await mustNotLeak('env 看不到平台金鑰', 'env');
   await mustNotLeak('讀不到 .env', `cat '${base}/.env'`);
   await mustNotLeak('symlink 指向 .env 也讀不到', `ln -sf '${base}/.env' ${WORKSPACE}/shared/link && cat ${WORKSPACE}/shared/link`);
