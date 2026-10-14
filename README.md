@@ -25,11 +25,15 @@ Production：https://agenthub-kappa-pink.vercel.app
                                             ├─ Google Vertex AI（Gemini）
                                             ├─ 工具：bash、檔案、記憶、MCP
                                             └─ 主管工具：派工、召開討論
+
+Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP 名稱> ──▶ 創作者自己架的 MCP server
 ```
 
 - 瀏覽器只呼叫 Vercel 的 `/api/*`；唯一例外是上傳檔案時直接 PUT 到 Storage 的簽名網址。Supabase 的資料表全部開啟 RLS 且沒有 policy，只有伺服器端用 secret key 存取。
 - 建立專案時，Vercel 會建立一台 Sprite、從 Storage 下載 `runtime/main.js` 並註冊成服務。Sprite 閒置會休眠，收到請求時自動喚醒。
 - runtime 把對話串流同時送回瀏覽器和寫進資料庫，瀏覽器斷線不會遺失結果；串流中斷時前端改成輪詢。
+- agent 代為執行的指令與 stdio MCP 都在沙盒帳號裡跑，每位顧問一個帳號，拿不到平台金鑰，也讀不到其他顧問的檔案。權限規則見 [安全模型](docs/security-model.md)。
+- 創作者自己架的 MCP 一律經過平台閘道：Vercel 轉送對話時附上 20 分鐘的專案通行證，閘道驗證後改簽 5 分鐘的創作者通行證轉送，並記錄每次工具呼叫的用量。創作者的網址不會進 Sprite。
 
 完整設計見 [技術規格](docs/superpowers/specs/2026-10-02-agenthub-mvp-design.md)。
 
@@ -46,6 +50,8 @@ packages/runtime/      跑在 Sprite 裡的 agent runtime（打包成單一 main
 supabase/
   migrations/          資料表、RPC、Storage bucket
   tests/               pgTAP 測試
+docs/security-model.md 權限與隔離規則（每張表、每個帳號能做什麼）
+docs/creator/          給創作者的說明（遠端 MCP 怎麼接、怎麼驗證平台通行證）
 docs/superpowers/      規格、實作計畫、production 驗證紀錄
 ```
 
@@ -69,6 +75,16 @@ docs/superpowers/      規格、實作計畫、production 驗證紀錄
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`，伺服器端存取資料庫與 Storage |
 | `FLY_SPRITES_TOKEN` | 建立、管理 Sprite |
 | `VERTEX_API_EXPRESS_MODE_KEY` | Vertex AI express mode 金鑰，會帶進每台 Sprite |
+| `RUNTIME_TOKEN_SECRET` | 簽專案通行證（HS256，至少 32 bytes 隨機）。沒設定時對話照常，只是 remote 型 MCP 無法使用 |
+| `MCP_SIGNING_KEY` | 簽創作者通行證的 ES256 私鑰（P-256，PKCS8 PEM）；公鑰公開在 `/.well-known/jwks.json` |
+| `PLATFORM_URL` | 選填。寫進 Sprite 的平台網址，runtime 用它連閘道；預設是 production 網址 |
+
+後三個只有用到 remote 型 MCP 時才需要。產生金鑰：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+node -e "console.log(require('crypto').generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({type:'pkcs8',format:'pem'}))"
+```
 
 ### 啟動
 
@@ -161,18 +177,23 @@ description: 用 5P 架構評估中小企業授信案件
 （skill 內容）
 ```
 
-**MCP**：支援 `stdio`（`command` + `args`）和 `http`（`url` + `headers`）。需要金鑰時在 `required_secrets` 列出名稱，使用者啟用顧問時填寫；stdio 會當成環境變數傳入，http 可在 `headers` 裡用 `${KEY}` 引用。
+**MCP**：支援三種連線方式。
+
+- `stdio`（`command` + `args`）和 `http`（`url` + `headers`）：需要金鑰時在 `required_secrets` 列出名稱，使用者啟用顧問時填寫。stdio 會當成環境變數傳入，http 可在 `headers` 裡用 `${KEY}` 引用。
+- `remote`（只填 `url`，必須是 https）：創作者自己架的 MCP，經平台閘道呼叫。不能設定標頭或金鑰，身分由平台通行證證明；租用者看不到網址。工具回傳大量資料時，請改回傳 `download_url`。詳見 [創作者文件](docs/creator/remote-mcp.md)。
 
 範例見 `apps/web/demo/agents/*/`。
 
 ## 已知限制
 
-- **安全性未處理**：agent 的 bash 讀得到 runtime 的金鑰，檔案工具不限工作目錄；沒有上架審核和限流。被 prompt injection 操縱時可能洩漏金鑰。
+- **runtime 仍持有資料庫最高權限金鑰**：agent 的沙盒拿不到，但 runtime 本身用的還是 `SUPABASE_SECRET_KEY`（改成每專案短期通行證的工作尚未完成，見 [安全模型](docs/security-model.md)）。沒有上架審核和限流。
+- **遠端 MCP 單次工具呼叫最長 300 秒**；平台代管 MCP（給不會架 server 的創作者）尚未提供。
 - **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，完成後顯示完整結果。
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。
 
 ## 文件
 
 - [技術規格](docs/superpowers/specs/2026-10-02-agenthub-mvp-design.md)
+- [安全模型](docs/security-model.md)、[遠端 MCP 規格](docs/superpowers/specs/2026-10-14-remote-mcp-design.md)、[創作者：接上遠端 MCP](docs/creator/remote-mcp.md)
 - 實作計畫：[基礎與 runtime](docs/superpowers/plans/2026-10-02-agenthub-plan1-foundation-runtime.md)、[多顧問](docs/superpowers/plans/2026-10-02-agenthub-plan2-multi-agent.md)、[網站](docs/superpowers/plans/2026-10-02-agenthub-plan3-web.md)、[Demo 與端對端](docs/superpowers/plans/2026-10-02-agenthub-plan4-demo-e2e.md)
 - [Production 驗證紀錄](docs/superpowers/reports/2026-10-02-production-e2e.md)
