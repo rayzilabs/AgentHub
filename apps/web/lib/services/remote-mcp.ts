@@ -4,7 +4,10 @@ import type { Db } from '@/lib/supabase/admin';
 export type RemoteTarget = { url: string; templateId: string | null; creatorId: string | null };
 
 /** 找出顧問鎖定的創作者 MCP 網址；顧問不存在、不屬於這個專案或沒有這個 MCP 時拒絕 */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function resolveRemoteTarget(db: Db, instanceId: string, mcpName: string, projectId: string): Promise<RemoteTarget> {
+  if (!UUID.test(instanceId)) throw new HttpError(404, '找不到這位顧問');
   const { data: inst, error } = await db
     .from('agent_instances')
     .select('project_id, role, template_id, template:agent_templates(creator_id)')

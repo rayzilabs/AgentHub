@@ -1,4 +1,4 @@
-import { createHash, createHmac, createPrivateKey, createPublicKey, randomUUID, sign, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, createPrivateKey, createPublicKey, type KeyObject, randomUUID, sign, timingSafeEqual } from 'node:crypto';
 import { HttpError } from '@/lib/http';
 
 const PROJECT_TOKEN_TTL_MS = 20 * 60_000;
@@ -29,11 +29,30 @@ export function verifyProjectToken(token: string, secret: string, now = Date.now
   return payload.project_id;
 }
 
+type PublicJwk = { kty?: string; crv?: string; x?: string; y?: string; kid: string; alg: 'ES256'; use: 'sig' };
+
+// 每次 MCP 請求都要簽章；同一把私鑰只解析一次
+const privateKeys = new Map<string, KeyObject>();
+const publicJwks = new Map<string, PublicJwk>();
+
+function privateKey(pem: string): KeyObject {
+  let key = privateKeys.get(pem);
+  if (!key) {
+    key = createPrivateKey(pem);
+    privateKeys.set(pem, key);
+  }
+  return key;
+}
+
 /** 公開給創作者驗證用的公鑰（不含私鑰欄位） */
-export function publicJwk(privateKeyPem: string) {
-  const jwk = createPublicKey(createPrivateKey(privateKeyPem)).export({ format: 'jwk' });
+export function publicJwk(privateKeyPem: string): PublicJwk {
+  const cached = publicJwks.get(privateKeyPem);
+  if (cached) return cached;
+  const jwk = createPublicKey(privateKey(privateKeyPem)).export({ format: 'jwk' });
   const kid = createHash('sha256').update(`${jwk.crv}.${jwk.x}.${jwk.y}`).digest('base64url').slice(0, 16);
-  return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, kid, alg: 'ES256' as const, use: 'sig' as const };
+  const out: PublicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, kid, alg: 'ES256', use: 'sig' };
+  publicJwks.set(privateKeyPem, out);
+  return out;
 }
 
 /** 閘道 → 創作者 MCP：證明這次呼叫來自平台、屬於哪個專案與顧問 */
@@ -47,6 +66,6 @@ export function signCreatorToken(
     { alg: 'ES256', typ: 'JWT', kid: publicJwk(privateKeyPem).kid },
     { ...claims, iat, exp: iat + CREATOR_TOKEN_TTL_MS / 1000, jti: randomUUID() },
   );
-  const sig = sign('sha256', Buffer.from(data), { key: createPrivateKey(privateKeyPem), dsaEncoding: 'ieee-p1363' });
+  const sig = sign('sha256', Buffer.from(data), { key: privateKey(privateKeyPem), dsaEncoding: 'ieee-p1363' });
   return `${data}.${b64u(sig)}`;
 }

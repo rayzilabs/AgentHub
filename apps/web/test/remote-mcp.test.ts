@@ -12,6 +12,7 @@ import { seedUser, testDb } from './helpers';
 
 const db = testDb();
 const pem = generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+const SECRET = 'test-secret-for-gateway-at-least-32-chars';
 const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
 
 describe('toolCallName', () => {
@@ -126,7 +127,7 @@ describe('遠端 MCP 閘道', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     mcpUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
-    vi.stubEnv('RUNTIME_TOKEN_SECRET', 'test-secret');
+    vi.stubEnv('RUNTIME_TOKEN_SECRET', SECRET);
     vi.stubEnv('MCP_SIGNING_KEY', pem);
     vi.stubEnv('PLATFORM_URL', 'https://p.test');
   });
@@ -136,13 +137,13 @@ describe('遠端 MCP 閘道', () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
-  async function hired() {
+  async function hired(url = mcpUrl) {
     const creator = await seedUser(db);
     const owner = await seedUser(db);
     // createTemplate 不經過 schema，可以用本機 http 網址
     const t = await createTemplate(db, creator.id, {
       name: '金融顧問', description: '', category: '', system_prompt: '你是金融顧問',
-      mcp_servers: [{ name: 'fin', transport: 'remote', url: mcpUrl, required_secrets: [] }],
+      mcp_servers: [{ name: 'fin', transport: 'remote', url, required_secrets: [] }],
     });
     await publishTemplate(db, creator.id, t.id);
     const p = await createProject(db, owner.id, 'p');
@@ -150,7 +151,8 @@ describe('遠端 MCP 閘道', () => {
     return { creatorId: creator.id, templateId: t.id, projectId: p.id, instanceId };
   }
 
-  const call = (instanceId: string, name: string, token?: string) => POST(
+  const TOOL_CALL = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rate","arguments":{}}}';
+  const call = (instanceId: string, name: string, token?: string, body = TOOL_CALL) => POST(
     new Request(`https://p.test/api/mcp/${instanceId}/${name}`, {
       method: 'POST',
       headers: {
@@ -159,14 +161,14 @@ describe('遠端 MCP 閘道', () => {
         cookie: 'sb-session=secret',
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
-      body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rate","arguments":{}}}',
+      body,
     }),
     { params: Promise.resolve({ instanceId, name }) },
   );
 
   it('轉送給創作者並附上可驗證的通行證；不轉 cookie；記錄用量', async () => {
     const h = await hired();
-    const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, 'test-secret'));
+    const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET));
     expect(res.status).toBe(200);
     expect(res.headers.get('mcp-session-id')).toBe('s-1');
     expect(await res.text()).toContain('1.23');
@@ -190,7 +192,7 @@ describe('遠端 MCP 閘道', () => {
   it('沒有通行證 401、別的專案 403、MCP 名稱不存在 404、顧問被移除後拒絕', async () => {
     const h = await hired();
     const other = await hired();
-    const token = signProjectToken(h.projectId, 'test-secret');
+    const token = signProjectToken(h.projectId, SECRET);
     expect((await call(h.instanceId, 'fin')).status).toBe(401);
     expect((await call(other.instanceId, 'fin', token)).status).toBe(403);
     expect((await call(h.instanceId, 'nope', token)).status).toBe(404);
@@ -199,8 +201,46 @@ describe('遠端 MCP 閘道', () => {
     expect((await call(h.instanceId, 'fin', token)).status).toBe(404);
   });
 
-  it('公開 JWKS', async () => {
+  it('公開 JWKS：可快取；設定舊金鑰時新舊並列（輪換用）', async () => {
     const res = await jwks(new Request('https://p.test/.well-known/jwks.json'), {});
     expect(await res.json()).toEqual({ keys: [publicJwk(pem)] });
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300');
+
+    const old = generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    vi.stubEnv('MCP_SIGNING_KEY_PREVIOUS', old);
+    const both = await (await jwks(new Request('https://p.test/.well-known/jwks.json'), {})).json();
+    expect(both).toEqual({ keys: [publicJwk(pem), publicJwk(old)] });
+    vi.stubEnv('MCP_SIGNING_KEY_PREVIOUS', '');
+  });
+
+  it('顧問 id 不是 UUID 時回 404，不是 500', async () => {
+    const h = await hired();
+    expect((await call('not-a-uuid', 'fin', signProjectToken(h.projectId, SECRET))).status).toBe(404);
+  });
+
+  it('過期的專案通行證回 401', async () => {
+    const h = await hired();
+    const expired = signProjectToken(h.projectId, SECRET, Date.now() - 21 * 60_000);
+    expect((await call(h.instanceId, 'fin', expired)).status).toBe(401);
+  });
+
+  it('創作者端連不上：502，用量記為失敗', async () => {
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
+    const deadUrl = `http://127.0.0.1:${(closed.address() as AddressInfo).port}/mcp`;
+    await new Promise((resolve) => closed.close(resolve));
+    const h = await hired(deadUrl);
+    expect((await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET))).status).toBe(502);
+    const { data } = await db.from('mcp_usage').select('tool, ok').eq('instance_id', h.instanceId);
+    expect(data).toEqual([{ tool: 'rate', ok: false }]);
+  });
+
+  it('不是 tools/call 的請求照常轉送，但不記用量', async () => {
+    const h = await hired();
+    const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET), '{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+    expect(res.status).toBe(200);
+    await res.text();
+    const { data } = await db.from('mcp_usage').select('id').eq('instance_id', h.instanceId);
+    expect(data).toEqual([]);
   });
 });

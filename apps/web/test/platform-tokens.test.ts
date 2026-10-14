@@ -1,5 +1,6 @@
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import { publicJwk, signCreatorToken, signProjectToken, verifyProjectToken } from '@/lib/platform-tokens';
 
@@ -49,5 +50,20 @@ describe('創作者通行證', () => {
     const key = createPublicKey({ key: jwk, format: 'jwk' });
     expect(verify('sha256', Buffer.from(`${h}.${p}`), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(s, 'base64url'))).toBe(true);
     expect(jwk).not.toHaveProperty('d');
+  });
+});
+
+describe('設定', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('RUNTIME_TOKEN_SECRET 少於 32 個字元時視為未設定（太短的密鑰可被暴力破解）', () => {
+    vi.stubEnv('RUNTIME_TOKEN_SECRET', 'short');
+    expect(env.runtimeTokenSecret).toBeUndefined();
+    vi.stubEnv('RUNTIME_TOKEN_SECRET', 'x'.repeat(32));
+    expect(env.runtimeTokenSecret).toBe('x'.repeat(32));
+  });
+
+  it('同一把私鑰的公鑰只解析一次', () => {
+    expect(publicJwk(pem)).toBe(publicJwk(pem));
   });
 });
