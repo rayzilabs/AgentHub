@@ -9,7 +9,7 @@ import type { TemplateRow } from '@/lib/services/templates';
 
 type McpDraft = {
   name: string;
-  transport: 'stdio' | 'http';
+  transport: 'stdio' | 'http' | 'remote';
   command: string;
   args: string;
   url: string;
@@ -34,6 +34,7 @@ function fromDraft(d: McpDraft): McpServer {
   if (d.transport === 'stdio') {
     return { name: d.name.trim(), transport: 'stdio', command: d.command.trim(), args: d.args.split(/\s+/).filter(Boolean), required_secrets };
   }
+  if (d.transport === 'remote') return { name: d.name.trim(), transport: 'remote', url: d.url.trim(), required_secrets: [] };
   const headers = Object.fromEntries(
     d.headers.split('\n').map((line) => line.split(/:([\s\S]*)/).map((x) => x.trim())).filter(([k, v]) => k && v),
   );
@@ -165,6 +166,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                     <select disabled={busy} className="field" value={d.transport} onChange={(e) => update({ transport: e.target.value as McpDraft['transport'] })}>
                       <option value="stdio">在 agent 電腦上啟動（stdio）</option>
                       <option value="http">連到遠端網址（HTTP）</option>
+                      <option value="remote">你自己架的 MCP（經平台閘道）</option>
                     </select></label>
                 </div>
                 {d.transport === 'stdio' ? (
@@ -174,6 +176,10 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                     <label className="block"><span className="label">參數（空白分隔）</span>
                       <input disabled={busy} className="field" placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
                   </div>
+                ) : d.transport === 'remote' ? (
+                  <label className="block"><span className="label">網址</span>
+                    <input disabled={busy} className="field" placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} />
+                    <span className="mt-1 block text-sm text-muted">租用的人看不到這個網址；平台會帶通行證呼叫，驗證方式見創作者文件。</span></label>
                 ) : (
                   <>
                     <label className="block"><span className="label">網址</span>
@@ -182,8 +188,10 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                       <textarea disabled={busy} className="field" rows={2} value={d.headers} onChange={(e) => update({ headers: e.target.value })} /></label>
                   </>
                 )}
-                <label className="block"><span className="label">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
-                  <input disabled={busy} className="field" value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
+                {d.transport !== 'remote' && (
+                  <label className="block"><span className="label">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
+                    <input disabled={busy} className="field" value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
+                )}
                 <button type="button" onClick={() => setMcp(mcp.filter((_, j) => j !== i))} className="btn btn-sm -ml-3 text-seal hover:bg-seal/10">移除這個工具</button>
               </fieldset>
             );

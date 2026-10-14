@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const McpServerSchema = z
   .object({
     name: z.string().trim().min(1, 'MCP 需要名稱').regex(/^[A-Za-z0-9_-]+$/, 'MCP 名稱只能用英數字、- 和 _'),
-    transport: z.enum(['stdio', 'http']),
+    transport: z.enum(['stdio', 'http', 'remote']),
     command: z.string().trim().optional(),
     args: z.array(z.string()).optional(),
     url: z.url('MCP 網址格式不正確').optional(),
@@ -19,8 +19,14 @@ export const McpServerSchema = z
     if (s.transport === 'stdio' && !s.command) {
       ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」需要啟動指令`, path: ['command'] });
     }
-    if (s.transport === 'http' && !s.url) {
+    if ((s.transport === 'http' || s.transport === 'remote') && !s.url) {
       ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」需要網址`, path: ['url'] });
+    }
+    if (s.transport === 'remote' && s.url && !s.url.startsWith('https://')) {
+      ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」的網址必須是 https`, path: ['url'] });
+    }
+    if (s.transport === 'remote' && (s.headers || s.required_secrets.length > 0)) {
+      ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」由平台通行證驗證，不能設定標頭或金鑰` });
     }
   });
 

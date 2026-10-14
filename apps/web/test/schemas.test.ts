@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { McpServerSchema, TemplateInputSchema, TemplatePatchSchema } from '@/lib/schemas';
 
 describe('McpServerSchema', () => {
+  it('remote 型：需要網址，不接受 headers 與金鑰', () => {
+    expect(McpServerSchema.safeParse({ name: 'fin', transport: 'remote', url: 'https://c.example/mcp' }).success).toBe(true);
+    expect(McpServerSchema.safeParse({ name: 'fin', transport: 'remote' }).error?.issues[0].message).toBe('MCP「fin」需要網址');
+    expect(McpServerSchema.safeParse({ name: 'fin', transport: 'remote', url: 'http://c.example/mcp' }).error?.issues[0].message)
+      .toBe('MCP「fin」的網址必須是 https');
+    const withHeaders = McpServerSchema.safeParse({ name: 'fin', transport: 'remote', url: 'https://c.example/mcp', headers: { A: 'b' } });
+    expect(withHeaders.error?.issues[0].message).toBe('MCP「fin」由平台通行證驗證，不能設定標頭或金鑰');
+    expect(McpServerSchema.safeParse({
+      name: 'fin', transport: 'remote', url: 'https://c.example/mcp', required_secrets: [{ key: 'K' }],
+    }).success).toBe(false);
+  });
+
   it('stdio 需要 command；http 需要 url', () => {
     expect(McpServerSchema.safeParse({ name: 'a', transport: 'stdio' }).error?.issues[0].message).toBe('MCP「a」需要啟動指令');
     expect(McpServerSchema.safeParse({ name: 'b', transport: 'http' }).error?.issues[0].message).toBe('MCP「b」需要網址');
