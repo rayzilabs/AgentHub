@@ -59,9 +59,13 @@ describe('模型代理', () => {
     expect(seen.length).toBe(before);
   });
 
-  it('路徑含 .. 回 400，不會轉送', async () => {
+  it('只轉送模型呼叫的路徑；其他路徑（含 .. 與解碼後的 %2F）回 400，不會轉送', async () => {
     const before = seen.length;
-    expect((await call(['..', 'secrets'], { 'x-goog-api-key': signProjectToken('p1', SECRET) })).status).toBe(400);
+    const token = { 'x-goog-api-key': signProjectToken('p1', SECRET) };
+    for (const path of [['..', 'secrets'], ['../../x'], ['models', 'g:delete'], ['projects', 'p', 'keys'], ['models', '..%2Fx:generateContent']]) {
+      expect((await call(path, token)).status).toBe(400);
+    }
     expect(seen.length).toBe(before);
+    expect((await call(['models', 'gemini-3.8-flash:generateContent'], token)).status).toBe(200);
   });
 });

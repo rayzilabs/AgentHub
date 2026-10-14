@@ -6,6 +6,8 @@ export const maxDuration = 300;
 
 type Ctx = { params: Promise<{ path: string[] }> };
 
+const MODEL_PATH = /^models\/[\w.-]+:(generateContent|streamGenerateContent|countTokens)$/;
+
 /** runtime 的模型請求：驗證專案通行證後換上 Vertex 金鑰轉送；Sprite 上不放 Vertex 金鑰 */
 async function handle(req: Request, { params }: Ctx): Promise<Response> {
   const secret = env.runtimeTokenSecret;
@@ -15,9 +17,11 @@ async function handle(req: Request, { params }: Ctx): Promise<Response> {
   if (!token) throw new HttpError(401, '缺少專案通行證');
   const projectId = verifyProjectToken(token, secret);
   const { path } = await params;
-  // 路徑原樣接上（模型名稱含冒號，例如 models/gemini-x:streamGenerateContent），但不允許跳出 Vertex 的路徑
-  if (path.some((p) => p === '..' || p === '.' || p === '' || p.includes('\\'))) throw new HttpError(400, '路徑不正確');
-  const target = `${env.vertexBaseUrl}/${path.join('/')}${new URL(req.url).search}`;
+  // 只放行模型呼叫（白名單）：避免被攻破的 Sprite 拿平台的 Vertex 金鑰打其他 API。
+  // Next 會先切段再解碼，%2F 會變成段內的 /，所以檢查接起來的完整路徑
+  const joined = path.join('/');
+  if (!MODEL_PATH.test(joined)) throw new HttpError(400, '路徑不正確');
+  const target = `${env.vertexBaseUrl}/${joined}${new URL(req.url).search}`;
   const headers = new Headers({ 'x-goog-api-key': env.vertexKey });
   for (const k of ['content-type', 'accept']) {
     const v = req.headers.get(k);
