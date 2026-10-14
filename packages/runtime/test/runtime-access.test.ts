@@ -30,7 +30,7 @@ async function seed() {
 function post(app: ReturnType<typeof createApp>, threadId: string, dbToken: string) {
   return app.request('/chat', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-agenthub-db-token': dbToken },
+    headers: { 'content-type': 'application/json', 'x-agenthub-db-token': dbToken, 'x-agenthub-token': 'pt' },
     body: JSON.stringify({ thread_id: threadId, text: '請記住重點' }),
   });
 }
