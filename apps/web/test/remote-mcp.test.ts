@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { GET as jwks } from '@/app/.well-known/jwks.json/route';
 import { POST } from '@/app/api/mcp/[instanceId]/[name]/route';
 import { publicJwk, signProjectToken } from '@/lib/platform-tokens';
-import { toolCallName } from '@/lib/services/remote-mcp';
+import { forwardToCreator, toolCallName } from '@/lib/services/remote-mcp';
 import { createProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
@@ -21,6 +21,90 @@ describe('toolCallName', () => {
     expect(toolCallName('{"method":"tools/list"}')).toBeNull();
     expect(toolCallName('not json')).toBeNull();
     expect(toolCallName(undefined)).toBeNull();
+  });
+});
+
+describe('forwardToCreator', () => {
+  type Reply = { status?: number; headers?: Record<string, string>; chunks: string[]; delayMs?: number };
+  let server: Server;
+  let base: string;
+  let reply: Reply;
+  const seen: IncomingHttpHeaders[] = [];
+
+  beforeAll(async () => {
+    server = createServer(async (req, res) => {
+      seen.push(req.headers);
+      req.resume();
+      res.writeHead(reply.status ?? 200, reply.headers ?? { 'content-type': 'application/json' });
+      for (const c of reply.chunks) {
+        res.write(c);
+        if (reply.delayMs) await new Promise((r) => setTimeout(r, reply.delayMs));
+      }
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(async () => { await new Promise((resolve) => server.close(resolve)); });
+
+  const request = (headers: Record<string, string> = {}) => new Request('https://p.test/api/mcp/i/fin', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'c=1', authorization: 'Bearer project', ...headers },
+    body: '{}',
+  });
+
+  it('轉送 MCP 標準標頭（含 Mcp-Method、Mcp-Name、Mcp-Param-*），不轉 cookie 與原本的 Authorization', async () => {
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{}}'] };
+    const res = await forwardToCreator(request({ 'mcp-method': 'tools/call', 'mcp-name': 'rate', 'mcp-param-region': 'tw' }), '{}', `${base}/mcp`, 'creator-token');
+    await res.text();
+    const h = seen.at(-1)!;
+    expect(h['mcp-method']).toBe('tools/call');
+    expect(h['mcp-name']).toBe('rate');
+    expect(h['mcp-param-region']).toBe('tw');
+    expect(h.cookie).toBeUndefined();
+    expect(h.authorization).toBe('Bearer creator-token');
+    expect(h['x-agenthub-token']).toBe('creator-token');
+  });
+
+  it('創作者端要求轉址時不跟過去：回 502、記為失敗', async () => {
+    reply = { status: 307, headers: { location: `${base}/elsewhere` }, chunks: [] };
+    const results: boolean[] = [];
+    const before = seen.length;
+    const e = await forwardToCreator(request(), '{}', `${base}/mcp`, 't', async (ok) => { results.push(ok); }).catch((err) => err);
+    expect(e.status).toBe(502);
+    expect(seen.length).toBe(before + 1);
+    expect(results).toEqual([false]);
+  });
+
+  it('用量在回應結束後才記錄：耗時包含串流時間；SSE 裡的 JSON-RPC 錯誤或 isError 記為失敗', async () => {
+    reply = {
+      headers: { 'content-type': 'text/event-stream' },
+      chunks: ['event: message\n', 'data: {"jsonrpc":"2.0","id":1,"result":{"isError":true,"content":[]}}\n\n'],
+      delayMs: 150,
+    };
+    const results: boolean[] = [];
+    const started = Date.now();
+    let recordedAt = 0;
+    const res = await forwardToCreator(request(), '{}', `${base}/mcp`, 't', async (ok) => { results.push(ok); recordedAt = Date.now(); });
+    expect(results).toEqual([]);
+    expect(await res.text()).toContain('"isError":true');
+    expect(results).toEqual([false]);
+    expect(recordedAt - started).toBeGreaterThanOrEqual(250);
+
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{"content":[]}}'] };
+    await (await forwardToCreator(request(), '{}', `${base}/mcp`, 't', async (ok) => { results.push(ok); })).text();
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"x"}}'] };
+    await (await forwardToCreator(request(), '{}', `${base}/mcp`, 't', async (ok) => { results.push(ok); })).text();
+    expect(results).toEqual([false, true, false]);
+  });
+
+  it('呼叫端中途取消（run 結束）不記為創作者失敗', async () => {
+    reply = { headers: { 'content-type': 'text/event-stream' }, chunks: ['data: {}\n\n', 'data: {}\n\n'], delayMs: 300 };
+    const results: boolean[] = [];
+    const res = await forwardToCreator(request(), '{}', `${base}/mcp`, 't', async (ok) => { results.push(ok); });
+    await res.body!.cancel();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(results).toEqual([]);
   });
 });
 

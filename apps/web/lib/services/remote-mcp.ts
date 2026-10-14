@@ -40,6 +40,103 @@ export function toolCallName(body: string | undefined): string | null {
   }
 }
 
+/** 只轉 MCP 需要的請求標頭；請求方的 cookie、Authorization 等一律不轉 */
+const FORWARD = ['content-type', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id', 'mcp-method', 'mcp-name'];
+const HOP_BY_HOP = new Set(['connection', 'content-length', 'transfer-encoding', 'keep-alive', 'content-encoding']);
+/** 判斷工具是否失敗時最多看這麼多字，避免大回應占用記憶體 */
+const MAX_INSPECT = 1_000_000;
+
+function rpcFailed(text: string): boolean {
+  const trimmed = text.trim();
+  const payloads = trimmed.startsWith('{') || trimmed.startsWith('[')
+    ? [trimmed]
+    : trimmed.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim());
+  for (const p of payloads) {
+    try {
+      const parsed: unknown = JSON.parse(p);
+      for (const m of Array.isArray(parsed) ? parsed : [parsed]) {
+        const msg = m as { error?: unknown; result?: { isError?: unknown } } | null;
+        if (msg?.error || msg?.result?.isError === true) return true;
+      }
+    } catch {
+      // 不是 JSON（或被截斷）就不當成失敗
+    }
+  }
+  return false;
+}
+
+/**
+ * 把 MCP 請求轉給創作者，回應以串流原樣傳回。
+ * onEnd 在回應結束時才呼叫（含串流時間與工具是否回報錯誤）；呼叫端自己中途取消時不呼叫。
+ */
+export async function forwardToCreator(
+  req: Request,
+  body: string | undefined,
+  url: string,
+  token: string,
+  onEnd?: (ok: boolean) => Promise<void>,
+): Promise<Response> {
+  const headers = new Headers();
+  req.headers.forEach((v, k) => {
+    if (FORWARD.includes(k) || k.startsWith('mcp-param-')) headers.set(k, v);
+  });
+  headers.set('x-agenthub-token', token);
+  headers.set('authorization', `Bearer ${token}`);
+
+  let upstream: Response;
+  try {
+    // 不跟隨轉址：避免帶著通行證被導到 http 或其他主機
+    upstream = await fetch(url, { method: req.method, headers, body, signal: req.signal, redirect: 'manual' });
+  } catch {
+    if (!req.signal.aborted) await onEnd?.(false);
+    throw new HttpError(502, '工具服務無法連線');
+  }
+  if (upstream.status >= 300 && upstream.status < 400) {
+    await upstream.body?.cancel();
+    await onEnd?.(false);
+    throw new HttpError(502, '工具服務不能轉址');
+  }
+
+  const out = new Headers();
+  upstream.headers.forEach((v, k) => {
+    if (!HOP_BY_HOP.has(k)) out.set(k, v);
+  });
+  if (!onEnd || !upstream.body) {
+    await onEnd?.(upstream.ok);
+    return new Response(upstream.body, { status: upstream.status, headers: out });
+  }
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (cancelled) return;
+        if (done) {
+          // 先記用量再結束串流：串流結束後 Vercel 可能隨即停止這個函式
+          await onEnd(upstream.ok && !rpcFailed(text));
+          controller.close();
+          return;
+        }
+        if (text.length < MAX_INSPECT) text += decoder.decode(value, { stream: true });
+        controller.enqueue(value);
+      } catch (e) {
+        if (cancelled) return;
+        if (!req.signal.aborted) await onEnd(false);
+        controller.error(e);
+      }
+    },
+    cancel(reason) {
+      cancelled = true;
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(stream, { status: upstream.status, headers: out });
+}
+
 export type UsageRow = {
   project_id: string;
   instance_id: string;
