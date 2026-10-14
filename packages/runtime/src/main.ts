@@ -1,9 +1,7 @@
 import { createVertex } from '@ai-sdk/google-vertex';
 import { serve } from '@hono/node-server';
 import { loadConfig } from './config';
-import { createDb } from './db';
-import { errorText } from './errors';
-import { failRunningRuns } from './run-store';
+import { createUserDb } from './db';
 import { checkSandboxUser } from './sandbox';
 import { createApp } from './server';
 
@@ -20,17 +18,12 @@ if (config.SANDBOX_USER) {
     process.exit(1);
   }
 }
-const db = createDb(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY);
-const vertex = createVertex({ apiKey: config.VERTEX_API_EXPRESS_MODE_KEY });
+// Sprite 上不放平台金鑰：資料庫用 Vercel 每次附上的 runtime 帳號通行證，模型經平台代理（Vertex 金鑰只在 Vercel）
+const openDb = (dbToken: string) => createUserDb(config.SUPABASE_URL, config.SUPABASE_PUBLISHABLE_KEY, dbToken);
+const modelFor = (platformToken: string | undefined) =>
+  // express mode 把 apiKey 放在 x-goog-api-key；這裡放的是專案通行證，由代理驗證後換成真的 Vertex 金鑰
+  createVertex({ apiKey: platformToken ?? '', baseURL: `${config.PLATFORM_URL}/api/runtime/model` })(config.MODEL_ID);
 
-try {
-  const cleaned = await failRunningRuns(db, config.PROJECT_ID, 'runtime 重啟');
-  if (cleaned > 0) console.warn(`[startup] 已把 ${cleaned} 個中斷的 run 標成 failed`);
-} catch (e) {
-  // 清理失敗不該讓服務起不來（否則會一直重啟）；殘留的 running run 下次重啟再清
-  console.error('[startup] 無法清理中斷的 run', errorText(e));
-}
-
-serve({ fetch: createApp({ db, model: vertex(config.MODEL_ID), config }).fetch, port: config.PORT }, (info) => {
+serve({ fetch: createApp({ openDb, modelFor, config }).fetch, port: config.PORT }, (info) => {
   console.log(`[runtime] listening on :${info.port}，專案 ${config.PROJECT_ID}`);
 });

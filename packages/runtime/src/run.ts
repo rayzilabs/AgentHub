@@ -10,7 +10,7 @@ import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
 import { createRunClock, type RunClock } from './run-clock';
 import { ensureConsultantSandboxes } from './sandbox';
 import {
-  assertThreadInProject, createRun, deleteMessage, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
+  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
   type RunResult,
 } from './run-store';
 import { syncSharedFiles, syncSkills } from './sync';
@@ -22,12 +22,41 @@ const TIMEOUT_ERROR = 'run 超過 15 分鐘';
 const NO_REPLY_ERROR = '模型沒有產生回覆';
 
 /** runTimeoutMs、progressIntervalMs 只給測試縮短時間用，正式環境一律用預設值 */
-export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeoutMs?: number; progressIntervalMs?: number };
+export type RunDeps = {
+  /** 用 Vercel 附上的 runtime 帳號通行證開這次 run 的資料庫連線 */
+  openDb: (dbToken: string) => Db;
+  /** 模型經平台代理呼叫，用專案通行證驗證 */
+  modelFor: (platformToken: string | undefined) => LanguageModel;
+  config: Config;
+  runTimeoutMs?: number;
+  progressIntervalMs?: number;
+};
+
+type ActiveDeps = Omit<RunDeps, 'openDb' | 'modelFor'> & { db: Db; model: LanguageModel };
+
+// 每個程序在第一次 run 前清一次上個程序遺留的 running run（開機時沒有通行證，無法在開機時清）。
+// 在本程序建立任何 run 之前完成，所以不會誤清自己的 run。以 deps 為 key，每個 app 各自一份。
+const orphanCleanups = new WeakMap<RunDeps, Promise<void>>();
+
+function cleanOrphanRunsOnce(deps: RunDeps, db: Db): Promise<void> {
+  let done = orphanCleanups.get(deps);
+  if (!done) {
+    done = failRunningRuns(db, deps.config.PROJECT_ID, 'runtime 重啟')
+      .then((n) => { if (n > 0) console.warn(`[run] 已把 ${n} 個中斷的 run 標成 failed`); })
+      .catch((e) => {
+        // 清理失敗不擋這次對話；下次再試
+        orphanCleanups.delete(deps);
+        console.error('[run] 無法清理中斷的 run', errorText(e));
+      });
+    orphanCleanups.set(deps, done);
+  }
+  return done;
+}
 
 type PreparedRoot = { rootId: string; streamUI: BuiltAgent['streamUI']; close: () => Promise<void> };
 
 async function prepareRootAgent(
-  deps: RunDeps,
+  deps: ActiveDeps,
   runId: string,
   threadId: string,
   clock: RunClock,
@@ -115,9 +144,15 @@ function stoppable<T>(source: ReadableStream<T>): { stream: ReadableStream<T>; s
   return { stream, stop };
 }
 
-export async function startRun(deps: RunDeps, req: { threadId: string; text: string; platformToken?: string }): Promise<Response> {
+export async function startRun(
+  runDeps: RunDeps,
+  req: { threadId: string; text: string; platformToken?: string; dbToken: string },
+): Promise<Response> {
+  const { openDb, modelFor, ...rest } = runDeps;
+  const deps: ActiveDeps = { ...rest, db: openDb(req.dbToken), model: modelFor(req.platformToken) };
   const { db, config } = deps;
   await assertThreadInProject(db, req.threadId, config.PROJECT_ID);
+  await cleanOrphanRunsOnce(runDeps, db);
   const runId = await createRun(db, req.threadId);
 
   const keepAlive = await startKeepAlive(config.SPRITE_API_SOCK, `run-${runId}`);

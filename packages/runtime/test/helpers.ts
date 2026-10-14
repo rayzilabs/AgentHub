@@ -101,8 +101,8 @@ export function testConfig(projectId: string, roots: Roots): Config {
   return {
     PROJECT_ID: projectId,
     SUPABASE_URL: inject('supabaseUrl'),
-    SUPABASE_SECRET_KEY: inject('supabaseServiceKey'),
-    VERTEX_API_EXPRESS_MODE_KEY: 'test',
+    SUPABASE_PUBLISHABLE_KEY: 'test',
+    PLATFORM_URL: 'https://p.test',
     AGENTS_ROOT: roots.agentsRoot,
     SHARED_ROOT: roots.sharedRoot,
     SPRITE_API_SOCK: roots.sock,

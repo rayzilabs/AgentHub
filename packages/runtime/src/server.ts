@@ -11,6 +11,8 @@ export function createApp(deps: RunDeps) {
   app.get('/health', (c) => c.json({ ok: true, project_id: deps.config.PROJECT_ID }));
 
   app.post('/chat', async (c) => {
+    const dbToken = c.req.header('x-agenthub-db-token');
+    if (!dbToken) return c.json({ error: '缺少資料庫通行證' }, 401);
     const parsed = ChatBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: '請求格式錯誤' }, 400);
     try {
@@ -18,6 +20,7 @@ export function createApp(deps: RunDeps) {
         threadId: parsed.data.thread_id,
         text: parsed.data.text,
         platformToken: c.req.header('x-agenthub-token'),
+        dbToken,
       });
     } catch (e) {
       if (e instanceof NotFoundError) return c.json({ error: e.message }, 404);

@@ -30,7 +30,7 @@ async function seedEnv(fields: ConsultantFields = {}) {
 function post(app: ReturnType<typeof createApp>, body: unknown, headers: Record<string, string> = {}) {
   return app.request('/chat', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', 'x-agenthub-db-token': 'test', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -49,7 +49,7 @@ async function messagesOf(threadId: string) {
 }
 
 function app(env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, runTimeoutMs?: number, progressIntervalMs?: number) {
-  return createApp({ db, model, config: env.config, runTimeoutMs, progressIntervalMs });
+  return createApp({ openDb: () => db, modelFor: () => model, config: env.config, runTimeoutMs, progressIntervalMs });
 }
 
 describe('GET /health', () => {
@@ -231,7 +231,7 @@ describe('POST /chat', () => {
     try {
       const env = await seedEnv({ mcp_servers: [{ name: 'fin', transport: 'remote' }] });
       const config = { ...env.config, PLATFORM_URL: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}` };
-      const withGateway = createApp({ db, model: mockModel(textTurn('好')), config });
+      const withGateway = createApp({ openDb: () => db, modelFor: () => mockModel(textTurn('好')), config });
       await (await post(withGateway, { thread_id: env.threadId, text: '問題' }, { 'x-agenthub-token': 'pt-1' })).text();
       await waitForRunDone(db, env.threadId);
       expect(seen[0].url).toBe(`/api/mcp/${env.consultantId}/fin`);
@@ -251,10 +251,15 @@ describe('POST /chat', () => {
   });
 
   it('同一串對話已有 run 在跑：回 409', async () => {
+    // 同一個程序裡的第二個請求；資料庫裡別的程序留下的 running run 會在第一次對話前被清掉（見下方）
     const env = await seedEnv();
-    await db.from('runs').insert({ thread_id: env.threadId });
-    const res = await post(app(env, mockModel(textTurn('x'))), { thread_id: env.threadId, text: '問題' });
+    const a = app(env, hangingModel(), 1_000);
+    const first = await post(a, { thread_id: env.threadId, text: '問題' });
+    expect(first.status).toBe(200);
+    const res = await post(a, { thread_id: env.threadId, text: '再問' });
     expect(res.status).toBe(409);
+    await first.text();
+    await waitForRunDone(db, env.threadId);
   });
 
   it('對話不屬於這個專案：回 404', async () => {
@@ -408,5 +413,45 @@ describe('POST /chat：多顧問', () => {
     const res = await post(app(env, mockModel()), { thread_id: env.threadId, text: '問題' });
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: '找不到主管' });
+  });
+});
+
+describe('資料庫通行證與遺留 run', () => {
+  it('沒有資料庫通行證回 401', async () => {
+    const env = await seedEnv();
+    const res = await app(env, mockModel(textTurn('好'))).request('/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ thread_id: env.threadId, text: '問題' }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('用標頭裡的資料庫通行證開連線，模型用專案通行證', async () => {
+    const env = await seedEnv();
+    const dbTokens: string[] = [];
+    const platformTokens: (string | undefined)[] = [];
+    const a = createApp({
+      openDb: (t) => { dbTokens.push(t); return db; },
+      modelFor: (t) => { platformTokens.push(t); return mockModel(textTurn('好')); },
+      config: env.config,
+    });
+    await (await post(a, { thread_id: env.threadId, text: '問題' }, { 'x-agenthub-db-token': 'db-1', 'x-agenthub-token': 'pt-1' })).text();
+    await waitForRunDone(db, env.threadId);
+    expect(dbTokens).toEqual(['db-1']);
+    expect(platformTokens).toEqual(['pt-1']);
+  });
+
+  it('第一次對話前清掉上一個程序遺留的 running run（含同一串對話）', async () => {
+    const env = await seedEnv();
+    const otherThread = await seedThread(db, env.projectId);
+    const { data: orphanOther } = await db.from('runs').insert({ thread_id: otherThread }).select('id').single();
+    const { data: orphanSame } = await db.from('runs').insert({ thread_id: env.threadId }).select('id').single();
+    const res = await post(app(env, mockModel(textTurn('好'))), { thread_id: env.threadId, text: '問題' });
+    expect(res.status).toBe(200);
+    await res.text();
+    await waitForRunDone(db, env.threadId);
+    const { data } = await db.from('runs').select('id, status, error').in('id', [orphanOther!.id, orphanSame!.id]);
+    expect(data!.map((r) => [r.status, r.error])).toEqual([['failed', 'runtime 重啟'], ['failed', 'runtime 重啟']]);
   });
 });
