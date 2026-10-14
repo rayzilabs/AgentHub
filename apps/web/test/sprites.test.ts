@@ -79,6 +79,13 @@ describe('forwardChat', () => {
     expect(calls[0].url).toBe('https://s.example/chat');
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe('Bearer tok');
     expect(calls[0].init.body).toBe(JSON.stringify(body));
+    expect(calls[0].init.headers).not.toHaveProperty('x-agenthub-token');
+  });
+
+  it('有專案通行證時放在 x-agenthub-token', async () => {
+    const { impl, calls } = fakeFetch([200]);
+    await forwardChat('https://s.example', body, { token: 'tok', projectToken: 'pt', fetchImpl: impl, retryDelayMs: 0 });
+    expect((calls[0].init.headers as Record<string, string>)['x-agenthub-token']).toBe('pt');
   });
 
   it('連線被拒或 502/503/504 時重試', async () => {
@@ -109,6 +116,7 @@ describe('installRuntime', () => {
 
   it('建立服務後重新啟動，讓已存在的 Sprite 載入新的 main.js；兩個 log 串流都讀完', async () => {
     for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'VERTEX_API_EXPRESS_MODE_KEY']) vi.stubEnv(k, 'x');
+    for (const k of ['PLATFORM_URL', 'VERCEL_PROJECT_PRODUCTION_URL']) vi.stubEnv(k, '');
     const calls: string[] = [];
     const written: Record<string, string> = {};
     const logStream = (label: string) => ({ processAll: async () => { calls.push(`${label}:drained`); } });
@@ -140,6 +148,7 @@ describe('installRuntime', () => {
     expect(written['.env']).toContain('AGENTS_ROOT="/workspace/agents"');
     expect(written['.env']).toContain('SHARED_ROOT="/workspace/shared"');
     expect(written['.env']).toContain('SANDBOX_USER="agent"');
+    expect(written['.env']).toContain('PLATFORM_URL="https://agenthub-kappa-pink.vercel.app"');
   });
 });
 

@@ -16,6 +16,7 @@ export const env = {
   get platformUrl() {
     if (process.env.PLATFORM_URL) return process.env.PLATFORM_URL;
     const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-    return vercel ? `https://${vercel}` : 'http://localhost:3000';
+    // 在本機跑 redeploy-runtime 時也要寫入正式站網址，Sprite 才連得到閘道
+    return vercel ? `https://${vercel}` : 'https://agenthub-kappa-pink.vercel.app';
   },
 };

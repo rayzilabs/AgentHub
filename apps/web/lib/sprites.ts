@@ -179,6 +179,7 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string, 
     AGENTS_ROOT: `${WORKSPACE}/agents`,
     SHARED_ROOT: `${WORKSPACE}/shared`,
     SANDBOX_USER,
+    PLATFORM_URL: env.platformUrl,
   }));
   await sprite.execFile('bash', ['-lc', sandboxSetupScript(base)]);
   const logs = await sprite.createService(SERVICE, {
@@ -242,7 +243,7 @@ export async function destroyProjectSprite(name: string): Promise<void> {
 export async function forwardChat(
   spriteUrl: string,
   body: { thread_id: string; text: string },
-  opts: { token?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
+  opts: { token?: string; projectToken?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
 ): Promise<Response> {
   const token = opts.token ?? env.spritesToken;
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -252,7 +253,11 @@ export async function forwardChat(
     try {
       const res = await fetchImpl(`${spriteUrl}/chat`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+          ...(opts.projectToken ? { 'x-agenthub-token': opts.projectToken } : {}),
+        },
         body: JSON.stringify(body),
       });
       if (!RETRYABLE.has(res.status)) return res;
