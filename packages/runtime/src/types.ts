@@ -2,7 +2,7 @@ export type SkillMeta = { name: string; description: string; path: string };
 
 export type McpServerConfig = {
   name: string;
-  transport: 'stdio' | 'http';
+  transport: 'stdio' | 'http' | 'remote';
   command?: string;
   args?: string[];
   url?: string;

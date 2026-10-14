@@ -1,5 +1,5 @@
 import type { LanguageModel, UIMessage } from 'ai';
-import { buildConsultant } from './agents/build';
+import { buildConsultant, type PlatformGateway } from './agents/build';
 import type { Config } from './config';
 import type { Db } from './db';
 import { ConsultantStoppedError } from './errors';
@@ -23,6 +23,7 @@ export type ConsultantRunnerDeps = {
   wrapUpAt?: number;
   /** 過了這個時間強制停止顧問 */
   stopAt?: number;
+  gateway?: PlatformGateway;
 };
 
 export function createConsultantRunner(deps: ConsultantRunnerDeps): ConsultantRunner {
@@ -38,6 +39,7 @@ export function createConsultantRunner(deps: ConsultantRunnerDeps): ConsultantRu
       secrets: groupSecrets(deps.secrets, instance.id),
       onStepEnd: usageRecorder({ db: deps.db, projectId: deps.config.PROJECT_ID, runId: deps.runId, instance }),
       wrapUpAt: deps.wrapUpAt,
+      gateway: deps.gateway,
     });
     try {
       const snapshots = readSnapshots(await built.streamUI({ messages: [{ role: 'user', content: task }], abortSignal: signal }));

@@ -14,7 +14,11 @@ export function createApp(deps: RunDeps) {
     const parsed = ChatBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: '請求格式錯誤' }, 400);
     try {
-      return await startRun(deps, { threadId: parsed.data.thread_id, text: parsed.data.text });
+      return await startRun(deps, {
+        threadId: parsed.data.thread_id,
+        text: parsed.data.text,
+        platformToken: c.req.header('x-agenthub-token'),
+      });
     } catch (e) {
       if (e instanceof NotFoundError) return c.json({ error: e.message }, 404);
       if (e instanceof RunConflictError) return c.json({ error: e.message }, 409);

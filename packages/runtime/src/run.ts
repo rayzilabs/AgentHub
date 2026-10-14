@@ -1,5 +1,5 @@
 import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessage, type UIMessageChunk } from 'ai';
-import { buildConsultant, buildManager, type BuiltAgent } from './agents/build';
+import { buildConsultant, buildManager, type BuiltAgent, type PlatformGateway } from './agents/build';
 import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
 import type { Db } from './db';
@@ -26,7 +26,13 @@ export type RunDeps = { db: Db; model: LanguageModel; config: Config; runTimeout
 
 type PreparedRoot = { rootId: string; streamUI: BuiltAgent['streamUI']; close: () => Promise<void> };
 
-async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string, clock: RunClock): Promise<PreparedRoot> {
+async function prepareRootAgent(
+  deps: RunDeps,
+  runId: string,
+  threadId: string,
+  clock: RunClock,
+  gateway: PlatformGateway | undefined,
+): Promise<PreparedRoot> {
   const { db, config, model } = deps;
   const instances = await loadInstances(db, config.PROJECT_ID);
   const consultants = instances.filter((i) => i.role === 'consultant');
@@ -45,6 +51,7 @@ async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string, 
       secrets: groupSecrets(secrets, root.id),
       onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
       wrapUpAt: clock.soloWrapUpAt,
+      gateway,
     });
     return { rootId: root.id, streamUI: built.streamUI, close: built.close };
   }
@@ -67,7 +74,7 @@ async function prepareRootAgent(deps: RunDeps, runId: string, threadId: string, 
     db, model, config, manager, consultants, sharedFiles, record, clock,
     runner: createConsultantRunner({
       db, model, config, runId, sharedFiles, secrets,
-      wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt,
+      wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt, gateway,
     }),
     onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: manager }),
   });
@@ -108,7 +115,7 @@ function stoppable<T>(source: ReadableStream<T>): { stream: ReadableStream<T>; s
   return { stream, stop };
 }
 
-export async function startRun(deps: RunDeps, req: { threadId: string; text: string }): Promise<Response> {
+export async function startRun(deps: RunDeps, req: { threadId: string; text: string; platformToken?: string }): Promise<Response> {
   const { db, config } = deps;
   await assertThreadInProject(db, req.threadId, config.PROJECT_ID);
   const runId = await createRun(db, req.threadId);
@@ -142,7 +149,9 @@ export async function startRun(deps: RunDeps, req: { threadId: string; text: str
       thread_id: req.threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: req.text,
       ui_message: { id: generateId(), role: 'user', parts: [{ type: 'text', text: req.text }] },
     });
-    const root = await prepareRootAgent(deps, runId, req.threadId, clock);
+    // 專案通行證只放在記憶體裡傳給 MCP 連線，不寫進沙盒看得到的地方
+    const gateway = config.PLATFORM_URL && req.platformToken ? { baseUrl: config.PLATFORM_URL, token: req.platformToken } : undefined;
+    const root = await prepareRootAgent(deps, runId, req.threadId, clock, gateway);
     closeAgent = root.close;
     rootId = root.rootId;
     // final 先插入，執行中定期更新，輪詢的前端隨時看得到進度

@@ -9,6 +9,9 @@ export const MCP_CONNECT_TIMEOUT_MS = 60_000;
 
 export type McpHandle = { tools: ToolSet; warnings: string[]; close: () => Promise<void> };
 
+/** remote 型 MCP 一律經平台閘道；token 是這次對話的專案通行證 */
+export type McpGateway = { baseUrl: string; token: string; instanceId: string };
+
 type McpClient = Awaited<ReturnType<typeof createMCPClient>>;
 
 export function substituteSecrets(template: string, secrets: Record<string, string>): string {
@@ -29,7 +32,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-function transportFor(server: McpServerConfig, secrets: Record<string, string>, cwd: string, sandbox: Sandbox) {
+function transportFor(server: McpServerConfig, secrets: Record<string, string>, cwd: string, sandbox: Sandbox, gateway?: McpGateway) {
+  if (server.transport === 'remote') {
+    if (!gateway) throw new Error('平台閘道未設定');
+    return {
+      type: 'http' as const,
+      url: `${gateway.baseUrl}/api/mcp/${gateway.instanceId}/${encodeURIComponent(server.name)}`,
+      headers: { Authorization: `Bearer ${gateway.token}` },
+    };
+  }
   if (server.transport === 'http') {
     if (!server.url) throw new Error('缺少 url');
     const headers = Object.fromEntries(
@@ -50,6 +61,7 @@ export async function connectMcpServers(
   sandbox: Sandbox,
   connect: typeof createMCPClient = createMCPClient,
   timeoutMs = MCP_CONNECT_TIMEOUT_MS,
+  gateway?: McpGateway,
 ): Promise<McpHandle> {
   const clients: McpClient[] = [];
   const warnings: string[] = [];
@@ -57,7 +69,7 @@ export async function connectMcpServers(
 
   for (const server of servers) {
     try {
-      const transport = transportFor(server, secretsByServer[server.name] ?? {}, cwd, sandbox);
+      const transport = transportFor(server, secretsByServer[server.name] ?? {}, cwd, sandbox, gateway);
       const pending = connect({ transport });
       const client = await withTimeout(pending, timeoutMs, `MCP「${server.name}」`).catch((e: unknown) => {
         // 逾時後才連上的 client 已經沒人管，連上時直接關掉

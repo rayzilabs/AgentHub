@@ -1,4 +1,6 @@
 import { stat } from 'node:fs/promises';
+import { createServer, type IncomingHttpHeaders } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server';
@@ -25,10 +27,10 @@ async function seedEnv(fields: ConsultantFields = {}) {
   return { creatorId, templateId, projectId, threadId, consultantId, roots, config: testConfig(projectId, roots) };
 }
 
-function post(app: ReturnType<typeof createApp>, body: unknown) {
+function post(app: ReturnType<typeof createApp>, body: unknown, headers: Record<string, string> = {}) {
   return app.request('/chat', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -216,6 +218,30 @@ describe('POST /chat', () => {
     expect(final.ui_message.role).toBe('assistant');
     const warning = final.ui_message.parts.find((p: { type: string }) => p.type === 'data-warning');
     expect(warning.data.text).toContain('MCP「broken」目前無法使用');
+  });
+
+  it('remote 型 MCP 帶著專案通行證連平台閘道；沒有通行證時列為無法使用', async () => {
+    const seen: { url?: string; headers: IncomingHttpHeaders }[] = [];
+    const gateway = createServer((req, res) => {
+      seen.push({ url: req.url, headers: req.headers });
+      res.statusCode = 503;
+      res.end();
+    });
+    await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve));
+    try {
+      const env = await seedEnv({ mcp_servers: [{ name: 'fin', transport: 'remote' }] });
+      const config = { ...env.config, PLATFORM_URL: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}` };
+      const withGateway = createApp({ db, model: mockModel(textTurn('好')), config });
+      await (await post(withGateway, { thread_id: env.threadId, text: '問題' }, { 'x-agenthub-token': 'pt-1' })).text();
+      await waitForRunDone(db, env.threadId);
+      expect(seen[0].url).toBe(`/api/mcp/${env.consultantId}/fin`);
+      expect(seen[0].headers.authorization).toBe('Bearer pt-1');
+
+      const body = await (await post(withGateway, { thread_id: env.threadId, text: '再問' })).text();
+      expect(body).toContain('MCP「fin」目前無法使用：平台閘道未設定');
+    } finally {
+      await new Promise((resolve) => gateway.close(resolve));
+    }
   });
 
   it('只有 MCP 警告、模型沒有產生內容：仍標成失敗', async () => {

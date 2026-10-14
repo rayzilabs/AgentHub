@@ -12,6 +12,8 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().default(8080),
   /** 沙盒帳號；Sprite 上一律是 agent，本機開發不設定 */
   SANDBOX_USER: z.string().min(1).optional(),
+  /** 平台網址；remote 型 MCP 經這裡的閘道呼叫 */
+  PLATFORM_URL: z.url().optional(),
 });
 
 export type Config = z.infer<typeof EnvSchema>;

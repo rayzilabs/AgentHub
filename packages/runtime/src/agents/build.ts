@@ -51,7 +51,11 @@ export type ConsultantContext = {
   onStepEnd?: (step: StepLike) => Promise<void> | void;
   /** 過了這個時間就收尾（不准再用工具） */
   wrapUpAt?: number;
+  /** remote 型 MCP 經平台閘道；沒有時這類 MCP 列為無法使用 */
+  gateway?: PlatformGateway;
 };
+
+export type PlatformGateway = { baseUrl: string; token: string };
 
 export type BuiltAgent = {
   instructions: string;
@@ -113,7 +117,8 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
 
-  const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir, sandbox);
+  const gateway = ctx.gateway && { ...ctx.gateway, instanceId: ctx.instance.id };
+  const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir, sandbox, undefined, undefined, gateway);
   try {
     const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
     const instructions = buildConsultantInstructions({

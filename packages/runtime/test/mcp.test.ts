@@ -57,6 +57,29 @@ describe('connectMcpServers', () => {
     expect(seen[0]).toEqual({ type: 'http', url: 'https://mcp.example.com', headers: { Authorization: 'Bearer secret-1' } });
   });
 
+  it('remote：連平台閘道，網址帶顧問 id 與 MCP 名稱，標頭帶專案通行證', async () => {
+    const seen: unknown[] = [];
+    const fakeConnect = (async (config: { transport: unknown }) => {
+      seen.push(config.transport);
+      return { tools: async () => ({}), close: async () => {} };
+    }) as unknown as typeof createMCPClient;
+    await connectMcpServers(
+      [{ name: 'fin/x', transport: 'remote' }],
+      {},
+      '/tmp',
+      createSandbox(),
+      fakeConnect,
+      undefined,
+      { baseUrl: 'https://p.example', token: 'tok', instanceId: 'i1' },
+    );
+    expect(seen[0]).toEqual({ type: 'http', url: 'https://p.example/api/mcp/i1/fin%2Fx', headers: { Authorization: 'Bearer tok' } });
+  });
+
+  it('remote：沒有平台閘道時列為無法使用', async () => {
+    const handle = await connectMcpServers([{ name: 'fin', transport: 'remote' }], {}, '/tmp', createSandbox());
+    expect(handle.warnings).toEqual(['MCP「fin」目前無法使用：平台閘道未設定']);
+  });
+
   it('stdio：指定沙盒帳號時以 sudo 啟動，金鑰放在環境變數而不是指令參數', async () => {
     const seen: unknown[] = [];
     const fakeConnect = (async (config: { transport: unknown }) => {
