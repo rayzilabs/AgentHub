@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagerInstructions } from '../src/agents/prompts';
+import { buildConsultantInstructions, buildManagerInstructions } from '../src/agents/prompts';
 import type { AgentInstance } from '../src/types';
 
 function consultant(name: string): AgentInstance {
@@ -25,5 +25,15 @@ describe('主管 prompt 的分工規則', () => {
 
   it('回覆不可加入顧問沒有提供的數字', () => {
     expect(text).toContain('不要自行補上');
+  });
+});
+
+describe('顧問 prompt', () => {
+  it('工具回傳 download_url 時用 curl 下載到工作目錄，不把大量資料貼進回覆', () => {
+    const text = buildConsultantInstructions({
+      instance: consultant('A'), workDir: '/w', sharedRoot: '/shared', skillsDir: '/skills', sharedFiles: [], memories: [], mcpWarnings: [],
+    });
+    expect(text).toContain('download_url');
+    expect(text).toContain('curl');
   });
 });
