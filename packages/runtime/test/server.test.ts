@@ -30,7 +30,7 @@ async function seedEnv(fields: ConsultantFields = {}) {
 function post(app: ReturnType<typeof createApp>, body: unknown, headers: Record<string, string> = {}) {
   return app.request('/chat', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-agenthub-db-token': 'test', ...headers },
+    headers: { 'content-type': 'application/json', 'x-agenthub-db-token': 'test', 'x-agenthub-token': 'pt', ...headers },
     body: JSON.stringify(body),
   });
 }
@@ -237,8 +237,9 @@ describe('POST /chat', () => {
       expect(seen[0].url).toBe(`/api/mcp/${env.consultantId}/fin`);
       expect(seen[0].headers.authorization).toBe('Bearer pt-1');
 
-      const body = await (await post(withGateway, { thread_id: env.threadId, text: '再問' })).text();
-      expect(body).toContain('MCP「fin」目前無法使用：平台閘道未設定');
+      // 沒有專案通行證就不能呼叫模型（經平台代理），runtime 直接拒絕
+      const res = await post(withGateway, { thread_id: env.threadId, text: '再問' }, { 'x-agenthub-token': '' });
+      expect(res.status).toBe(401);
     } finally {
       await new Promise((resolve) => gateway.close(resolve));
     }
@@ -453,5 +454,13 @@ describe('資料庫通行證與遺留 run', () => {
     await waitForRunDone(db, env.threadId);
     const { data } = await db.from('runs').select('id, status, error').in('id', [orphanOther!.id, orphanSame!.id]);
     expect(data!.map((r) => [r.status, r.error])).toEqual([['failed', 'runtime 重啟'], ['failed', 'runtime 重啟']]);
+  });
+});
+
+describe('專案通行證', () => {
+  it('沒有專案通行證回 401（模型經平台代理，需要它驗證）', async () => {
+    const env = await seedEnv();
+    const res = await post(app(env, mockModel(textTurn('好'))), { thread_id: env.threadId, text: '問題' }, { 'x-agenthub-token': '' });
+    expect(res.status).toBe(401);
   });
 });

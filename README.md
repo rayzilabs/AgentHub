@@ -75,12 +75,12 @@ docs/superpowers/      規格、實作計畫、production 驗證紀錄
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`，伺服器端存取資料庫與 Storage |
 | `FLY_SPRITES_TOKEN` | 建立、管理 Sprite |
 | `VERTEX_API_EXPRESS_MODE_KEY` | Vertex AI express mode 金鑰，會帶進每台 Sprite |
-| `RUNTIME_TOKEN_SECRET` | 簽專案通行證（HS256，至少 32 個字元的隨機值；太短視為未設定）。沒設定時對話照常，只是 remote 型 MCP 無法使用 |
+| `RUNTIME_TOKEN_SECRET` | 簽專案通行證（HS256，至少 32 個字元的隨機值；太短視為未設定）。**必填**：runtime 用它呼叫模型（平台代理）與 remote 型 MCP，沒設定時對話回 503 |
 | `MCP_SIGNING_KEY` | 簽創作者通行證的 ES256 私鑰（P-256，PKCS8 PEM）；公鑰公開在 `/.well-known/jwks.json` |
 | `MCP_SIGNING_KEY_PREVIOUS` | 選填。輪換金鑰時放舊私鑰，公鑰網址會新舊並列，創作者端快取的舊公鑰仍能驗證 |
 | `PLATFORM_URL` | 選填。寫進 Sprite 的平台網址，runtime 用它連閘道；預設是 production 網址 |
 
-最後四個只有用到 remote 型 MCP 時才需要。產生金鑰：
+`RUNTIME_TOKEN_SECRET` 必填；`MCP_SIGNING_KEY`、`MCP_SIGNING_KEY_PREVIOUS`、`PLATFORM_URL` 只有用到 remote 型 MCP 時才需要。產生金鑰：
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"

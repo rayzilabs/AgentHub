@@ -13,13 +13,15 @@ export function createApp(deps: RunDeps) {
   app.post('/chat', async (c) => {
     const dbToken = c.req.header('x-agenthub-db-token');
     if (!dbToken) return c.json({ error: '缺少資料庫通行證' }, 401);
+    const platformToken = c.req.header('x-agenthub-token');
+    if (!platformToken) return c.json({ error: '缺少專案通行證' }, 401);
     const parsed = ChatBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: '請求格式錯誤' }, 400);
     try {
       return await startRun(deps, {
         threadId: parsed.data.thread_id,
         text: parsed.data.text,
-        platformToken: c.req.header('x-agenthub-token'),
+        platformToken,
         dbToken,
       });
     } catch (e) {
