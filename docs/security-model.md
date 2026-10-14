@@ -26,7 +26,8 @@
 | Vercel（`apps/web`） | 網頁與 `/api/*` | 使用者的瀏覽器 | 平台金鑰（只在伺服器端） |
 | runtime（`packages/runtime`） | 每個專案一台 Sprite 上的平台程式：組 agent、呼叫模型、執行工具、寫回進度 | 平台本身，使用者不會直接碰到 | 目標：只限自己專案的短期通行證（見第 4 節） |
 | 沙盒 | 同一台 Sprite 上，agent 執行 bash、讀寫檔案的工作區 | agent（間接：創作者的腳本在這裡跑、租用者的檔案放這裡） | 目標：沒有任何平台金鑰 |
-| 遠端 MCP server | 創作者自己的腳本與資料，透過 http 提供工具 | 創作者提供、agent 呼叫 | 創作者自己的資料；連線金鑰由租用者提供 |
+| 遠端 MCP server | 創作者的腳本與資料，透過 MCP 提供工具；創作者自己架或平台代管（各自一台專用 Sprite） | agent 經平台閘道 `/api/mcp/<顧問id>` 呼叫 | 創作者自己的資料與金鑰；只接受平台簽發的創作者通行證（子專案 3） |
+| 平台閘道（Vercel） | 驗證專案通行證、簽創作者通行證、轉送、記用量 | runtime | 簽章私鑰 `MCP_SIGNING_KEY`、`RUNTIME_TOKEN_SECRET` |
 
 ## 3. 誰看得到什麼
 
@@ -43,7 +44,7 @@
 | 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
 | 平台金鑰外洩時，影響只限一個專案 | 📝 子專案 1-C |
 | 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared`；每個帳號有私人 `/tmp` | ✅ 2026-10-14 子專案 2 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
-| 創作者的腳本與資料留在遠端 MCP | ⏳ 子專案 3 |
+| 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進 Sprite；取消租用後立即無法呼叫 | 📝 子專案 3 |
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
 | 單一顧問模式下，主管／顧問本身的原始工具輸入輸出仍會隨串流送到瀏覽器 | ⏳ 已知缺口 |
 
@@ -64,6 +65,8 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 | `messages` | 只能讀 `kind`、`content` | ✅ | 只能改還在執行中的 run 的 `final` 的 `content`、`ui_message`、`tool_events`、`updated_at` | 只能刪還在執行中的 run 的空白 `final` | 已結束的歷史訊息不能改、不能刪 |
 | `memories` | ✅ | ✅ | ❌ | ❌ | 自己專案；修改與刪除由使用者在網頁上操作 |
 | `usage_events` | ❌ | ✅ | ❌ | ❌ | 只能新增；計費帳本不能被竄改或偷看 |
+| `remote_mcp_targets` | ❌ | ❌ | ❌ | ❌ | 創作者 MCP 的網址／代管版本；只有閘道（`service_role`）讀得到（子專案 3） |
+| `mcp_usage` | ❌ | ❌ | ❌ | ❌ | 由閘道寫入；runtime 不碰（子專案 3） |
 | Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip |
 | Storage `project-files` | 列出、下載 | ❌ | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；上傳由網頁處理 |
 | Storage `runtime` | ❌ | ❌ | ❌ | ❌ | 安裝時由 Vercel 給一次性下載連結 |
@@ -102,7 +105,7 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 |---|---|---|---|
 | 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；📝 C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
 | 2 | 顧問之間隔離 | ✅ 已上線（2026-10-14） | `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md` |
-| 3 | 遠端 MCP 的平台支援（代管、每位租用者的金鑰、用量計費、版本、大量資料下載） | ⏳ | — |
+| 3 | 遠端 MCP 的平台支援（閘道與通行證、自己架與平台代管、用量、版本、大量資料慣例） | 📝 已設計 | `docs/superpowers/specs/2026-10-14-remote-mcp-design.md` |
 | 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ⏳ | — |
 
 ## 7. 已知缺口與待辦
