@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
+import { signUp } from '@/app/login/actions';
 import {
-  cleanupOrphanRuntimeAccounts, deleteRuntimeAccount, ensureRuntimeAccount, isRuntimeAccount, runtimeAccessToken,
+  cleanupOrphanRuntimeAccounts, deleteRuntimeAccount, ensureRuntimeAccount, isRuntimeAccount, runtimeAccessToken, runtimeEmail,
+  RUNTIME_EMAIL_DOMAIN,
 } from '@/lib/runtime-session';
 import { createProject } from '@/lib/services/projects';
 import { seedUser, testDb } from './helpers';
@@ -73,5 +75,45 @@ describe('runtime 帳號', () => {
     expect(isRuntimeAccount({ app_metadata: { agenthub_runtime_project: 'x' } })).toBe(true);
     expect(isRuntimeAccount({ app_metadata: { provider: 'email' } })).toBe(false);
     expect(isRuntimeAccount({})).toBe(false);
+  });
+});
+
+describe('runtime 帳號的 email 不能被搶先註冊', () => {
+  const signInAs = async (email: string, password: string) => {
+    const auth = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, { auth: { persistSession: false } });
+    return (await auth.auth.signInWithPassword({ email, password })).error;
+  };
+
+  it('email 帶有外人算不出的標記；有人先註冊「專案 id 的 email」也不影響', async () => {
+    const p = await newProject();
+    const guessed = `runtime-${p.id}@${RUNTIME_EMAIL_DOMAIN}`;
+    const { data: attacker } = await db.auth.admin.createUser({ email: guessed, password: 'attacker-pass-1', email_confirm: true });
+    try {
+      const token = await runtimeAccessToken(db, p.id);
+      const { data } = await db.auth.getUser(token);
+      expect(data.user!.email).toBe(runtimeEmail(p.id));
+      expect(data.user!.email).not.toBe(guessed);
+      expect(await signInAs(guessed, 'attacker-pass-1')).toBeNull(); // 對方的帳號沒被動到
+    } finally {
+      await db.auth.admin.deleteUser(attacker.user!.id);
+    }
+  });
+
+  it('同 email 的帳號沒有 runtime 標記時拒絕接管，也不改它的密碼', async () => {
+    const p = await newProject();
+    const { data: other } = await db.auth.admin.createUser({ email: runtimeEmail(p.id), password: 'someone-else-1', email_confirm: true });
+    try {
+      await expect(ensureRuntimeAccount(db, p.id)).rejects.toThrow();
+      expect(await signInAs(runtimeEmail(p.id), 'someone-else-1')).toBeNull();
+    } finally {
+      await db.auth.admin.deleteUser(other.user!.id);
+    }
+  });
+
+  it('網站註冊拒絕 runtime 保留網域', async () => {
+    const form = new FormData();
+    form.set('email', `x@${RUNTIME_EMAIL_DOMAIN}`);
+    form.set('password', 'password-123');
+    expect(await signUp({}, form)).toEqual({ error: '這個 Email 網域不能註冊' });
   });
 });

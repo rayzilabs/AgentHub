@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
+import { RUNTIME_EMAIL_DOMAIN } from '@/lib/runtime-session';
 import { safeNext } from '@/lib/safe-next';
 import { adminDb } from '@/lib/supabase/admin';
 import { createSessionClient } from '@/lib/supabase/server';
@@ -29,6 +30,8 @@ export async function signIn(_prev: LoginState, formData: FormData): Promise<Log
 export async function signUp(_prev: LoginState, formData: FormData): Promise<LoginState> {
   const parsed = parse(formData);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+  // 保留給系統帳號（runtime 帳號）的網域
+  if (parsed.data.email.toLowerCase().endsWith(`@${RUNTIME_EMAIL_DOMAIN}`)) return { error: '這個 Email 網域不能註冊' };
   const { error: createError } = await adminDb().auth.admin.createUser({ ...parsed.data, email_confirm: true });
   if (createError) {
     console.error('[signUp]', createError.message);

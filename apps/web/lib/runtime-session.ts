@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
@@ -20,7 +20,11 @@ type Row = {
   expires_at: string | null;
 };
 
-const emailFor = (projectId: string) => `runtime-${projectId}@${RUNTIME_EMAIL_DOMAIN}`;
+/** email 帶一段用伺服器金鑰算出的標記：外人知道專案 id 也無法搶先註冊這個 email */
+export function runtimeEmail(projectId: string): string {
+  const tag = createHmac('sha256', env.supabaseSecretKey).update(`runtime-account:${projectId}`).digest('hex').slice(0, 12);
+  return `runtime-${projectId}-${tag}@${RUNTIME_EMAIL_DOMAIN}`;
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function isRuntimeAccount(user: { app_metadata?: Record<string, unknown> }): boolean {
@@ -55,7 +59,7 @@ export async function ensureRuntimeAccount(db: Db, projectId: string): Promise<{
   if (existing) return { userId: existing.user_id };
   const password = randomBytes(32).toString('base64url');
   const created = await db.auth.admin.createUser({
-    email: emailFor(projectId), password, email_confirm: true, app_metadata: { agenthub_runtime_project: projectId },
+    email: runtimeEmail(projectId), password, email_confirm: true, app_metadata: { agenthub_runtime_project: projectId },
   });
   let userId: string;
   if (created.error) {
@@ -65,9 +69,13 @@ export async function ensureRuntimeAccount(db: Db, projectId: string): Promise<{
       const row = await readRow(db, projectId);
       if (row) return { userId: row.user_id };
     }
-    // 帳號建立了但表沒寫入（例如上次中途失敗）：重設密碼後補寫
-    const found = await findUserIdByEmail(db, emailFor(projectId));
+    // 帳號建立了但表沒寫入（例如上次中途失敗）：確認真的是這個專案的 runtime 帳號，才重設密碼後補寫
+    const found = await findUserIdByEmail(db, runtimeEmail(projectId));
     if (!found) throw created.error;
+    const { data: existingUser } = await db.auth.admin.getUserById(found);
+    if (existingUser.user?.app_metadata?.agenthub_runtime_project !== projectId) {
+      throw new Error(`runtime 帳號的 email 已被其他帳號使用：${projectId}`);
+    }
     const { error } = await db.auth.admin.updateUserById(found, { password });
     if (error) throw error;
     userId = found;
@@ -104,7 +112,10 @@ export async function runtimeAccessToken(db: Db, projectId: string, now = Date.n
       return data.session.access_token;
     }
   }
-  const { data, error } = await auth.signInWithPassword({ email: emailFor(projectId), password: row.password });
+  // email 以帳號實際的為準（不重新計算，伺服器金鑰輪換後仍登得進去）
+  const { data: account } = await db.auth.admin.getUserById(row.user_id);
+  const email = account.user?.email ?? runtimeEmail(projectId);
+  const { data, error } = await auth.signInWithPassword({ email, password: row.password });
   if (error || !data.session) {
     console.error('[runtime-session] 無法取得通行證', projectId, error?.message);
     throw new HttpError(503, 'agent 環境暫時無法連線資料庫，請稍後再試');
