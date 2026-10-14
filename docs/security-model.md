@@ -42,7 +42,7 @@
 | 規則 | 狀態 |
 |---|---|
 | 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
-| 平台金鑰外洩時，影響只限一個專案 | 📝 子專案 1-C |
+| 平台金鑰外洩時，影響只限一個專案 | ✅ 1-C（2026-10-14）：Sprite 上已無平台金鑰；舊金鑰曾存在 Sprite 與開發電腦上，待輪換 |
 | 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared`；每個帳號有私人 `/tmp` | ✅ 2026-10-14 子專案 2 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
 | 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進 Sprite；取消租用後立即無法呼叫 | ✅ 自己架（3a，2026-10-14）；平台代管待 3b |
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
@@ -104,7 +104,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 
 | # | 子專案 | 狀態 | 文件 |
 |---|---|---|---|
-| 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；📝 C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
+| 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；✅ C 已上線（2026-10-14，改用專案專用 runtime 帳號） | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md`、`docs/superpowers/specs/2026-10-14-runtime-scoped-access-design.md` |
 | 2 | 顧問之間隔離 | ✅ 已上線（2026-10-14） | `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md` |
 | 3 | 遠端 MCP 的平台支援（閘道與通行證、自己架與平台代管、用量、版本、大量資料慣例） | ✅ 3a＋3c 已上線（2026-10-14）；3b 平台代管待做 | `docs/superpowers/specs/2026-10-14-remote-mcp-design.md` |
 | 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ✅ 2026-10-14 上線：MCP server 在 `agenthub-fintech-mcp.vercel.app`，正式環境經閘道驗收（13 次工具呼叫全部成功） | `agenthub-fintech-agents/docs/superpowers/specs/2026-10-14-fintech-remote-mcp-design.md` |
