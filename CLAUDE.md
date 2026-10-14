@@ -93,7 +93,7 @@ cd apps/web && pnpm exec tsx scripts/smoke.ts       # 冒煙測試，BASE_URL �
 ## 慣例
 
 - UI 文字、錯誤訊息、註解都用繁體中文；錯誤訊息要說清楚發生什麼、怎麼處理。
-- 設計 token 在 `apps/web/app/globals.css` 的 `@theme`（paper / surface / sunken / ink / muted / line / brand（填色）/ link（文字色）/ seal / ochre / sage、字級 14/16/20/28/40），深色模式在同檔 `prefers-color-scheme: dark` 重新定義同一組 token。標題用霞鶩文楷 TC，內文優先系統字（PingFang TC）、退回 Noto Sans TC。不要另外寫死色碼。
+- 設計 token 在 `apps/web/app/globals.css` 的 `@theme`（paper / surface / sunken / ink / muted / line / brand（填色）/ link（文字色）/ seal / ochre / sage、字級 14/16/20/28/40），深色模式在同檔 `:root[data-theme="dark"]` 重新定義同一組 token。預設淺色、不跟系統設定，只有導覽列的切換按鈕（`components/theme-toggle.tsx`，選擇存在 localStorage `theme`）會把 `<html>` 設成 `data-theme="dark"`；`layout.tsx` 的 inline script 在畫面出來前套用，避免閃白。要針對深色寫樣式用 Tailwind 的 `dark:`（已綁到 `data-theme`），不要用 `prefers-color-scheme`。標題用霞鶩文楷 TC，內文優先系統字（PingFang TC）、退回 Noto Sans TC。不要另外寫死色碼。
 - 視覺與動態依 Apple 設計原則（`docs/superpowers/plans/2026-10-03-apple-redesign.md`）：淺灰底上的白色群組（`.panel`、`.group-title`）、浮在內容上的用半透明材質（`.material`）、按下即回饋（`:active` 縮放）、會動的東西用 `motion/react` 的彈簧（預設臨界阻尼，`components/providers.tsx`），並尊重減少動態 / 透明度 / 高對比設定。
 - Next.js 16：用 `proxy.ts`（不是 middleware）、route params 是 Promise、背景工作用 `after()`。
 - AI SDK v7、`@fly/sprites`、Next 16 的 API 和舊版差很多，寫之前先用 context7 查文件。
