@@ -16,5 +16,16 @@ export default function setup() {
       const failed = results.find((r) => r.error);
       if (failed?.error) throw failed.error;
     }
+    // 測試專案隨使用者刪除後，留下的 runtime 帳號也要清掉（與 lib/runtime-session 的清理相同）
+    const { data } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const runtimeUsers = (data?.users ?? []).filter((u) => typeof u.app_metadata?.agenthub_runtime_project === 'string');
+    if (runtimeUsers.length > 0) {
+      const { data: alive } = await db.from('projects').select('id')
+        .in('id', runtimeUsers.map((u) => u.app_metadata.agenthub_runtime_project as string));
+      const aliveIds = new Set((alive ?? []).map((p) => p.id as string));
+      await Promise.all(runtimeUsers
+        .filter((u) => !aliveIds.has(u.app_metadata.agenthub_runtime_project as string))
+        .map((u) => db.auth.admin.deleteUser(u.id)));
+    }
   };
 }
