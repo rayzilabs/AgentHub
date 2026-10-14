@@ -5,7 +5,7 @@ import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { inject } from 'vitest';
 import type { Config } from '../src/config';
-import { createDb, type Db } from '../src/db';
+import { createDb, createUserDb, type Db } from '../src/db';
 import type { McpServerConfig, SkillMeta } from '../src/types';
 
 export function testDb(): Db {
@@ -119,4 +119,23 @@ export async function waitFor<T>(fn: () => Promise<T | undefined>, timeoutMs = 1
     if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
     await new Promise((r) => setTimeout(r, 100));
   }
+}
+
+/** 測試用：建立專案的 runtime 帳號並登入，回傳通行證（正式環境由 Vercel 的 lib/runtime-session 處理） */
+export async function runtimeToken(db: Db, projectId: string): Promise<string> {
+  const email = `runtime-${projectId}@runtime.agenthub.internal`;
+  const password = randomUUID();
+  const { error } = await db.auth.admin.createUser({
+    email, password, email_confirm: true, app_metadata: { agenthub_runtime_project: projectId },
+  });
+  if (error) throw error;
+  const auth = createDb(inject('supabaseUrl'), inject('supabasePublishableKey'));
+  const { data, error: signInError } = await auth.auth.signInWithPassword({ email, password });
+  if (signInError) throw signInError;
+  return data.session!.access_token;
+}
+
+/** 以 runtime 帳號通行證連線（與 Sprite 上的 runtime 相同） */
+export function runtimeDb(token: string): Db {
+  return createUserDb(inject('supabaseUrl'), inject('supabasePublishableKey'), token);
 }
