@@ -55,7 +55,7 @@ MCP 設定新增 `transport: 'remote'`：
 
 ### 2.4 閘道 `/api/mcp/[instanceId]/[name]`（Vercel 路由）
 
-1. 驗證專案通行證；查 `agent_instances`：存在、`role = 'consultant'`、`project_id` 與通行證相同。不符 → 401／403（取消租用後立即失效）。
+1. 驗證專案通行證；查 `agent_instances`：存在、`role = 'consultant'`、`project_id` 與通行證相同。通行證無效 → 401；顧問屬於別的專案 → 403；顧問不存在（含已移除、id 格式錯誤）→ 404（取消租用後立即失效）。
 2. 從伺服器端讀出這位顧問鎖定的遠端 MCP 目標（3a：創作者網址；3b：代管 Sprite 網址）。
 3. 簽創作者通行證：
 
@@ -76,7 +76,7 @@ MCP 設定新增 `transport: 'remote'`：
 ### 2.6 簽章金鑰與公鑰
 
 - ES256 私鑰放 Vercel 環境變數 `MCP_SIGNING_KEY`（PKCS8 PEM）；`kid` 取公鑰指紋。
-- `GET /.well-known/jwks.json` 回傳公鑰；輪換時新舊兩把並列一段時間。
+- `GET /.well-known/jwks.json` 回傳公鑰（可快取 5 分鐘）；輪換時把舊私鑰放進 `MCP_SIGNING_KEY_PREVIOUS`，新舊兩把並列一段時間後再移除。
 
 ### 2.7 創作者端驗證
 
@@ -127,7 +127,7 @@ MCP 設定新增 `transport: 'remote'`：
 | 情境 | 處理 |
 |---|---|
 | 專案通行證缺少、過期、專案不符 | 閘道回 401／403；runtime 把該 MCP 列為「目前無法使用」（現有警告機制） |
-| 顧問已被移出專案 | 閘道 403；用量不記 |
+| 顧問已被移出專案 | 閘道 404（顧問已不存在）；用量不記 |
 | 創作者 MCP 無回應／5xx | 閘道回 502，用量記 `ok = false` |
 | 代管 Sprite 喚醒中 | 閘道對 502／503 重試（沿用 `forwardChat` 的重試） |
 | 代管部署失敗 | 版本狀態 `failed`，日誌顯示給創作者，不可發布 |
