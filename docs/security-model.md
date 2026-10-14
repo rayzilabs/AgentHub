@@ -106,7 +106,7 @@ runtime 不再持有平台金鑰。Vercel 每次轉送對話時，附上一張**
 | 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；📝 C 待 Eric 確認 Supabase 簽章設定 | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md` |
 | 2 | 顧問之間隔離 | ✅ 已上線（2026-10-14） | `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md` |
 | 3 | 遠端 MCP 的平台支援（閘道與通行證、自己架與平台代管、用量、版本、大量資料慣例） | ✅ 3a＋3c 已上線（2026-10-14）；3b 平台代管待做 | `docs/superpowers/specs/2026-10-14-remote-mcp-design.md` |
-| 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ⏳ | — |
+| 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ✅ 2026-10-14 上線：MCP server 在 `agenthub-fintech-mcp.vercel.app`，正式環境經閘道驗收（13 次工具呼叫全部成功） | `agenthub-fintech-agents/docs/superpowers/specs/2026-10-14-fintech-remote-mcp-design.md` |
 
 ## 7. 已知缺口與待辦
 
