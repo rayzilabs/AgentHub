@@ -6,7 +6,7 @@ import {
   startDeploy, syncVersion, type DeployState, type HostedSpriteOps, type HostedVersion,
 } from '@/lib/services/hosted-mcp';
 import { createProject, deleteOwnProject, hireAgent } from '@/lib/services/projects';
-import { createTemplate, publishTemplate } from '@/lib/services/templates';
+import { createTemplate, publishTemplate, updateTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
 
 const db = testDb();
@@ -41,16 +41,29 @@ async function readVersion(id: string): Promise<HostedVersion> {
 
 function fakeSprites(state: DeployState = { phase: 'installing', log: 'pip install' }) {
   const calls: { fn: string; args: unknown[] }[] = [];
-  const ops: HostedSpriteOps & { state: DeployState; tools: { name: string; description?: string }[] } = {
+  const ops: HostedSpriteOps & {
+    state: DeployState; tools: { name: string; description?: string }[];
+    provisionDelayMs: number; provisionError: Error | null; listToolsError: Error | null;
+  } = {
     state,
     tools: [{ name: 'rate', description: '匯率' }],
+    provisionDelayMs: 0,
+    provisionError: null as Error | null,
+    listToolsError: null as Error | null,
     async provision(v: HostedVersion, env: Record<string, string>, bundleUrl: string) {
       calls.push({ fn: 'provision', args: [v.id, env, bundleUrl] });
+      if (ops.provisionDelayMs) await new Promise((r) => setTimeout(r, ops.provisionDelayMs));
+      if (ops.provisionError) throw ops.provisionError;
       return { spriteName: `agenthub-mcp-${v.id.replace(/-/g, '').slice(0, 12)}`, spriteUrl: 'https://fake-mcp.sprites.app' };
     },
     async readState(name: string) { calls.push({ fn: 'readState', args: [name] }); return ops.state; },
     async startService(name: string, start: string) { calls.push({ fn: 'startService', args: [name, start] }); },
-    async listTools(url: string, token: string) { calls.push({ fn: 'listTools', args: [url, token] }); return ops.tools; },
+    async listTools(url: string, token: string) {
+      calls.push({ fn: 'listTools', args: [url, token] });
+      if (ops.listToolsError) throw ops.listToolsError;
+      return ops.tools;
+    },
+    async serviceLog(name: string) { calls.push({ fn: 'serviceLog', args: [name] }); return 'ModuleNotFoundError: No module named requests'; },
     async applyEnv(name: string, env: Record<string, string>) { calls.push({ fn: 'applyEnv', args: [name, env] }); },
     async destroy(name: string) { calls.push({ fn: 'destroy', args: [name] }); },
   };
@@ -217,6 +230,44 @@ describe('代管版本：狀態推進', () => {
     expect(calls).toEqual([]);
   });
 
+  it('程式起不來：維持部署中，日誌附上程式自己的輸出', async () => {
+    vi.stubEnv('MCP_SIGNING_KEY', pem);
+    const { id } = await deployingVersion();
+    await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-a', sprite_url: 'https://a.sprites.app' }).eq('id', id);
+    const { ops } = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    ops.listToolsError = new Error('MCP 回應 502');
+    const v = await syncVersion(db, id, ops);
+    expect(v.status).toBe('deploying');
+    expect(v.log_tail).toContain('ModuleNotFoundError');
+    expect(v.log_tail).toContain('MCP 回應 502');
+    vi.unstubAllEnvs();
+  });
+
+  it('同時兩次同步只建立一次 Sprite；建立中的版本不重複建立', async () => {
+    const { t, id } = await deployingVersion();
+    const { error } = await db.storage.from('mcp-bundles').upload(`${t.id}/fin/1.zip`, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
+    if (error) throw error;
+    const { ops, calls } = fakeSprites();
+    ops.provisionDelayMs = 500;
+    await Promise.all([syncVersion(db, id, ops), syncVersion(db, id, ops)]);
+    expect(calls.filter((c) => c.fn === 'provision')).toHaveLength(1);
+    const v = await readVersion(id);
+    expect(v.sprite_name).toBe(`agenthub-mcp-${id.replace(/-/g, '').slice(0, 12)}`);
+    expect(v.sprite_url).toBe('https://fake-mcp.sprites.app');
+  });
+
+  it('建立 Sprite 失敗：failed 並保留 sprite_name，之後清理得到', async () => {
+    const { t, id } = await deployingVersion();
+    const { error } = await db.storage.from('mcp-bundles').upload(`${t.id}/fin/1.zip`, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
+    if (error) throw error;
+    const { ops } = fakeSprites();
+    ops.provisionError = new Error('Sprites API 500');
+    const v = await syncVersion(db, id, ops);
+    expect(v.status).toBe('failed');
+    expect(v.log_tail).toContain('建立代管環境失敗');
+    expect(v.sprite_name).toBe(`agenthub-mcp-${id.replace(/-/g, '').slice(0, 12)}`);
+  });
+
   it('不是 deploying 的版本原樣回傳', async () => {
     const creator = await seedUser(db);
     const t = await hostedTemplate(creator.id);
@@ -228,6 +279,43 @@ describe('代管版本：狀態推進', () => {
 });
 
 describe('代管版本：發布、下架、金鑰', () => {
+  it('等上傳的版本可以下架；過期的等上傳與逾時的部署不再擋住新版本', async () => {
+    const creator = await seedUser(db);
+    const t = await hostedTemplate(creator.id);
+    const { ops, calls } = fakeSprites();
+    const { version } = await createVersion(db, creator.id, t.id, 'fin');
+    expect((await retireVersion(db, creator.id, version.id, ops)).status).toBe('retired');
+    expect(calls).toEqual([]);
+
+    const stalePending = await insertVersion(t.id, 2, 'pending', { created_at: new Date(Date.now() - 3 * 3600_000).toISOString() });
+    const { version: v3 } = await createVersion(db, creator.id, t.id, 'fin');
+    expect(v3.version).toBe(3);
+    expect(await readVersion(stalePending)).toMatchObject({ status: 'failed', log_tail: '等待上傳逾時' });
+
+    await db.from('hosted_mcp_versions').update({
+      status: 'deploying', deploy_started_at: new Date(Date.now() - HOSTED_LIMITS.deployMs - 1000).toISOString(),
+    }).eq('id', v3.id);
+    expect((await createVersion(db, creator.id, t.id, 'fin')).version.version).toBe(4);
+    expect((await readVersion(v3.id)).status).toBe('failed');
+  });
+
+  it('已上架範本：修改時新增的代管 MCP 要有已發布版本；唯一的已發布版本不能下架', async () => {
+    const creator = await seedUser(db);
+    const t = await hostedTemplate(creator.id);
+    const v1 = await insertVersion(t.id, 1, 'published');
+    await publishTemplate(db, creator.id, t.id);
+    const servers = [
+      { name: 'fin', transport: 'remote' as const, hosted: true, required_secrets: [] },
+      { name: 'more', transport: 'remote' as const, hosted: true, required_secrets: [] },
+    ];
+    await expectStatus(updateTemplate(db, creator.id, t.id, { mcp_servers: servers }), 400, 'MCP「more」還沒有已發布的版本');
+
+    const { ops } = fakeSprites();
+    await expectStatus(retireVersion(db, creator.id, v1, ops), 409, '這是已上架範本唯一的已發布版本，請先發布新版本');
+    await insertVersion(t.id, 2, 'published');
+    expect((await retireVersion(db, creator.id, v1, ops)).status).toBe('retired');
+  });
+
   it('只有 ready 能發布', async () => {
     const creator = await seedUser(db);
     const t = await hostedTemplate(creator.id);
@@ -248,6 +336,8 @@ describe('代管版本：發布、下架、金鑰', () => {
     await publishTemplate(db, creator.id, t.id);
     const p = await createProject(db, renter.id, 'p');
     await hireAgent(db, renter.id, p.id, t.id, {});
+    // 租用鎖定版本 1 之後才發布版本 2：版本 1 不是唯一的已發布版本，擋下它的是「還有專案在用」
+    await insertVersion(t.id, 2, 'published');
     const { ops, calls } = fakeSprites();
     try {
       await expectStatus(retireVersion(db, creator.id, id, ops), 409, '還有專案在使用這個版本');
@@ -267,6 +357,8 @@ describe('代管版本：發布、下架、金鑰', () => {
     const t = await hostedTemplate(creator.id);
     await insertVersion(t.id, 1, 'published', { sprite_name: 'agenthub-mcp-p', sprite_url: 'https://p.sprites.app' });
     await insertVersion(t.id, 2, 'failed', { sprite_name: 'agenthub-mcp-f', sprite_url: 'https://f.sprites.app' });
+    // 部署中、Sprite 已建好：env 也要改寫，程式啟動時才拿得到新金鑰
+    await insertVersion(t.id, 3, 'deploying', { sprite_name: 'agenthub-mcp-d', sprite_url: 'https://d.sprites.app', deploy_started_at: new Date().toISOString() });
     const { ops, calls } = fakeSprites();
     await expectStatus(setHostedSecrets(db, creator.id, t.id, 'fin', { api_key: 'x' }, ops), 400);
     await expectStatus(setHostedSecrets(db, creator.id, t.id, 'fin', { PORT: '1' }, ops), 400);
@@ -278,8 +370,8 @@ describe('代管版本：發布、下架、金鑰', () => {
     await setHostedSecrets(db, creator.id, t.id, 'fin', { API_KEY: 'v2' }, ops);
     const { data } = await db.rpc('get_hosted_mcp_secrets', { p_template_id: t.id, p_mcp_name: 'fin' });
     expect(data).toEqual([{ key: 'API_KEY', value: 'v2' }, { key: 'OTHER', value: 'o' }]);
-    expect(calls.map((c) => c.args[0])).toEqual(['agenthub-mcp-p', 'agenthub-mcp-p']);
-    expect(calls.at(-1)!.args[1]).toEqual({
+    expect(calls.map((c) => c.args[0]).sort()).toEqual(['agenthub-mcp-d', 'agenthub-mcp-d', 'agenthub-mcp-p', 'agenthub-mcp-p']);
+    expect(calls.filter((c) => c.args[0] === 'agenthub-mcp-p').at(-1)!.args[1]).toEqual({
       API_KEY: 'v2', OTHER: 'o', PORT: '8080',
       AGENTHUB_MCP_URL: 'https://p.sprites.app/mcp', AGENTHUB_PLATFORM_URL: 'https://platform.test',
     });

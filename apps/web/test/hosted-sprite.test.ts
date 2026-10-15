@@ -125,7 +125,9 @@ describe('createHostedSpriteOps', () => {
     expect(envCmd).toContain('sudo chown root:mcp /srv/agenthub-mcp/env.sh.new');
     expect(envCmd).toContain('sudo chmod 440 /srv/agenthub-mcp/env.sh.new');
     // 部署腳本（含一次性下載網址）只寫在 deploy/
-    expect(scripts[2]).toContain('> /srv/agenthub-mcp/deploy/deploy.sh');
+    // 先寫暫存檔再 mv：不改寫部署服務正在讀的那個檔
+    expect(scripts[2]).toContain('> /srv/agenthub-mcp/deploy/deploy.sh.tmp');
+    expect(scripts[2]).toContain('mv -f /srv/agenthub-mcp/deploy/deploy.sh.tmp /srv/agenthub-mcp/deploy/deploy.sh');
   });
 
   it('readState：解析 state.json 與日誌；還沒有 state 時視為安裝中', async () => {
@@ -155,15 +157,39 @@ describe('createHostedSpriteOps', () => {
     expect(second.calls.filter((c) => c.startsWith('create:'))).toEqual([]);
   });
 
-  it('applyEnv：改寫 env.sh 後重啟 mcp；destroy 只刪 agenthub- 開頭的 Sprite', async () => {
+  it('applyEnv：改寫 env.sh；服務已存在才重啟（部署中還沒有服務）；destroy 只刪 agenthub- 開頭的 Sprite', async () => {
     const { client, calls, sprite } = fakeClient();
     client.getSprite = (async () => sprite) as never;
     const ops = createHostedSpriteOps({ client: client as never, spritesToken: 't' });
+    await ops.applyEnv('agenthub-mcp-x', { API_KEY: 'v1' });
+    expect(calls.slice(-2)).toEqual(['env', 'get:mcp']);
+
+    const running = { ...sprite, getService: async (name: string) => { calls.push(`get:${name}`); return { name }; } };
+    client.getSprite = (async () => running) as never;
     await ops.applyEnv('agenthub-mcp-x', { API_KEY: 'v2' });
-    expect(calls.slice(-2)).toEqual(['env', 'restart:mcp']);
+    expect(calls.slice(-3)).toEqual(['env', 'get:mcp', 'restart:mcp']);
     await ops.destroy('agenthub-mcp-x');
     expect(calls.at(-1)).toBe('delete-sprite:agenthub-mcp-x');
     await expect(ops.destroy('other')).rejects.toThrow('拒絕刪除');
+  });
+});
+
+describe('serviceLog', () => {
+  it('取 mcp 服務最後 100 行的 stdout／stderr', async () => {
+    const seen: unknown[] = [];
+    const sprite = {
+      getServiceLogs: async (name: string, opts: unknown) => {
+        seen.push([name, opts]);
+        return {
+          processAll: async (fn: (e: { type: string; data?: string }) => void) => {
+            for (const e of [{ type: 'started' }, { type: 'stdout', data: 'booting\n' }, { type: 'stderr', data: 'Traceback\n' }, { type: 'exit' }]) fn(e);
+          },
+        };
+      },
+    };
+    const ops = createHostedSpriteOps({ client: { getSprite: async () => sprite } as never, spritesToken: 't' });
+    expect(await ops.serviceLog('agenthub-mcp-x')).toBe('booting\nTraceback');
+    expect(seen).toEqual([['mcp', { lines: 100, duration: '1s' }]]);
   });
 });
 

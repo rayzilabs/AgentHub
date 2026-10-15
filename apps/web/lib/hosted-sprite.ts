@@ -1,6 +1,6 @@
 import { SpritesClient, type Sprite } from '@fly/sprites';
 import { env } from '@/lib/env';
-import type { DeployState, HostedSpriteOps, HostedVersion } from '@/lib/services/hosted-mcp';
+import { hostedSpriteName, type DeployState, type HostedSpriteOps, type HostedVersion } from '@/lib/services/hosted-mcp';
 import { isNotFound, retryTransient, shellQuote } from '@/lib/sprites';
 
 const ROOT = '/srv/agenthub-mcp';
@@ -12,9 +12,7 @@ export const HOSTED_RUN = '/usr/local/bin/agenthub-mcp-run';
 /** 創作者的檔案與程式一律經過這裡：獨立掛載命名空間 + 降權成 mcp */
 const SANDBOXED = `sudo -n unshare --mount --propagation private -- ${HOSTED_RUN}`;
 
-export function hostedSpriteName(versionId: string): string {
-  return `agenthub-mcp-${versionId.replace(/-/g, '').slice(0, 12)}`;
-}
+export { hostedSpriteName };
 
 /**
  * 以 root 在獨立掛載命名空間執行：遮住 Sprite 內部 API 的 socket，降權成 mcp，清空環境後才載入金鑰。
@@ -136,9 +134,15 @@ export function deployScript(bundleUrl: string): string {
   ].join('\n');
 }
 
+/** 先寫暫存檔再 mv（換新的 inode）：不改寫部署服務的 bash 正在逐段讀取的那個檔 */
 function writeDeployCommand(script: string): string {
   const b64 = Buffer.from(script).toString('base64');
-  return `set -eu\nprintf '%s' '${b64}' | base64 -d > ${DEPLOY_SCRIPT}\nchmod 700 ${DEPLOY_SCRIPT}`;
+  return [
+    'set -eu',
+    `printf '%s' '${b64}' | base64 -d > ${DEPLOY_SCRIPT}.tmp`,
+    `chmod 700 ${DEPLOY_SCRIPT}.tmp`,
+    `mv -f ${DEPLOY_SCRIPT}.tmp ${DEPLOY_SCRIPT}`,
+  ].join('\n');
 }
 
 function parseState(stdout: string): DeployState {
@@ -262,9 +266,26 @@ export function createHostedSpriteOps(
       });
     },
 
+    async serviceLog(name: string) {
+      const s = await sprite(name);
+      const logs = await s.getServiceLogs('mcp', { lines: 100, duration: '1s' });
+      const out: string[] = [];
+      await logs.processAll((e) => {
+        if ((e.type === 'stdout' || e.type === 'stderr') && e.data) out.push(e.data);
+      });
+      return out.join('').trimEnd();
+    },
+
     async applyEnv(name: string, vars: Record<string, string>) {
       const s = await sprite(name);
       await s.execFile('bash', ['-lc', writeEnvCommand(vars)]);
+      // 部署中還沒有 mcp 服務：寫好 env.sh 就夠了，啟動時會讀到
+      try {
+        await s.getService('mcp');
+      } catch (e) {
+        if (isNotFound(e)) return;
+        throw e;
+      }
       const logs = await s.restartService('mcp', '5s');
       await logs.processAll(() => {});
     },

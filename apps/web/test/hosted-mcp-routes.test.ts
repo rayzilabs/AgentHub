@@ -14,6 +14,7 @@ vi.mock('@/lib/hosted-sprite', () => ({
     readState: async () => { hoisted.calls.push('readState'); return { phase: 'installing', log: 'pip' }; },
     startService: async () => { hoisted.calls.push('startService'); },
     listTools: async () => [],
+    serviceLog: async () => '',
     applyEnv: async () => { hoisted.calls.push('applyEnv'); },
     destroy: async () => { hoisted.calls.push('destroy'); },
   }),
@@ -103,7 +104,7 @@ describe('代管 MCP API', () => {
     expect(hoisted.calls).toEqual(['provision', 'readState']);
 
     const read = await (await readRoute(req(creatorToken), ctx(vp))).json();
-    expect(read).toMatchObject({ status: 'deploying', sprite_name: 'agenthub-mcp-fake', log_tail: 'pip' });
+    expect(read).toMatchObject({ status: 'deploying', sprite_name: `agenthub-mcp-${version.id.replace(/-/g, '').slice(0, 12)}`, log_tail: 'pip' });
     expect(hoisted.calls.at(-1)).toBe('readState');
     expect((await retireRoute(req(creatorToken, 'DELETE'), ctx(vp))).status).toBe(409);
   });

@@ -117,8 +117,20 @@ async function processSkillsUpload(db: Db, id: string): Promise<{ skills_zip_pat
   return { skills_zip_path: finalPath, skills };
 }
 
+/** 上架中的範本，每個平台代管 MCP 都要有已發布的版本（否則市集上看得到、卻租用不了） */
+async function assertHostedPublished(db: Db, id: string, servers: McpServer[]): Promise<void> {
+  for (const s of servers) {
+    if (s.transport !== 'remote' || !s.hosted) continue;
+    const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
+      .eq('template_id', id).eq('mcp_name', s.name).eq('status', 'published');
+    if (error) throw error;
+    if (!count) throw new HttpError(400, `MCP「${s.name}」還沒有已發布的版本`);
+  }
+}
+
 export async function updateTemplate(db: Db, userId: string, id: string, patch: TemplatePatch): Promise<TemplateRow> {
-  await getOwnTemplate(db, userId, id);
+  const template = await getOwnTemplate(db, userId, id);
+  if (template.status === 'published' && patch.mcp_servers) await assertHostedPublished(db, id, patch.mcp_servers);
   const { process_upload, ...fields } = patch;
   const changes: Record<string, unknown> = { ...fields, updated_at: new Date().toISOString() };
   if (process_upload) Object.assign(changes, await processSkillsUpload(db, id));
@@ -130,13 +142,7 @@ export async function updateTemplate(db: Db, userId: string, id: string, patch: 
 export async function publishTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
   const template = await getOwnTemplate(db, userId, id);
   if (!template.system_prompt.trim()) throw new HttpError(400, '請先填寫 system prompt');
-  for (const s of template.mcp_servers) {
-    if (s.transport !== 'remote' || !s.hosted) continue;
-    const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
-      .eq('template_id', id).eq('mcp_name', s.name).eq('status', 'published');
-    if (error) throw error;
-    if (!count) throw new HttpError(400, `MCP「${s.name}」還沒有已發布的版本`);
-  }
+  await assertHostedPublished(db, id, template.mcp_servers);
   const { data, error } = await db
     .from('agent_templates')
     .update({ status: 'published', updated_at: new Date().toISOString() })
