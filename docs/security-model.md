@@ -139,6 +139,6 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 ## 7. 已知缺口與待辦
 
 - 單一顧問模式的原始工具輸入輸出會送到瀏覽器（見第 3 節）。
-- 平台代管 MCP：閘道對 502／503 會重送 `tools/call`，有副作用的工具在程式中途崩潰時可能執行多次；`mcp-bundles` 尚未設檔案大小上限；失敗版本的清理（`hosted-mcp.ts cleanup-failed`）尚未排程。
+- 平台代管 MCP：`mcp-bundles` 尚未設檔案大小上限（大小在開始部署時檢查）。閘道對 `tools/call` 不重送（先以不帶通行證的 HEAD 叫醒 Sprite），失敗版本與孤兒套件由 Vercel 每日排程清理（需設定 `CRON_SECRET`）。
 - 2026-10-13 之前，agent 讀得到每台 Sprite `.env` 裡的平台金鑰且可 sudo 成 root；A 上線後已封住，但金鑰仍存在 `.env`（只有 runtime 讀得到），C 上線後才會移除。
 - 子專案 1 上線前，平台金鑰已存在每台 Sprite 的 `.env`；全部重新佈建後應輪換 Supabase secret key 與 Vertex 金鑰。

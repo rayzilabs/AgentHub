@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { cleanupFailed, parseArgs } from '../scripts/hosted-mcp';
+import { randomUUID } from 'node:crypto';
+import { parseArgs } from '../scripts/hosted-mcp';
 import { createTemplate } from '@/lib/services/templates';
-import { parseMcpJson, type HostedSpriteOps } from '@/lib/services/hosted-mcp';
+import { cleanupFailed, parseMcpJson, removeOrphanBundles, type HostedSpriteOps } from '@/lib/services/hosted-mcp';
 import { seedUser, testDb } from './helpers';
 
 const examples = fileURLToPath(new URL('../../../docs/creator/examples/', import.meta.url));
@@ -60,5 +61,23 @@ describe('營運腳本 hosted-mcp.ts', () => {
     expect(destroyed.sort()).toEqual(['agenthub-mcp-leak', 'agenthub-mcp-old']);
     const { data } = await db.from('hosted_mcp_versions').select('version, sprite_name').eq('template_id', t.id).order('version');
     expect(data!.map((r) => r.sprite_name)).toEqual([null, 'agenthub-mcp-new', null, 'agenthub-mcp-live']);
+  });
+
+  it('removeOrphanBundles：刪掉範本已不存在的套件，留下還在的範本的套件', async () => {
+    const db = testDb();
+    const creator = await seedUser(db);
+    const t = await createTemplate(db, creator.id, { name: 'x', description: '', category: '', system_prompt: 'p', mcp_servers: [] });
+    const orphan = randomUUID();
+    const bucket = db.storage.from('mcp-bundles');
+    for (const p of [`${t.id}/fin/1.zip`, `${orphan}/fin/1.zip`, `${orphan}/fin/2.zip`]) {
+      const { error } = await bucket.upload(p, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
+      if (error) throw error;
+    }
+    const removed = await removeOrphanBundles(db);
+    expect(removed).toEqual(expect.arrayContaining([`${orphan}/fin/1.zip`, `${orphan}/fin/2.zip`]));
+    expect(removed).not.toContain(`${t.id}/fin/1.zip`);
+    expect((await bucket.list(t.id)).data!.map((f) => f.name)).toEqual(['fin']);
+    expect((await bucket.list(orphan)).data).toEqual([]);
+    await bucket.remove([`${t.id}/fin/1.zip`]);
   });
 });

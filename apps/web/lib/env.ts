@@ -23,6 +23,8 @@ export const env = {
     }
     return secret;
   },
+  /** Vercel 排程呼叫 /api/cron/* 時帶的密鑰；未設定時排程路由一律拒絕 */
+  get cronSecret() { return process.env.CRON_SECRET || undefined; },
   get mcpSigningKey() { return required('MCP_SIGNING_KEY'); },
   /** 輪換簽章金鑰時，舊私鑰在這裡放一段時間，讓公鑰網址新舊並列 */
   get mcpSigningKeyPrevious() { return process.env.MCP_SIGNING_KEY_PREVIOUS || undefined; },

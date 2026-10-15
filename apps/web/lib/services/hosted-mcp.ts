@@ -9,6 +9,8 @@ export const HOSTED_LIMITS = { publishedPerMcp: 3, spritesPerCreator: 10, bundle
 const BUCKET = 'mcp-bundles';
 /** Supabase 簽名上傳網址的有效期；超過還沒上傳的版本視為放棄 */
 const UPLOAD_TTL_MS = 2 * 3600_000;
+/** 失敗的版本保留 Sprite 這麼久，方便創作者查看 */
+const KEEP_FAILED_MS = 24 * 3600_000;
 const LOG_LINES = 100;
 /** 平台注入的變數；AGENTHUB_ 開頭整個保留給平台 */
 const isReservedKey = (key: string) => key === 'PORT' || key.startsWith('AGENTHUB_');
@@ -297,4 +299,50 @@ export async function setHostedSecrets(
   for (const v of running as { sprite_name: string; sprite_url: string }[]) {
     await sprites.applyEnv(v.sprite_name, await hostedEnv(db, templateId, mcpName, v.sprite_url));
   }
+}
+
+/** opts.templateId 只給測試用：測試打正式資料庫，不能碰到真實版本 */
+export async function cleanupFailed(
+  db: Db, ops: HostedSpriteOps, opts: { templateId?: string; now?: number } = {},
+): Promise<string[]> {
+  const cutoff = new Date((opts.now ?? Date.now()) - KEEP_FAILED_MS).toISOString();
+  let query = db.from('hosted_mcp_versions').select('id, sprite_name')
+    .not('sprite_name', 'is', null)
+    .or(`status.eq.retired,and(status.eq.failed,deploy_started_at.lt.${cutoff})`);
+  if (opts.templateId) query = query.eq('template_id', opts.templateId);
+  const { data, error } = await query;
+  if (error) throw error;
+  const done: string[] = [];
+  for (const v of data as { id: string; sprite_name: string }[]) {
+    await ops.destroy(v.sprite_name);
+    const { error: updateError } = await db.from('hosted_mcp_versions').update({ sprite_name: null }).eq('id', v.id);
+    if (updateError) throw updateError;
+    done.push(v.sprite_name);
+  }
+  return done;
+}
+
+/** 範本刪除時版本會跟著刪，但 Storage 裡的套件不會；刪掉範本已不存在的套件 */
+export async function removeOrphanBundles(db: Db): Promise<string[]> {
+  const bucket = db.storage.from(BUCKET);
+  const { data: top, error } = await bucket.list('', { limit: 1000 });
+  if (error) throw error;
+  const folders = (top ?? []).map((f) => f.name).filter((n) => /^[0-9a-f-]{36}$/i.test(n));
+  if (folders.length === 0) return [];
+  const { data: templates, error: templateError } = await db.from('agent_templates').select('id').in('id', folders);
+  if (templateError) throw templateError;
+  const alive = new Set((templates ?? []).map((t) => t.id as string));
+  const paths: string[] = [];
+  for (const folder of folders.filter((f) => !alive.has(f))) {
+    const { data: mcps } = await bucket.list(folder, { limit: 1000 });
+    for (const m of mcps ?? []) {
+      const { data: files } = await bucket.list(`${folder}/${m.name}`, { limit: 1000 });
+      for (const f of files ?? []) paths.push(`${folder}/${m.name}/${f.name}`);
+    }
+  }
+  if (paths.length) {
+    const { error: removeError } = await bucket.remove(paths);
+    if (removeError) throw removeError;
+  }
+  return paths;
 }

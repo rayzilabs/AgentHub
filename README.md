@@ -84,6 +84,7 @@ docs/superpowers/      規格、實作計畫、production 驗證紀錄
 | `RUNTIME_TOKEN_SECRET` | 簽專案通行證（HS256，至少 32 個字元的隨機值；太短視為未設定）。**必填**：runtime 用它呼叫模型（平台代理）與 remote 型 MCP，沒設定時對話回 503 |
 | `MCP_SIGNING_KEY` | 簽創作者通行證的 ES256 私鑰（P-256，PKCS8 PEM）；公鑰公開在 `/.well-known/jwks.json` |
 | `MCP_SIGNING_KEY_PREVIOUS` | 選填。輪換金鑰時放舊私鑰，公鑰網址會新舊並列，創作者端快取的舊公鑰仍能驗證 |
+| `CRON_SECRET` | 只在 Vercel 設定。每日排程 `/api/cron/hosted-cleanup`（清理失敗的代管 Sprite 與孤兒套件）用它驗證；沒設定時排程路由回 503 |
 | `PLATFORM_URL` | 選填。寫進 Sprite 的平台網址，runtime 用它連閘道；預設是 production 網址 |
 
 `RUNTIME_TOKEN_SECRET` 必填；`MCP_SIGNING_KEY`、`MCP_SIGNING_KEY_PREVIOUS`、`PLATFORM_URL` 只有用到 remote 型 MCP 時才需要。產生金鑰：
@@ -159,7 +160,7 @@ cd apps/web && pnpm exec tsx scripts/redeploy-runtime.ts  # 更新所有已就�
 ```bash
 cd apps/web
 pnpm exec tsx scripts/hosted-mcp.ts disable <版本 id>   # 停用：停掉程式，閘道改回 503（濫用或費用異常時）
-pnpm exec tsx scripts/hosted-mcp.ts cleanup-failed      # 刪除失敗超過 24 小時、以及下架後沒刪成功的代管 Sprite
+pnpm exec tsx scripts/hosted-mcp.ts cleanup-failed      # 刪除失敗超過 24 小時、以及下架後沒刪成功的代管 Sprite（Vercel 每天也會自動執行）
 ```
 
 ## Demo 資料
@@ -212,7 +213,7 @@ description: 用 5P 架構評估中小企業授信案件
 
 - **Sprite 上沒有平台金鑰**：runtime 用專案專用帳號的通行證存取資料庫、模型走平台代理（見 [安全模型](docs/security-model.md)）。舊金鑰曾存在 Sprite 上，尚待輪換。沒有上架審核和限流。
 - **遠端 MCP 單次工具呼叫最長 300 秒**。
-- **平台代管 MCP**：目前只有 API，創作者頁面尚未完成；部署最長 10 分鐘、套件最大 50 MB、每個 MCP 最多 3 個已發布版本、每位創作者最多 10 台代管機器；失敗版本的清理需手動執行營運腳本。
+- **平台代管 MCP**：目前只有 API，創作者頁面尚未完成；部署最長 10 分鐘、套件最大 50 MB、每個 MCP 最多 3 個已發布版本、每位創作者最多 10 台代管機器。代管機器休眠時，工具呼叫前會先叫醒（多約 0.4 秒），工具呼叫本身不重送。
 - **每次 run 最長 15 分鐘**：快到時會收尾並交出部分結果，不保證完成所有派工。
 - **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，輪詢時一樣看得到進度。
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。

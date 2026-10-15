@@ -16,6 +16,9 @@ export default function setup() {
       const failed = results.find((r) => r.error);
       if (failed?.error) throw failed.error;
     }
+    // 測試範本隨使用者刪除後，Storage 裡的代管 MCP 套件不會跟著刪
+    const { removeOrphanBundles } = await import('@/lib/services/hosted-mcp');
+    await removeOrphanBundles(db as never);
     // 測試專案隨使用者刪除後，留下的 runtime 帳號也要清掉（與 lib/runtime-session 的清理相同）
     const { data } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
     const runtimeUsers = (data?.users ?? []).filter((u) => typeof u.app_metadata?.agenthub_runtime_project === 'string');
