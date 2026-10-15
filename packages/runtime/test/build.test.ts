@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readUIMessageStream } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
@@ -48,8 +49,8 @@ describe('buildConsultantInstructions', () => {
     });
     expect(text).toContain('你是法務顧問。');
     expect(text).toContain('/agents/x');
-    expect(text).toContain('/shared/財報.pdf');
-    expect(text).toContain('審合約：檢查合約風險（完整說明：/agents/x/skills/contract/SKILL.md）');
+    expect(text).toContain(path.join('/shared', '財報.pdf'));
+    expect(text).toContain(`審合約：檢查合約風險（完整說明：${path.join('/agents/x/skills', 'contract', 'SKILL.md')}）`);
     expect(text).toContain('- [專案] 客戶偏好保守');
     expect(text).toContain('MCP「finmind」目前無法使用');
   });
@@ -185,7 +186,7 @@ describe('buildManagerInstructions', () => {
     expect(text).toContain('assign_task');
     expect(text).toContain('convene_discussion');
     for (const h of SUMMARY_HEADINGS) expect(text).toContain(h);
-    expect(text).toContain('/shared/需求.md');
+    expect(text).toContain(path.join('/shared', '需求.md'));
     expect(text).toContain('（目前沒有記憶）');
   });
 });

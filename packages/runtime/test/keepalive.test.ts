@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
@@ -5,8 +6,14 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startKeepAlive } from '../src/keepalive';
 
+// Windows 不能在一般路徑開 Unix socket，改用 named pipe
+async function sockPath() {
+  if (process.platform === 'win32') return `\\\\.\\pipe\\ka-${randomUUID()}`;
+  return path.join(await mkdtemp(path.join(os.tmpdir(), 'ka-')), 'api.sock');
+}
+
 async function listen(handler: http.RequestListener) {
-  const sock = path.join(await mkdtemp(path.join(os.tmpdir(), 'ka-')), 'api.sock');
+  const sock = await sockPath();
   const server = http.createServer(handler);
   await new Promise<void>((resolve) => server.listen(sock, resolve));
   const close = async () => {
@@ -22,7 +29,7 @@ describe('startKeepAlive', () => {
   });
 
   it('開始時登記、定期更新、結束時取消', async () => {
-    const sock = path.join(await mkdtemp(path.join(os.tmpdir(), 'ka-')), 'api.sock');
+    const sock = await sockPath();
     const calls: string[] = [];
     const server = http.createServer((req, res) => {
       let body = '';

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server';
+import { skillsDir } from '../src/sync';
 import type { Db } from '../src/db';
 import {
   seedConsultant, seedManager, seedProject, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
@@ -123,9 +124,10 @@ describe('POST /chat', () => {
     const model = mockModel(textTurn('好'));
     await (await post(app(env, model), { thread_id: env.threadId, text: '看合約' })).text();
     await waitForRunDone(db, env.threadId);
-    const skillFile = path.join(env.roots.agentsRoot, env.consultantId, 'skills', 'contract', 'SKILL.md');
+    const skillFile = path.join(skillsDir(env.roots.agentsRoot, env.consultantId), 'contract', 'SKILL.md');
     await expect(stat(skillFile)).resolves.toBeTruthy();
-    expect(promptText(model)).toContain(skillFile);
+    // promptText 是 JSON 字串，Windows 路徑的反斜線會被跳脫
+    expect(promptText(model)).toContain(JSON.stringify(skillFile).slice(1, -1));
   });
 
   it('瀏覽器中途斷線，run 仍會跑完並寫入 final', async () => {
