@@ -34,6 +34,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const following = useRef(true);
   const textarea = useRef<HTMLTextAreaElement>(null);
   // 從伺服器載入的訊息不播進場動畫，只有這次畫面上新出現的訊息才播
   const [known, setKnown] = useState<ReadonlySet<string>>(() => new Set());
@@ -159,7 +160,22 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     return () => { alive.current = false; };
   }, [threadId, setMessages, pollUntilDone, markKnown]);
 
+  // 使用者往上捲就停止跟到最新；捲回底部附近再恢復。只看「往上」才停，避免平滑捲動途中被誤判
   useEffect(() => {
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      const nearBottom = (bottom.current?.getBoundingClientRect().top ?? 0) <= window.innerHeight + 80;
+      if (nearBottom) following.current = true;
+      else if (y < lastY) following.current = false;
+      lastY = y;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!following.current) return;
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     bottom.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'end' });
   }, [messages]);
@@ -187,6 +203,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     setStartedAt(Date.now());
     setUpdatedAt(null);
     setInput('');
+    following.current = true;
     void sendMessage({ text });
   }
 
