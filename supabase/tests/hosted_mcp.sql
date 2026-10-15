@@ -55,6 +55,26 @@ begin
   end;
 end $$;
 
+-- 下架：還有顧問在用 → 55000；沒人用 → retired 並回傳原本的狀態；不允許的狀態 → 55000
+do $$ begin
+  begin
+    perform public.retire_hosted_mcp_version('00000000-0000-0000-0000-0000000003e1', array['published']);
+    assert false, '還有顧問在用的版本不能下架';
+  exception when sqlstate '55000' then
+    assert sqlerrm = 'hosted version in use', sqlerrm;
+  end;
+  insert into public.hosted_mcp_versions (id, template_id, mcp_name, version, status, bundle_path) values
+    ('00000000-0000-0000-0000-0000000003e3', '00000000-0000-0000-0000-0000000003a1', 'fin', 3, 'ready', 'a/fin/3.zip');
+  begin
+    perform public.retire_hosted_mcp_version('00000000-0000-0000-0000-0000000003e3', array['published']);
+    assert false, '狀態不在允許清單不能下架';
+  exception when sqlstate '55000' then
+    assert sqlerrm like 'hosted version status%', sqlerrm;
+  end;
+  assert public.retire_hosted_mcp_version('00000000-0000-0000-0000-0000000003e3', array['ready', 'published']) = 'ready', '回傳原本的狀態';
+  assert (select status from public.hosted_mcp_versions where id = '00000000-0000-0000-0000-0000000003e3') = 'retired', '標成 retired';
+end $$;
+
 -- 金鑰：更新而不是重複
 select public.set_hosted_mcp_secret('00000000-0000-0000-0000-0000000003a1', 'fin', 'API_KEY', 'v1');
 select public.set_hosted_mcp_secret('00000000-0000-0000-0000-0000000003a1', 'fin', 'API_KEY', 'v2');
@@ -74,6 +94,8 @@ do $$ begin
   begin perform public.get_hosted_mcp_secrets('00000000-0000-0000-0000-0000000003a1', 'fin'); assert false, '不能取金鑰';
   exception when insufficient_privilege then null; end;
   begin perform public.set_hosted_mcp_secret('00000000-0000-0000-0000-0000000003a1', 'fin', 'X', 'y'); assert false, '不能寫金鑰';
+  exception when insufficient_privilege then null; end;
+  begin perform public.retire_hosted_mcp_version('00000000-0000-0000-0000-0000000003e1', array['published']); assert false, '不能下架';
   exception when insufficient_privilege then null; end;
 end $$;
 
