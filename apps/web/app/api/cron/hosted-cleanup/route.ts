@@ -10,9 +10,16 @@ export const maxDuration = 300;
 export const GET = route(async (req: Request) => {
   const secret = env.cronSecret;
   if (!secret) throw new HttpError(503, '未設定 CRON_SECRET');
-  if (req.headers.get('authorization') !== `Bearer ${secret}`) throw new HttpError(401, '未授權');
+  const auth = req.headers.get('authorization');
+  if (auth !== `Bearer ${secret}`) {
+    // Vercel 的 Runtime Logs 只列出有輸出的請求；印出原因（不印密鑰）才查得到排程有沒有帶對
+    console.warn(`[cron] hosted-cleanup 拒絕：${auth ? '密鑰不符' : '沒有帶密鑰'}`);
+    throw new HttpError(401, '未授權');
+  }
   const db = adminDb();
   const sprites = await cleanupFailed(db, createHostedSpriteOps());
   const bundles = await removeOrphanBundles(db);
+  const names = sprites.length ? `（${sprites.join(', ')}）` : '';
+  console.log(`[cron] hosted-cleanup 完成：刪除 Sprite ${sprites.length} 台${names}、套件 ${bundles.length} 個`);
   return { sprites, bundles };
 });
