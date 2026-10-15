@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { FileButton } from '@/components/file-button';
+import { HostedMcpPanel } from '@/components/hosted-mcp-panel';
 import { api } from '@/lib/client-api';
-import { emptyDraft, fromDraft, toDraft, type McpDraft } from '@/lib/mcp-draft';
+import { emptyDraft, fromDraft, isSavedHosted, toDraft, type McpDraft } from '@/lib/mcp-draft';
 import type { TemplateRow } from '@/lib/services/templates';
 
 export function TemplateEditor({ initial }: { initial: TemplateRow }) {
@@ -116,7 +117,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
 
       <section aria-labelledby="mcp-title">
         <h2 id="mcp-title" className="group-title">工具（MCP）</h2>
-        <p className="mb-3 px-1 text-sm text-muted">需要金鑰的工具，租用的人會在加入時填自己的金鑰。</p>
+        <p className="mb-3 px-1 text-sm text-muted">需要金鑰的工具，租用的人會在加入時填自己的金鑰；交給平台代管的工具，金鑰由你設定。</p>
         <div className="space-y-4">
           {mcp.map((d, i) => {
             const update = (patch: Partial<McpDraft>) => setMcp(mcp.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -142,7 +143,9 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                       <input disabled={busy} className="field" placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
                   </div>
                 ) : d.transport === 'hosted' ? (
-                  <p className="hint">儲存後就能在這裡設定金鑰、上傳程式並部署。</p>
+                  isSavedHosted(t.mcp_servers, d.name.trim())
+                    ? <HostedMcpPanel templateId={t.id} mcpName={d.name.trim()} />
+                    : <p className="hint">先按「儲存」，就能在這裡設定金鑰、上傳程式並部署。</p>
                 ) : d.transport === 'remote' ? (
                   <label className="block"><span className="label">網址</span>
                     <input disabled={busy} className="field" placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} />
