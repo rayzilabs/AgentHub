@@ -14,6 +14,14 @@ describe('McpServerSchema', () => {
     }).success).toBe(false);
   });
 
+  it('平台代管：不需要也不能給網址', () => {
+    expect(McpServerSchema.safeParse({ name: 'fin', transport: 'remote', hosted: true }).success).toBe(true);
+    expect(McpServerSchema.safeParse({ name: 'fin', transport: 'remote', hosted: true, url: 'https://c.example/mcp' })
+      .error?.issues[0].message).toBe('MCP「fin」由平台代管，不需要網址');
+    expect(McpServerSchema.safeParse({ name: 'fin', transport: 'remote', hosted: false }).error?.issues[0].message)
+      .toBe('MCP「fin」需要網址');
+  });
+
   it('stdio 需要 command；http 需要 url', () => {
     expect(McpServerSchema.safeParse({ name: 'a', transport: 'stdio' }).error?.issues[0].message).toBe('MCP「a」需要啟動指令');
     expect(McpServerSchema.safeParse({ name: 'b', transport: 'http' }).error?.issues[0].message).toBe('MCP「b」需要網址');

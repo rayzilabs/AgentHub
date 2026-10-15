@@ -7,6 +7,7 @@ export const McpServerSchema = z
     command: z.string().trim().optional(),
     args: z.array(z.string()).optional(),
     url: z.url('MCP 網址格式不正確').optional(),
+    hosted: z.boolean().optional(),
     headers: z.record(z.string(), z.string()).optional(),
     required_secrets: z
       .array(z.object({
@@ -19,8 +20,12 @@ export const McpServerSchema = z
     if (s.transport === 'stdio' && !s.command) {
       ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」需要啟動指令`, path: ['command'] });
     }
-    if ((s.transport === 'http' || s.transport === 'remote') && !s.url) {
+    const hosted = s.transport === 'remote' && s.hosted === true;
+    if ((s.transport === 'http' || s.transport === 'remote') && !hosted && !s.url) {
       ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」需要網址`, path: ['url'] });
+    }
+    if (hosted && s.url) {
+      ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」由平台代管，不需要網址`, path: ['url'] });
     }
     if (s.transport === 'remote' && s.url && !s.url.startsWith('https://')) {
       ctx.addIssue({ code: 'custom', message: `MCP「${s.name}」的網址必須是 https`, path: ['url'] });

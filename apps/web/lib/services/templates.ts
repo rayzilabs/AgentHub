@@ -73,7 +73,7 @@ export async function getTemplate(db: Db, id: string, viewerId: string | null): 
   return toPublic(row);
 }
 
-async function getOwnTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
+export async function getOwnTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
   const { data, error } = await db.from('agent_templates').select(COLUMNS).eq('id', id).eq('creator_id', userId).maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError(404, NOT_FOUND);
@@ -130,6 +130,13 @@ export async function updateTemplate(db: Db, userId: string, id: string, patch: 
 export async function publishTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
   const template = await getOwnTemplate(db, userId, id);
   if (!template.system_prompt.trim()) throw new HttpError(400, '請先填寫 system prompt');
+  for (const s of template.mcp_servers) {
+    if (s.transport !== 'remote' || !s.hosted) continue;
+    const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
+      .eq('template_id', id).eq('mcp_name', s.name).eq('status', 'published');
+    if (error) throw error;
+    if (!count) throw new HttpError(400, `MCP「${s.name}」還沒有已發布的版本`);
+  }
   const { data, error } = await db
     .from('agent_templates')
     .update({ status: 'published', updated_at: new Date().toISOString() })

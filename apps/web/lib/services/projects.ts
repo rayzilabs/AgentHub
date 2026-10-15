@@ -90,6 +90,7 @@ export async function hireAgent(
   if (error) {
     if (error.code === '22023') throw new HttpError(400, `請填寫金鑰：${error.message.replace('missing secret ', '')}`);
     if (error.code === 'P0002') throw new HttpError(404, '這個 agent 尚未上架');
+    if (error.message.startsWith('hosted mcp ')) throw new HttpError(409, '這位顧問的工具服務尚未發布');
     throw error;
   }
   return data as string;
