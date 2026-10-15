@@ -189,6 +189,8 @@ export async function listToolsOver(
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
+      // 請求帶著平台的 Sprites token：不跟去別的網址
+      redirect: 'error',
     });
     if (!res.ok) throw new Error(`MCP 回應 ${res.status}：${(await res.text()).slice(0, 200)}`);
     return res;

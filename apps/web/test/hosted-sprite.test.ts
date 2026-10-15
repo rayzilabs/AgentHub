@@ -241,6 +241,23 @@ describe('listToolsOver', () => {
     }
   });
 
+  it('不跟隨轉址：帶著 Sprites token 的請求不會被導到別的網址', async () => {
+    const hits: string[] = [];
+    const elsewhere = createServer((req, res) => { hits.push(req.headers.authorization ?? ''); res.end('{}'); });
+    await new Promise<void>((r) => elsewhere.listen(0, '127.0.0.1', r));
+    const target = `http://127.0.0.1:${(elsewhere.address() as AddressInfo).port}/mcp`;
+    const redirector = createServer((_req, res) => { res.writeHead(307, { location: target }).end(); });
+    await new Promise<void>((r) => redirector.listen(0, '127.0.0.1', r));
+    try {
+      await expect(listToolsOver(fetch, `http://127.0.0.1:${(redirector.address() as AddressInfo).port}/mcp`, { authorization: 'Bearer sprites' }))
+        .rejects.toThrow();
+      expect(hits).toEqual([]);
+    } finally {
+      elsewhere.close();
+      redirector.close();
+    }
+  });
+
   it('程式回錯誤狀態：丟出含狀態碼的錯誤', async () => {
     const down = (async () => new Response('down', { status: 502 })) as typeof fetch;
     await expect(listToolsOver(down, `${base}/mcp`, {}))
