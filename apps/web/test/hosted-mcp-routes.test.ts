@@ -61,7 +61,8 @@ describe('代管 MCP API', () => {
       mcp_servers: [{ name: 'fin', transport: 'remote', hosted: true, required_secrets: [] }],
     });
     templateId = t.id;
-  });
+    // 建兩個帳號並登入都要連雲端；全套平行跑時偶爾超過預設的 10 秒
+  }, 30_000);
 
   it('沒登入：每個路由都 401', async () => {
     const v = { id: templateId, mcp: 'fin', versionId: '00000000-0000-0000-0000-000000000000' };
