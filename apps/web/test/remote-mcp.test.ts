@@ -33,10 +33,12 @@ describe('forwardToCreator', () => {
   /** 先依序回這些，用完才回 reply */
   const queue: Reply[] = [];
   const seen: IncomingHttpHeaders[] = [];
+  const methods: string[] = [];
 
   beforeAll(async () => {
     server = createServer(async (req, res) => {
       seen.push(req.headers);
+      methods.push(req.method ?? '');
       req.resume();
       const r = queue.shift() ?? reply;
       res.writeHead(r.status ?? 200, r.headers ?? { 'content-type': 'application/json' });
@@ -104,6 +106,28 @@ describe('forwardToCreator', () => {
     expect(seen.length - before).toBe(1);
   });
 
+  it('代管的 tools/call：先用不帶通行證的 HEAD 叫醒（遇 502／503 重試），叫醒後 tools/call 只送一次', async () => {
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{}}'] };
+    queue.push({ status: 502, chunks: ['waking'] }, { status: 401, chunks: [] });
+    const before = methods.length;
+    const ok = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator', undefined,
+      { edgeToken: 'sprites', wakeFirst: true, retries: 0, retryDelayMs: 0 });
+    expect(ok.status).toBe(200);
+    await ok.text();
+    expect(methods.slice(before)).toEqual(['HEAD', 'HEAD', 'POST']);
+    // 叫醒請求不帶創作者通行證，程式會以 401 拒絕，不會執行任何工具
+    expect(seen.at(-2)!['x-agenthub-token']).toBeUndefined();
+    expect(seen.at(-2)!.authorization).toBe('Bearer sprites');
+
+    queue.push({ status: 401, chunks: [] }, { status: 502, chunks: ['crashed'] });
+    const mark = methods.length;
+    const crashed = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator', undefined,
+      { edgeToken: 'sprites', wakeFirst: true, retries: 0, retryDelayMs: 0 });
+    expect(crashed.status).toBe(502);
+    await crashed.text();
+    expect(methods.slice(mark)).toEqual(['HEAD', 'POST']);
+  });
+
   it('創作者端要求轉址時不跟過去：回 502、記為失敗', async () => {
     reply = { status: 307, headers: { location: `${base}/elsewhere` }, chunks: [] };
     const results: boolean[] = [];
@@ -149,14 +173,14 @@ describe('forwardToCreator', () => {
 describe('遠端 MCP 閘道', () => {
   let server: Server;
   let mcpUrl: string;
-  const received: { headers: IncomingHttpHeaders; body: string; url?: string }[] = [];
+  const received: { headers: IncomingHttpHeaders; body: string; url?: string; method?: string }[] = [];
 
   beforeAll(async () => {
     server = createServer((req, res) => {
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
-        received.push({ headers: req.headers, body, url: req.url });
+        received.push({ headers: req.headers, body, url: req.url, method: req.method });
         res.setHeader('content-type', 'application/json');
         res.setHeader('mcp-session-id', 's-1');
         res.end('{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"1.23"}]}}');
@@ -298,9 +322,12 @@ describe('遠端 MCP 閘道', () => {
   it('代管：轉到版本的 Sprite（/mcp），Fly 用 Sprites token、創作者通行證的 aud 是 Sprite 網址；記錄用量', async () => {
     const h = await hiredHosted();
     try {
+      const before = received.length;
       const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET));
       expect(res.status).toBe(200);
       await res.text();
+      // tools/call 前先叫醒代管 Sprite
+      expect(received.slice(before).map((r) => r.method)).toEqual(['HEAD', 'POST']);
       const got = received.at(-1)!;
       expect(got.url).toBe('/mcp');
       expect(got.headers.authorization).toBe('Bearer sprites-test');

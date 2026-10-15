@@ -31,7 +31,10 @@ async function handle(req: Request, { params }: Ctx): Promise<Response> {
         mcp_name: name, tool, ok, duration_ms: Date.now() - started,
       }).catch((e) => console.error('[mcp] 無法記錄用量', e))
     : undefined;
-  const hosted = target.edgeToken ? { edgeToken: target.edgeToken, retries: 2, retryDelayMs: 1000 } : {};
+  // 代管 Sprite 可能在休眠：tools/call 先叫醒、只送一次（有副作用的工具不能重送）；其他請求遇 502／503 重試
+  const hosted = target.edgeToken
+    ? { edgeToken: target.edgeToken, retries: tool ? 0 : 2, wakeFirst: tool !== null, retryDelayMs: 1000 }
+    : {};
   return forwardToCreator(req, body, target.url, token, onEnd, hosted);
 }
 

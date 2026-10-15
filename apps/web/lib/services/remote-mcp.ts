@@ -86,13 +86,28 @@ function rpcFailed(text: string): boolean {
 }
 
 const WAKING = new Set([502, 503]);
+const WAKE_ATTEMPTS = 3;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function wake(url: string, edgeToken: string, signal: AbortSignal, delayMs: number): Promise<void> {
+  for (let i = 0; i < WAKE_ATTEMPTS && !signal.aborted; i++) {
+    const res = await fetch(url, {
+      method: 'HEAD', headers: { authorization: `Bearer ${edgeToken}` }, redirect: 'manual',
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    }).catch(() => null);
+    await res?.body?.cancel();
+    if (res && !WAKING.has(res.status)) return;
+    if (i < WAKE_ATTEMPTS - 1) await sleep(delayMs);
+  }
+}
 
 /**
  * 把 MCP 請求轉給創作者，回應以串流原樣傳回。
  * onEnd 在回應結束時才呼叫（含串流時間與工具是否回報錯誤）；呼叫端自己中途取消時不呼叫。
  * opts.edgeToken：Authorization 改用它（平台代管的 Sprite），創作者通行證只放 X-AgentHub-Token。
- * opts.retries：休眠中的代管 Sprite 喚醒時可能先回 502／503，重試這麼多次。
+ * opts.retries：休眠中的代管 Sprite 喚醒時可能先回 502／503，重試這麼多次。只給不會產生副作用的請求用。
+ * opts.wakeFirst：tools/call 不能重送（Fly 回 502 時程式可能已經執行過）；先送一個不帶創作者通行證的
+ * HEAD 把 Sprite 叫醒（程式會以 401 拒絕，不會執行任何工具），醒了再送一次 tools/call。
  */
 export async function forwardToCreator(
   req: Request,
@@ -100,7 +115,7 @@ export async function forwardToCreator(
   url: string,
   token: string,
   onEnd?: (ok: boolean) => Promise<void>,
-  opts: { edgeToken?: string; retries?: number; retryDelayMs?: number } = {},
+  opts: { edgeToken?: string; retries?: number; retryDelayMs?: number; wakeFirst?: boolean } = {},
 ): Promise<Response> {
   const headers = new Headers();
   req.headers.forEach((v, k) => {
@@ -111,6 +126,7 @@ export async function forwardToCreator(
 
   let upstream: Response;
   try {
+    if (opts.wakeFirst && opts.edgeToken) await wake(url, opts.edgeToken, req.signal, opts.retryDelayMs ?? 1000);
     // 不跟隨轉址：避免帶著通行證被導到 http 或其他主機
     upstream = await fetch(url, { method: req.method, headers, body, signal: req.signal, redirect: 'manual' });
     for (let i = 0; i < (opts.retries ?? 0) && WAKING.has(upstream.status) && !req.signal.aborted; i++) {
