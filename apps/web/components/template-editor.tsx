@@ -4,44 +4,8 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
-import type { McpServer } from '@/lib/schemas';
+import { emptyDraft, fromDraft, toDraft, type McpDraft } from '@/lib/mcp-draft';
 import type { TemplateRow } from '@/lib/services/templates';
-
-type McpDraft = {
-  name: string;
-  transport: 'stdio' | 'http' | 'remote';
-  command: string;
-  args: string;
-  url: string;
-  headers: string;
-  secrets: string;
-};
-
-function toDraft(s: McpServer): McpDraft {
-  return {
-    name: s.name,
-    transport: s.transport,
-    command: s.command ?? '',
-    args: (s.args ?? []).join(' '),
-    url: s.url ?? '',
-    headers: Object.entries(s.headers ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n'),
-    secrets: (s.required_secrets ?? []).map((r) => r.key).join(', '),
-  };
-}
-
-function fromDraft(d: McpDraft): McpServer {
-  const required_secrets = d.secrets.split(',').map((k) => k.trim()).filter(Boolean).map((key) => ({ key }));
-  if (d.transport === 'stdio') {
-    return { name: d.name.trim(), transport: 'stdio', command: d.command.trim(), args: d.args.split(/\s+/).filter(Boolean), required_secrets };
-  }
-  if (d.transport === 'remote') return { name: d.name.trim(), transport: 'remote', url: d.url.trim(), required_secrets: [] };
-  const headers = Object.fromEntries(
-    d.headers.split('\n').map((line) => line.split(/:([\s\S]*)/).map((x) => x.trim())).filter(([k, v]) => k && v),
-  );
-  return { name: d.name.trim(), transport: 'http', url: d.url.trim(), headers, required_secrets };
-}
-
-const emptyDraft: McpDraft = { name: '', transport: 'stdio', command: '', args: '', url: '', headers: '', secrets: '' };
 
 export function TemplateEditor({ initial }: { initial: TemplateRow }) {
   const [t, setT] = useState(initial);
@@ -167,6 +131,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                       <option value="stdio">在 agent 電腦上啟動（stdio）</option>
                       <option value="http">連到遠端網址（HTTP）</option>
                       <option value="remote">你自己架的 MCP（經平台閘道）</option>
+                      <option value="hosted">交給平台代管（上傳程式）</option>
                     </select></label>
                 </div>
                 {d.transport === 'stdio' ? (
@@ -176,6 +141,8 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                     <label className="block"><span className="label">參數（空白分隔）</span>
                       <input disabled={busy} className="field" placeholder="-y some-mcp-server" value={d.args} onChange={(e) => update({ args: e.target.value })} /></label>
                   </div>
+                ) : d.transport === 'hosted' ? (
+                  <p className="hint">儲存後就能在這裡設定金鑰、上傳程式並部署。</p>
                 ) : d.transport === 'remote' ? (
                   <label className="block"><span className="label">網址</span>
                     <input disabled={busy} className="field" placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} />
@@ -188,7 +155,7 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                       <textarea disabled={busy} className="field" rows={2} value={d.headers} onChange={(e) => update({ headers: e.target.value })} /></label>
                   </>
                 )}
-                {d.transport !== 'remote' && (
+                {d.transport !== 'remote' && d.transport !== 'hosted' && (
                   <label className="block"><span className="label">需要的金鑰名稱（逗號分隔，例如 FINMIND_API_KEY）</span>
                     <input disabled={busy} className="field" value={d.secrets} onChange={(e) => update({ secrets: e.target.value })} /></label>
                 )}
