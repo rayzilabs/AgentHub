@@ -31,6 +31,7 @@ Production：https://agenthub-kappa-pink.vercel.app
                                             └─ 主管工具：派工、召開討論
 
 Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP 名稱> ──▶ 創作者自己架的 MCP server
+                                                                      └─▶ 平台代管的 MCP（每個版本一台 Sprite）
 ```
 
 - 瀏覽器只呼叫 Vercel 的 `/api/*`；唯一例外是上傳檔案時直接 PUT 到 Storage 的簽名網址。Supabase 的資料表全部開啟 RLS：Vercel 用 secret key 存取；runtime 用專案專用帳號的通行證，policy 只放行自己專案需要的欄位與動作。
@@ -38,6 +39,7 @@ Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP �
 - runtime 把對話串流同時送回瀏覽器和寫進資料庫，瀏覽器斷線不會遺失結果；串流中斷時前端改成輪詢。
 - agent 代為執行的指令與 stdio MCP 都在沙盒帳號裡跑，每位顧問一個帳號，拿不到平台金鑰，也讀不到其他顧問的檔案。權限規則見 [安全模型](docs/security-model.md)。
 - 創作者自己架的 MCP 一律經過平台閘道：Vercel 轉送對話時附上 20 分鐘的專案通行證，閘道驗證後改簽 5 分鐘的創作者通行證轉送，並記錄每次工具呼叫的用量。創作者的網址不會進 Sprite。
+- 不會架 server 的創作者可以上傳 MCP 套件給平台代管：每個版本部署到一台專用 Sprite，程式以沒有 sudo 的帳號在沙盒裡跑，機器上只有這個 MCP 的程式與創作者自己的金鑰。租用時鎖定當時最新的已發布版本，發布新版本不影響既有專案。
 
 完整設計見 [技術規格](docs/superpowers/specs/2026-10-02-agenthub-mvp-design.md)。
 
@@ -49,13 +51,13 @@ apps/web/              Next.js 網站與 API（部署到 Vercel）
   components/          工作區 UI（對話、派工卡片、討論畫面）
   lib/                 服務層、Supabase、Sprite 管理、表單驗證
   demo/agents/         Demo 用的三位金融顧問
-  scripts/             seed、冒煙測試、更新所有 Sprite 的 runtime
+  scripts/             seed、冒煙測試、更新所有 Sprite 的 runtime、平台代管 MCP 的驗收與營運
 packages/runtime/      跑在 Sprite 裡的 agent runtime（打包成單一 main.js）
 supabase/
   migrations/          資料表、RPC、Storage bucket
   tests/               pgTAP 測試
 docs/security-model.md 權限與隔離規則（每張表、每個帳號能做什麼）
-docs/creator/          給創作者的說明（遠端 MCP 怎麼接、怎麼驗證平台通行證）
+docs/creator/          給創作者的說明（自己架的遠端 MCP、平台代管 MCP 與 Python／Node 範本）
 docs/superpowers/      規格、實作計畫、production 驗證紀錄
 ```
 
@@ -123,6 +125,14 @@ BASE_URL=https://agenthub-kappa-pink.vercel.app pnpm exec tsx scripts/smoke.ts  
 
 冒煙測試會建立並刪除一台真的 Sprite，全程約 3 分鐘。
 
+改了平台代管 MCP 的沙盒或部署腳本（`apps/web/lib/hosted-sprite.ts`）後，用真的 Sprite 驗收：
+
+```bash
+cd apps/web
+pnpm exec tsx scripts/probe-hosted-mcp.ts            # 部署 Python 與 Node 範本，逐項檢查隔離與功能，結束時全部刪除
+pnpm exec tsx scripts/probe-hosted-mcp.ts python     # 只跑其中一個
+```
+
 ## 部署
 
 ### 網站（Vercel）
@@ -143,6 +153,14 @@ cd apps/web && pnpm exec tsx scripts/redeploy-runtime.ts  # 更新所有已就�
 ### 資料庫
 
 新增 migration 放在 `supabase/migrations/`，用 `pnpm db:push` 套用。
+
+### 平台代管 MCP 的營運
+
+```bash
+cd apps/web
+pnpm exec tsx scripts/hosted-mcp.ts disable <版本 id>   # 停用：停掉程式，閘道改回 503（濫用或費用異常時）
+pnpm exec tsx scripts/hosted-mcp.ts cleanup-failed      # 刪除失敗超過 24 小時、以及下架後沒刪成功的代管 Sprite
+```
 
 ## Demo 資料
 
@@ -182,17 +200,19 @@ description: 用 5P 架構評估中小企業授信案件
 （skill 內容）
 ```
 
-**MCP**：支援三種連線方式。
+**MCP**：支援以下連線方式。
 
 - `stdio`（`command` + `args`）和 `http`（`url` + `headers`）：需要金鑰時在 `required_secrets` 列出名稱，使用者啟用顧問時填寫。stdio 會當成環境變數傳入，http 可在 `headers` 裡用 `${KEY}` 引用。
 - `remote`（只填 `url`，必須是 https）：創作者自己架的 MCP，經平台閘道呼叫。不能設定標頭或金鑰，身分由平台通行證證明；租用者看不到網址。工具回傳大量資料時，請改回傳 `download_url`。詳見 [創作者文件](docs/creator/remote-mcp.md)。
+- `remote` 加 `hosted: true`（不填 `url`）：平台代管。創作者上傳 zip（根目錄放 `mcp.json`，Python 或 Node），平台部署、驗證工具清單後由創作者發布；金鑰存在 Vault，只注入代管機器。目前以 API 操作（創作者頁面尚未完成），範本有代管 MCP 時，每個都要有已發布的版本才能上架。詳見 [創作者文件](docs/creator/hosted-mcp.md)。
 
 範例見 `apps/web/demo/agents/*/`。
 
 ## 已知限制
 
 - **Sprite 上沒有平台金鑰**：runtime 用專案專用帳號的通行證存取資料庫、模型走平台代理（見 [安全模型](docs/security-model.md)）。舊金鑰曾存在 Sprite 上，尚待輪換。沒有上架審核和限流。
-- **遠端 MCP 單次工具呼叫最長 300 秒**；平台代管 MCP（給不會架 server 的創作者）尚未提供。
+- **遠端 MCP 單次工具呼叫最長 300 秒**。
+- **平台代管 MCP**：目前只有 API，創作者頁面尚未完成；部署最長 10 分鐘、套件最大 50 MB、每個 MCP 最多 3 個已發布版本、每位創作者最多 10 台代管機器；失敗版本的清理需手動執行營運腳本。
 - **每次 run 最長 15 分鐘**：快到時會收尾並交出部分結果，不保證完成所有派工。
 - **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，輪詢時一樣看得到進度。
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。
@@ -202,5 +222,6 @@ description: 用 5P 架構評估中小企業授信案件
 - [技術規格](docs/superpowers/specs/2026-10-02-agenthub-mvp-design.md)
 - [執行進度與時間預算規格](docs/superpowers/specs/2026-10-13-run-progress-and-time-budget-design.md)
 - [安全模型](docs/security-model.md)、[遠端 MCP 規格](docs/superpowers/specs/2026-10-14-remote-mcp-design.md)、[創作者：接上遠端 MCP](docs/creator/remote-mcp.md)
+- [平台代管 MCP 規格](docs/superpowers/specs/2026-10-15-hosted-mcp-3b-design.md)、[創作者：交給平台代管](docs/creator/hosted-mcp.md)
 - 實作計畫：[基礎與 runtime](docs/superpowers/plans/2026-10-02-agenthub-plan1-foundation-runtime.md)、[多顧問](docs/superpowers/plans/2026-10-02-agenthub-plan2-multi-agent.md)、[網站](docs/superpowers/plans/2026-10-02-agenthub-plan3-web.md)、[Demo 與端對端](docs/superpowers/plans/2026-10-02-agenthub-plan4-demo-e2e.md)
 - [Production 驗證紀錄](docs/superpowers/reports/2026-10-02-production-e2e.md)
