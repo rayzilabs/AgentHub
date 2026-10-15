@@ -66,7 +66,7 @@ export const SANDBOX_ADDUSER_SCRIPT = [
 ].join('\n');
 
 /** 單引號包住，內容裡的單引號改成 '\'' */
-function shellQuote(s: string): string {
+export function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 const SERVICE = 'runtime';
