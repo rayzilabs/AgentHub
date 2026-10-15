@@ -106,7 +106,7 @@ export function HostedMcpPanel({ templateId, mcpName }: { templateId: string; mc
 
   const shown = visibleVersions(versions);
   return (
-    <div className="space-y-5 rounded-xl bg-sunken p-4">
+    <div className="space-y-5 rounded-xl border border-line p-4">
       <div>
         <div className="label">金鑰</div>
         <p className="hint">只會注入你的代管程式。值儲存後不會再顯示；同名稱再存一次就是覆寫。</p>
@@ -138,7 +138,7 @@ export function HostedMcpPanel({ templateId, mcpName }: { templateId: string; mc
         {shown.length === 0 && <p className="hint">還沒有版本。</p>}
         <ul className="mt-2 space-y-3">
           {shown.map((v) => (
-            <li key={v.id} className="panel space-y-2 p-4">
+            <li key={v.id} className="space-y-2 rounded-xl bg-sunken p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">版本 {v.version}</span>
                 <span className={`chip ${statusChip(v.status)}`}>{statusLabel(v.status)}</span>
