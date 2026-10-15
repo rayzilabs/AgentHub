@@ -30,7 +30,8 @@ export const HOSTED_RUN_SCRIPT = [
   `tools="$(/usr/bin/cat ${ROOT}/path)"`,
   'exec /usr/bin/setpriv --reuid=mcp --regid=mcp --init-groups --inh-caps=-all -- \\',
   `  /usr/bin/env -i HOME=/home/mcp LANG=C.UTF-8 PATH="${APP}/.venv/bin:${APP}/node_modules/.bin:$tools" \\`,
-  `  /bin/sh -c 'set -a; . ${ROOT}/env.sh; set +a; exec "$@"' mcp-run "$@"`,
+  // 呼叫端的工作目錄（Sprite 帳號的家目錄）mcp 進不去，pyenv 的 shim 會失敗；先切到程式目錄
+  `  /bin/sh -c 'cd ${APP} || cd /; set -a; . ${ROOT}/env.sh; set +a; exec "$@"' mcp-run "$@"`,
   '',
 ].join('\n');
 
@@ -41,8 +42,10 @@ export const HOSTED_SETUP_SCRIPT = [
   `sudo install -d -m 755 -o root -g root ${ROOT}`,
   `sudo install -d -m 700 -o "$(id -un)" -g "$(id -gn)" ${DEPLOY}`,
   `sudo install -d -m 700 -o mcp -g mcp ${APP}`,
-  // sudo 會重設 PATH；記下 Sprite 帳號的 PATH（/.sprite/languages 底下的 node、python），沙盒以它為準
-  `printf '%s' "$PATH" | sudo tee ${ROOT}/path >/dev/null`,
+  // sudo 會重設 PATH；記下 Sprite 帳號的 PATH 給沙盒用。/.sprite/bin 的 node／npm 包裝腳本會寫
+  // /etc/profile.d/languages_env，mcp 沒有權限而失敗；所以把 node、python 的真實目錄放最前面，不經過包裝
+  `langs="$(dirname "$(node -e 'process.stdout.write(process.execPath)')"):$(dirname "$(python3 -c 'import sys; print(sys.executable, end="")')")"`,
+  `printf '%s' "$langs:$PATH" | sudo tee ${ROOT}/path >/dev/null`,
   `sudo chmod 644 ${ROOT}/path`,
   `printf '%s' ${shellQuote(HOSTED_RUN_SCRIPT)} | sudo tee ${HOSTED_RUN} >/dev/null`,
   `sudo chown root:root ${HOSTED_RUN}`,

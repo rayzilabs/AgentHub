@@ -24,7 +24,10 @@ describe('名稱與腳本', () => {
     expect(s).toContain(`sudo chown root:root ${HOSTED_RUN}`);
     expect(s).toContain(`sudo chmod 755 ${HOSTED_RUN}`);
     // sudo 會重設 PATH；記下 Sprite 帳號的 PATH（/.sprite/languages 底下的 node、python）
-    expect(s).toContain(`printf '%s' "$PATH" | sudo tee /srv/agenthub-mcp/path >/dev/null`);
+    // /.sprite/bin 的 node／npm 包裝腳本會寫 /etc/profile.d/languages_env，mcp 沒權限；真實目錄放最前面，不經過包裝
+    expect(s).toContain("node -e 'process.stdout.write(process.execPath)'");
+    expect(s).toContain('python3 -c \'import sys; print(sys.executable, end="")\'');
+    expect(s).toContain(`printf '%s' "$langs:$PATH" | sudo tee /srv/agenthub-mcp/path >/dev/null`);
   });
 
   it('agenthub-mcp-run：清環境、遮住 Sprite API、降權成 mcp 後才讀金鑰', () => {
@@ -41,6 +44,8 @@ describe('名稱與腳本', () => {
     const drop = s.indexOf('setpriv');
     expect(s.indexOf('. /srv/agenthub-mcp/env.sh')).toBeGreaterThan(drop);
     expect(s).toContain('set -a');
+    // 呼叫端的工作目錄（Sprite 帳號的家目錄）mcp 進不去，pyenv 的 shim 會失敗；先切到程式目錄
+    expect(s).toContain("cd /srv/agenthub-mcp/app || cd /;");
   });
 
   it('部署腳本：下載與解壓都在沙盒外的私有目錄；創作者的檔案只在沙盒裡處理；全程有時限', () => {
