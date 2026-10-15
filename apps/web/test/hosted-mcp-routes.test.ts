@@ -29,7 +29,7 @@ const { GET: listRoute, POST: createRoute } = await import('@/app/api/templates/
 const { GET: readRoute, DELETE: retireRoute } = await import('@/app/api/templates/[id]/hosted/[mcp]/versions/[versionId]/route');
 const { POST: deployRoute } = await import('@/app/api/templates/[id]/hosted/[mcp]/versions/[versionId]/deploy/route');
 const { POST: publishRoute } = await import('@/app/api/templates/[id]/hosted/[mcp]/versions/[versionId]/publish/route');
-const { PUT: secretsRoute } = await import('@/app/api/templates/[id]/hosted/[mcp]/secrets/route');
+const { GET: secretsGetRoute, PUT: secretsRoute } = await import('@/app/api/templates/[id]/hosted/[mcp]/secrets/route');
 
 const db = testDb();
 
@@ -74,8 +74,9 @@ describe('代管 MCP API', () => {
       deployRoute(req('bad', 'POST'), ctx(v)),
       publishRoute(req('bad', 'POST'), ctx(v)),
       secretsRoute(req('bad', 'PUT', { secrets: {} }), ctx(v)),
+      secretsGetRoute(req('bad'), ctx(v)),
     ]);
-    expect(responses.map((r) => r.status)).toEqual([401, 401, 401, 401, 401, 401, 401]);
+    expect(responses.map((r) => r.status)).toEqual([401, 401, 401, 401, 401, 401, 401, 401]);
   });
 
   it('建立、上傳、部署（after 裡推進）、讀狀態；別人 404', async () => {
@@ -115,9 +116,13 @@ describe('代管 MCP API', () => {
     expect((await secretsRoute(req(creatorToken, 'PUT', { secrets: { API_KEY: 1 } }), ctx(p))).status).toBe(400);
     expect((await secretsRoute(req(creatorToken, 'PUT', {}), ctx(p))).status).toBe(400);
     expect((await secretsRoute(req(otherToken, 'PUT', { secrets: { API_KEY: 'v' } }), ctx(p))).status).toBe(404);
+    expect((await secretsRoute(req(creatorToken, 'PUT', { secrets: { API_KEY: '' } }), ctx(p))).status).toBe(400);
     const ok = await secretsRoute(req(creatorToken, 'PUT', { secrets: { API_KEY: 'v' } }), ctx(p));
     expect(ok.status).toBe(200);
     const { data } = await db.rpc('get_hosted_mcp_secrets', { p_template_id: templateId, p_mcp_name: 'fin' });
     expect(data).toEqual([{ key: 'API_KEY', value: 'v' }]);
+    const keys = await (await secretsGetRoute(req(creatorToken), ctx(p))).json();
+    expect(keys).toEqual({ keys: ['API_KEY'] });
+    expect((await secretsGetRoute(req(otherToken), ctx(p))).status).toBe(404);
   });
 });

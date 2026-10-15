@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
 import {
-  checkBundle, createVersion, HOSTED_LIMITS, listVersions, parseMcpJson, publishVersion, retireVersion, setHostedSecrets,
+  checkBundle, createVersion, HOSTED_LIMITS, listHostedSecretKeys, listVersions, parseMcpJson, publishVersion, retireVersion, setHostedSecrets,
   startDeploy, syncVersion, type DeployState, type HostedSpriteOps, type HostedVersion,
 } from '@/lib/services/hosted-mcp';
 import { createProject, deleteOwnProject, hireAgent } from '@/lib/services/projects';
@@ -314,6 +314,29 @@ describe('代管版本：發布、下架、金鑰', () => {
     await expectStatus(retireVersion(db, creator.id, v1, ops), 409, '這是已上架範本唯一的已發布版本，請先發布新版本');
     await insertVersion(t.id, 2, 'published');
     expect((await retireVersion(db, creator.id, v1, ops)).status).toBe('retired');
+  });
+
+  it('版本列表附上使用中的專案數；金鑰只列名稱', async () => {
+    const creator = await seedUser(db);
+    const renter = await seedUser(db);
+    const t = await hostedTemplate(creator.id);
+    const v1 = await insertVersion(t.id, 1, 'published');
+    await insertVersion(t.id, 2, 'ready');
+    await publishTemplate(db, creator.id, t.id);
+    const p = await createProject(db, renter.id, 'p');
+    await hireAgent(db, renter.id, p.id, t.id, {});
+    try {
+      const list = await listVersions(db, creator.id, t.id, 'fin');
+      expect(list.map((v) => [v.version, v.projects])).toEqual([[2, 0], [1, 1]]);
+      expect(list.find((v) => v.id === v1)!.projects).toBe(1);
+
+      const { ops } = fakeSprites();
+      await setHostedSecrets(db, creator.id, t.id, 'fin', { ZETA: 'z', API_KEY: 'k' }, ops);
+      expect(await listHostedSecretKeys(db, creator.id, t.id, 'fin')).toEqual(['API_KEY', 'ZETA']);
+      await expectStatus(listHostedSecretKeys(db, renter.id, t.id, 'fin'), 404);
+    } finally {
+      await deleteOwnProject(db, renter.id, p.id);
+    }
   });
 
   it('只有 ready 能發布', async () => {

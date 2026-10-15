@@ -115,12 +115,31 @@ export async function getVersion(db: Db, userId: string, templateId: string, mcp
   return version;
 }
 
-export async function listVersions(db: Db, userId: string, templateId: string, mcpName: string): Promise<HostedVersion[]> {
+export type HostedVersionView = HostedVersion & { projects: number };
+
+/** 附上每個版本有幾個專案在用（頁面據此決定能不能下架） */
+export async function listVersions(db: Db, userId: string, templateId: string, mcpName: string): Promise<HostedVersionView[]> {
   await ownHostedMcp(db, userId, templateId, mcpName);
   const { data, error } = await db.from('hosted_mcp_versions').select('*')
     .eq('template_id', templateId).eq('mcp_name', mcpName).order('version', { ascending: false });
   if (error) throw error;
-  return data as HostedVersion[];
+  const versions = data as HostedVersion[];
+  if (versions.length === 0) return [];
+  const { data: targets, error: targetError } = await db.from('remote_mcp_targets').select('hosted_version_id')
+    .in('hosted_version_id', versions.map((v) => v.id));
+  if (targetError) throw targetError;
+  const counts = new Map<string, number>();
+  for (const t of targets as { hosted_version_id: string }[]) counts.set(t.hosted_version_id, (counts.get(t.hosted_version_id) ?? 0) + 1);
+  return versions.map((v) => ({ ...v, projects: counts.get(v.id) ?? 0 }));
+}
+
+/** 只回傳名稱：值寫入後不再顯示 */
+export async function listHostedSecretKeys(db: Db, userId: string, templateId: string, mcpName: string): Promise<string[]> {
+  await ownHostedMcp(db, userId, templateId, mcpName);
+  const { data, error } = await db.from('hosted_mcp_secrets').select('key')
+    .eq('template_id', templateId).eq('mcp_name', mcpName).order('key');
+  if (error) throw error;
+  return (data as { key: string }[]).map((r) => r.key);
 }
 
 /** 不再有人讀取的部署不會自己逾時；建立新版本前先把過期的等上傳與逾時的部署標成失敗，免得永遠擋住 */
