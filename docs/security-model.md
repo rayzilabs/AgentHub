@@ -44,7 +44,7 @@
 | 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
 | 平台金鑰外洩時，影響只限一個專案 | ✅ 1-C（2026-10-14）：Sprite 上已無平台金鑰；舊金鑰曾存在 Sprite 與開發電腦上，待輪換 |
 | 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared`；每個帳號有私人 `/tmp` | ✅ 2026-10-14 子專案 2 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
-| 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進 Sprite；取消租用後立即無法呼叫 | ✅ 自己架（3a，2026-10-14）；平台代管待 3b |
+| 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進 Sprite；取消租用後立即無法呼叫 | ✅ 自己架（3a，2026-10-14）；平台代管（3b，2026-10-15）：代管 Sprite 上只有該 MCP 的程式與創作者金鑰 |
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
 | 單一顧問模式下，主管／顧問本身的原始工具輸入輸出仍會隨串流送到瀏覽器 | ⏳ 已知缺口 |
 
@@ -67,10 +67,13 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `usage_events` | ❌ | ✅ | ❌ | ❌ | 只能新增；計費帳本不能被竄改或偷看 |
 | `remote_mcp_targets` | ❌ | ❌ | ❌ | ❌ | 創作者 MCP 的網址／代管版本；只有閘道（`service_role`）讀得到（子專案 3） |
 | `mcp_usage` | ❌ | ❌ | ❌ | ❌ | 由閘道寫入；runtime 不碰（子專案 3） |
+| `hosted_mcp_versions` | ❌ | ❌ | ❌ | ❌ | 平台代管 MCP 的版本、Sprite 名稱與網址；只有 Vercel（`service_role`）讀寫（3b） |
+| `hosted_mcp_secrets`／Vault | ❌ | ❌ | ❌ | ❌ | 創作者給代管 MCP 的金鑰；只透過 `set_hosted_mcp_secret`／`get_hosted_mcp_secrets`，只有 `service_role` 能執行（3b） |
 | `project_runtime_accounts` | ❌ | ❌ | ❌ | ❌ | runtime 帳號的密碼與通行證快取；只有 Vercel（`service_role`）讀得到 |
 | Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip |
 | Storage `project-files` | 列出、下載 | ❌ | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；上傳由網頁處理 |
 | Storage `runtime` | ❌ | ❌ | ❌ | ❌ | 安裝時由 Vercel 給一次性下載連結 |
+| Storage `mcp-bundles` | ❌ | ❌ | ❌ | ❌ | 創作者上傳的代管 MCP 套件；部署時由 Vercel 給代管 Sprite 一次性下載連結（3b） |
 | 模型（Vertex） | 透過 Vercel 代理呼叫 | | | | Sprite 不放 Vertex 金鑰；可設每專案用量上限 |
 
 新增功能需要 runtime 多一項權限時：先改這張表，再改 migration。
@@ -100,17 +103,42 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 
 **驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。
 
+## 5b. 平台代管 MCP 的 Sprite（子專案 3b）
+
+每個代管 MCP 版本一台 Sprite（`agenthub-mcp-<版本 id 去掉連字號後前 12 碼>`），上面只有這個 MCP 的程式與創作者金鑰，沒有任何平台金鑰。
+
+| 帳號 | 用途 | sudo |
+|---|---|---|
+| `sprite` | 平台的部署腳本（下載套件、寫狀態） | 有 |
+| `mcp` | 創作者的程式：解壓、讀 `mcp.json`、安裝相依套件、執行 | 沒有 |
+
+```text
+/srv/agenthub-mcp/           755 root
+/srv/agenthub-mcp/deploy/    700 sprite     部署腳本（含一次性下載網址）、state.json、log.txt；mcp 進不去
+/srv/agenthub-mcp/app/       700 mcp        創作者的程式與 .venv／node_modules
+/srv/agenthub-mcp/env.sh     440 root:mcp   創作者金鑰與平台變數；mcp 只能讀，改不了
+/srv/agenthub-mcp/path       644 root       node、python 的真實路徑（不經過 /.sprite/bin 的包裝腳本）
+```
+
+- 執行路徑：`sudo unshare --mount` → `/usr/local/bin/agenthub-mcp-run` 確認在獨立的掛載命名空間、用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `mcp` → `env -i` 清空環境 → 降權**之後**才載入 `env.sh`。
+- 閘道以平台的 Sprites token 通過 Fly 驗證（Fly 驗證後拿掉 `Authorization`，到不了程式），`X-AgentHub-Token` 帶創作者通行證；程式以 `AGENTHUB_MCP_URL` 為 `aud` 驗證。
+- 下架由資料庫函式 `retire_hosted_mcp_version` 鎖住版本後檢查有沒有專案在用，與 `hire_agent`（對版本 `for share`）互斥。
+- 代管程式可以連外；背景程式在 Sprite 休眠時會被暫停。營運者可用 `apps/web/scripts/hosted-mcp.ts disable <版本 id>` 停用。
+
+**驗收**：`apps/web/scripts/probe-hosted-mcp.ts` 以真的 Sprite 部署 Python 與 Node 範本，以 `mcp` 身分嘗試讀部署腳本、存取 `/.sprite/api.sock`、改寫 `env.sh`、`sudo -n true` 都必須失敗；`Authorization` 不能到達程式；金鑰更新後重啟生效（2026-10-15 25 項全部通過）。
+
 ## 6. 子專案進度
 
 | # | 子專案 | 狀態 | 文件 |
 |---|---|---|---|
 | 1 | 平台金鑰隔離（A：分開帳號；C：只限自己專案的權限） | ✅ A 已上線（2026-10-13）；✅ C 已上線（2026-10-14，改用專案專用 runtime 帳號） | `docs/superpowers/specs/2026-10-13-platform-key-isolation-design.md`、`docs/superpowers/specs/2026-10-14-runtime-scoped-access-design.md` |
 | 2 | 顧問之間隔離 | ✅ 已上線（2026-10-14） | `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md` |
-| 3 | 遠端 MCP 的平台支援（閘道與通行證、自己架與平台代管、用量、版本、大量資料慣例） | ✅ 3a＋3c 已上線（2026-10-14）；3b 平台代管待做 | `docs/superpowers/specs/2026-10-14-remote-mcp-design.md` |
+| 3 | 遠端 MCP 的平台支援（閘道與通行證、自己架與平台代管、用量、版本、大量資料慣例） | ✅ 3a＋3c 已上線（2026-10-14）；✅ 3b 平台代管的部署與呼叫已上線（2026-10-15，API；創作者頁面待計畫 B），正式環境經閘道驗收 | `docs/superpowers/specs/2026-10-14-remote-mcp-design.md`、`docs/superpowers/specs/2026-10-15-hosted-mcp-3b-design.md` |
 | 4 | 金融顧問改走遠端 MCP（`agenthub-fintech-agents`） | ✅ 2026-10-14 上線：MCP server 在 `agenthub-fintech-mcp.vercel.app`，正式環境經閘道驗收（13 次工具呼叫全部成功） | `agenthub-fintech-agents/docs/superpowers/specs/2026-10-14-fintech-remote-mcp-design.md` |
 
 ## 7. 已知缺口與待辦
 
 - 單一顧問模式的原始工具輸入輸出會送到瀏覽器（見第 3 節）。
+- 平台代管 MCP：閘道對 502／503 會重送 `tools/call`，有副作用的工具在程式中途崩潰時可能執行多次；`mcp-bundles` 尚未設檔案大小上限；失敗版本的清理（`hosted-mcp.ts cleanup-failed`）尚未排程。
 - 2026-10-13 之前，agent 讀得到每台 Sprite `.env` 裡的平台金鑰且可 sudo 成 root；A 上線後已封住，但金鑰仍存在 `.env`（只有 runtime 讀得到），C 上線後才會移除。
 - 子專案 1 上線前，平台金鑰已存在每台 Sprite 的 `.env`；全部重新佈建後應輪換 Supabase secret key 與 Vertex 金鑰。
