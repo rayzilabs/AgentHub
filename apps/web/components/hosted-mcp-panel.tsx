@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
 import {
-  canPublish, canRetire, POLL_MS, pollingIds, secretRowsToSave, statusChip, statusLabel, visibleVersions, zipProblem,
+  canPublish, canRetire, POLL_MS, pollOnce, pollingIds, secretRowsToSave, statusChip, statusLabel, visibleVersions, zipProblem,
 } from '@/lib/hosted-ui';
 import type { HostedVersionView } from '@/lib/services/hosted-mcp';
 
@@ -41,18 +41,19 @@ export function HostedMcpPanel({ templateId, mcpName }: { templateId: string; mc
   }, [fetchAll]);
 
   // 部署中的版本每 5 秒讀一次；讀取本身會推進部署（離開頁面再回來也會繼續）
+  // 同一個版本上一次還沒回來就跳過；讀取失敗（例如另一個請求已推進狀態）就整個重新載入
+  const inFlight = useRef(new Set<string>());
   const polling = pollingIds(versions).join(',');
   useEffect(() => {
     if (!polling) return;
     const timer = setInterval(() => {
-      for (const id of polling.split(',')) {
+      pollOnce(polling.split(','), inFlight.current, (id) =>
         api<HostedVersionView>(`${base}/versions/${id}`)
           .then((v) => setVersions((all) => all.map((x) => (x.id === v.id ? { ...v, projects: x.projects } : x))))
-          .catch((e) => setMessage({ kind: 'error', text: (e as Error).message }));
-      }
+          .catch(() => load().catch((e) => setMessage({ kind: 'error', text: (e as Error).message }))));
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [polling, base]);
+  }, [polling, base, load]);
 
   async function act(label: string, action: () => Promise<unknown>) {
     setBusy(true);

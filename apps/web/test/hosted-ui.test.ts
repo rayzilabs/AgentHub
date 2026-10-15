@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  canPublish, canRetire, MAX_ZIP_BYTES, pollingIds, secretRowsToSave, statusChip, statusLabel, visibleVersions, zipProblem,
+  canPublish, canRetire, MAX_ZIP_BYTES, pollOnce, pollingIds, secretRowsToSave, statusChip, statusLabel, visibleVersions, zipProblem,
 } from '@/lib/hosted-ui';
 
 describe('代管區塊', () => {
@@ -49,5 +49,29 @@ describe('代管區塊', () => {
     expect(secretRowsToSave([
       { key: ' API_KEY ', value: 'v' }, { key: 'EMPTY', value: '' }, { key: '', value: 'orphan' }, { key: 'B', value: 'b' },
     ])).toEqual({ API_KEY: 'v', B: 'b' });
+  });
+
+  it('輪詢：同一個版本前一次還沒回來就跳過，不會疊請求', async () => {
+    const inFlight = new Set<string>();
+    const calls: string[] = [];
+    let finish: () => void = () => {};
+    const fetchOne = (id: string) => { calls.push(id); return new Promise<void>((r) => { finish = r; }); };
+    pollOnce(['a'], inFlight, fetchOne);
+    pollOnce(['a'], inFlight, fetchOne);
+    expect(calls).toEqual(['a']);
+    finish();
+    await Promise.resolve();
+    await Promise.resolve();
+    pollOnce(['a'], inFlight, fetchOne);
+    expect(calls).toEqual(['a', 'a']);
+  });
+
+  it('輪詢失敗也會放行下一輪', async () => {
+    const inFlight = new Set<string>();
+    let n = 0;
+    pollOnce(['a'], inFlight, () => { n++; return Promise.reject(new Error('x')); });
+    await new Promise((r) => setTimeout(r, 0));
+    pollOnce(['a'], inFlight, () => { n++; return Promise.resolve(); });
+    expect(n).toBe(2);
   });
 });

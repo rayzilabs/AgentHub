@@ -128,9 +128,29 @@ async function assertHostedPublished(db: Db, id: string, servers: McpServer[]): 
   }
 }
 
+const isHosted = (s: McpServer) => s.transport === 'remote' && s.hosted === true;
+
+/** 改名、移除或改連線方式會讓既有版本、金鑰與 Sprite 在頁面上消失（仍佔名額）；要先下架所有版本 */
+async function assertNoOrphanedVersions(db: Db, id: string, saved: McpServer[], next: McpServer[]): Promise<void> {
+  const kept = new Set(next.filter(isHosted).map((s) => s.name));
+  for (const s of saved.filter(isHosted)) {
+    if (kept.has(s.name)) continue;
+    const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
+      .eq('template_id', id).eq('mcp_name', s.name).neq('status', 'retired');
+    if (error) throw error;
+    if (count) throw new HttpError(400, `MCP「${s.name}」還有未下架的版本，請先在代管區塊下架所有版本，再改名、移除或改連線方式`);
+  }
+}
+
 export async function updateTemplate(db: Db, userId: string, id: string, patch: TemplatePatch): Promise<TemplateRow> {
   const template = await getOwnTemplate(db, userId, id);
-  if (template.status === 'published' && patch.mcp_servers) await assertHostedPublished(db, id, patch.mcp_servers);
+  if (patch.mcp_servers) {
+    await assertNoOrphanedVersions(db, id, template.mcp_servers, patch.mcp_servers);
+    // 已上架：原本就在的代管 MCP 要保有已發布版本。新加的代管 MCP 要先存檔才能建立版本，
+    // 所以不擋；第一個版本發布前，新的租用會回 409（頁面會提示）
+    const existing = new Set(template.mcp_servers.filter(isHosted).map((s) => s.name));
+    if (template.status === 'published') await assertHostedPublished(db, id, patch.mcp_servers.filter((s) => existing.has(s.name)));
+  }
   const { process_upload, ...fields } = patch;
   const changes: Record<string, unknown> = { ...fields, updated_at: new Date().toISOString() };
   if (process_upload) Object.assign(changes, await processSkillsUpload(db, id));

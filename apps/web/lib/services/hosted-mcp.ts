@@ -208,7 +208,10 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
     updateVersion(db, version.id, 'deploying', { status: 'failed', log_tail: tail(log ? `${reason}\n${tail(log, LOG_LINES - 1)}` : reason) });
 
   const started = version.deploy_started_at ? Date.parse(version.deploy_started_at) : 0;
-  if (now - started > HOSTED_LIMITS.deployMs) return fail('部署逾時（超過 10 分鐘）', version.log_tail);
+  // 部署只靠讀取推進：創作者離開頁面再回來時可能已過 10 分鐘，但 Sprite 早就裝好；先看狀態再決定是否逾時
+  const timedOut = now - started > HOSTED_LIMITS.deployMs;
+  const TIMEOUT = '部署逾時（超過 10 分鐘）';
+  if (timedOut && !version.sprite_url) return fail(TIMEOUT, version.log_tail);
 
   if (!version.sprite_name) {
     // 先認領：只有把 sprite_name 從 null 寫進去的那個請求負責建立
@@ -234,7 +237,9 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
   const spriteName = version.sprite_name!;
   const state = await sprites.readState(spriteName);
   if (state.phase === 'failed') return fail(state.error, state.log);
-  if (state.phase === 'installing') return updateVersion(db, version.id, 'deploying', { log_tail: tail(state.log) });
+  if (state.phase === 'installing') {
+    return timedOut ? fail(TIMEOUT, state.log) : updateVersion(db, version.id, 'deploying', { log_tail: tail(state.log) });
+  }
 
   await sprites.startService(spriteName, state.start);
   const spriteUrl = version.sprite_url!;
@@ -249,9 +254,8 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
     // 程式可能還在啟動；下次讀取再試，超過 10 分鐘會標成逾時
     const reason = e instanceof Error ? e.message : String(e);
     const program = await sprites.serviceLog(spriteName).catch(() => '');
-    return updateVersion(db, version.id, 'deploying', {
-      log_tail: tail(`${state.log}\n== 程式輸出\n${program}\n等待程式回應：${reason}`),
-    });
+    const log = `${state.log}\n== 程式輸出\n${program}\n等待程式回應：${reason}`;
+    return timedOut ? fail(TIMEOUT, log) : updateVersion(db, version.id, 'deploying', { log_tail: tail(log) });
   }
   if (tools.length === 0) return fail('沒有任何工具', state.log);
   return updateVersion(db, version.id, 'deploying', { status: 'ready', tools, log_tail: tail(state.log) });

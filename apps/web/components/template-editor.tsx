@@ -145,7 +145,10 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
                 ) : d.transport === 'hosted' ? (
                   isSavedHosted(t.mcp_servers, d.name.trim())
                     ? <HostedMcpPanel templateId={t.id} mcpName={d.name.trim()} />
-                    : <p className="hint">先按「儲存」，就能在這裡設定金鑰、上傳程式並部署。</p>
+                    : <p className="hint">
+                        先按「儲存」，就能在這裡設定金鑰、上傳程式並部署。
+                        {t.status === 'published' && '範本已上架：在這個工具發布第一個版本之前，新加入這位顧問的專案會失敗。'}
+                      </p>
                 ) : d.transport === 'remote' ? (
                   <label className="block"><span className="label">網址</span>
                     <input disabled={busy} className="field" placeholder="https://..." value={d.url} onChange={(e) => update({ url: e.target.value })} />

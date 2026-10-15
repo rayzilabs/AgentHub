@@ -230,6 +230,30 @@ describe('代管版本：狀態推進', () => {
     expect(calls).toEqual([]);
   });
 
+  it('超過 10 分鐘才回來讀取，但 Sprite 早已裝好：繼續完成部署，不標逾時', async () => {
+    vi.stubEnv('MCP_SIGNING_KEY', pem);
+    const { id } = await deployingVersion(new Date(Date.now() - 15 * 60_000).toISOString());
+    await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-a', sprite_url: 'https://a.sprites.app' }).eq('id', id);
+    const { ops } = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    const v = await syncVersion(db, id, ops);
+    expect(v.status).toBe('ready');
+    expect(v.tools).toEqual([{ name: 'rate', description: '匯率' }]);
+
+    // 逾時後還在安裝，或程式起不來：才標逾時（不再等下一輪）
+    const late = await deployingVersion(new Date(Date.now() - 15 * 60_000).toISOString());
+    await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-b', sprite_url: 'https://b.sprites.app' }).eq('id', late.id);
+    const installing = fakeSprites({ phase: 'installing', log: 'pip' });
+    expect((await syncVersion(db, late.id, installing.ops)).log_tail).toContain('部署逾時');
+    const crashed = await deployingVersion(new Date(Date.now() - 15 * 60_000).toISOString());
+    await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-c', sprite_url: 'https://c.sprites.app' }).eq('id', crashed.id);
+    const down = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    down.ops.listToolsError = new Error('MCP 回應 502');
+    const failed = await syncVersion(db, crashed.id, down.ops);
+    expect(failed.status).toBe('failed');
+    expect(failed.log_tail).toContain('ModuleNotFoundError');
+    vi.unstubAllEnvs();
+  });
+
   it('程式起不來：維持部署中，日誌附上程式自己的輸出', async () => {
     vi.stubEnv('MCP_SIGNING_KEY', pem);
     const { id } = await deployingVersion();
@@ -299,7 +323,7 @@ describe('代管版本：發布、下架、金鑰', () => {
     expect((await readVersion(v3.id)).status).toBe('failed');
   });
 
-  it('已上架範本：修改時新增的代管 MCP 要有已發布版本；唯一的已發布版本不能下架', async () => {
+  it('已上架範本：可以新增代管 MCP（發布前租用回 409）；唯一的已發布版本不能下架', async () => {
     const creator = await seedUser(db);
     const t = await hostedTemplate(creator.id);
     const v1 = await insertVersion(t.id, 1, 'published');
@@ -308,7 +332,8 @@ describe('代管版本：發布、下架、金鑰', () => {
       { name: 'fin', transport: 'remote' as const, hosted: true, required_secrets: [] },
       { name: 'more', transport: 'remote' as const, hosted: true, required_secrets: [] },
     ];
-    await expectStatus(updateTemplate(db, creator.id, t.id, { mcp_servers: servers }), 400, 'MCP「more」還沒有已發布的版本');
+    // 新增的代管 MCP 要先存檔才能建立版本；只檢查原本就在的代管 MCP
+    expect((await updateTemplate(db, creator.id, t.id, { mcp_servers: servers })).mcp_servers.map((s) => s.name)).toEqual(['fin', 'more']);
 
     const { ops } = fakeSprites();
     await expectStatus(retireVersion(db, creator.id, v1, ops), 409, '這是已上架範本唯一的已發布版本，請先發布新版本');
@@ -337,6 +362,25 @@ describe('代管版本：發布、下架、金鑰', () => {
     } finally {
       await deleteOwnProject(db, renter.id, p.id);
     }
+  });
+
+  it('還有未下架版本的代管 MCP 不能改名、移除或改連線方式；版本都下架後可以', async () => {
+    const creator = await seedUser(db);
+    const t = await hostedTemplate(creator.id);
+    const v1 = await insertVersion(t.id, 1, 'failed');
+    const msg = 'MCP「fin」還有未下架的版本，請先在代管區塊下架所有版本，再改名、移除或改連線方式';
+    await expectStatus(updateTemplate(db, creator.id, t.id, { mcp_servers: [] }), 400, msg);
+    await expectStatus(updateTemplate(db, creator.id, t.id, {
+      mcp_servers: [{ name: 'finance', transport: 'remote', hosted: true, required_secrets: [] }],
+    }), 400, msg);
+    await expectStatus(updateTemplate(db, creator.id, t.id, {
+      mcp_servers: [{ name: 'fin', transport: 'remote', url: 'https://x.example/mcp', required_secrets: [] }],
+    }), 400, msg);
+    // 其他欄位照常可以改
+    expect((await updateTemplate(db, creator.id, t.id, { name: '新名字' })).name).toBe('新名字');
+
+    await db.from('hosted_mcp_versions').update({ status: 'retired' }).eq('id', v1);
+    expect((await updateTemplate(db, creator.id, t.id, { mcp_servers: [] })).mcp_servers).toEqual([]);
   });
 
   it('只有 ready 能發布', async () => {

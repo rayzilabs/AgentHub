@@ -37,6 +37,16 @@ export function pollingIds(versions: Pick<HostedVersionView, 'id' | 'status'>[])
   return versions.filter((v) => v.status === 'deploying').map((v) => v.id);
 }
 
+/** 對每個 id 發一次讀取；同一個 id 上一次還沒回來就跳過（讀取會推進部署，可能遠超過 5 秒） */
+export function pollOnce(ids: string[], inFlight: Set<string>, fetchOne: (id: string) => Promise<unknown>): void {
+  for (const id of ids) {
+    if (inFlight.has(id)) continue;
+    inFlight.add(id);
+    const done = () => { inFlight.delete(id); };
+    fetchOne(id).then(done, done);
+  }
+}
+
 /** 頁面列出的版本：不含已下架，新的在前 */
 export function visibleVersions<T extends Pick<HostedVersionView, 'status' | 'version'>>(versions: T[]): T[] {
   return versions.filter((v) => v.status !== 'retired').sort((a, b) => b.version - a.version);
