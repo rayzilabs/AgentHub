@@ -1,7 +1,9 @@
+import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import type { Db } from '@/lib/supabase/admin';
 
-export type RemoteTarget = { url: string; templateId: string | null; creatorId: string | null };
+/** edgeToken：平台代管時用來通過 Fly 驗證的 Sprites token（Fly 驗證後就拿掉，不會到達創作者的程式） */
+export type RemoteTarget = { url: string; templateId: string | null; creatorId: string | null; edgeToken?: string };
 
 /** 找出顧問鎖定的創作者 MCP 網址；顧問不存在、不屬於這個專案或沒有這個 MCP 時拒絕 */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,14 +20,29 @@ export async function resolveRemoteTarget(db: Db, instanceId: string, mcpName: s
   if (inst.project_id !== projectId) throw new HttpError(403, '這位顧問不屬於這個專案');
   const { data: target, error: targetError } = await db
     .from('remote_mcp_targets')
-    .select('kind, url')
+    .select('kind, url, hosted_version_id')
     .eq('instance_id', instanceId)
     .eq('mcp_name', mcpName)
     .maybeSingle();
   if (targetError) throw targetError;
-  if (!target || target.kind !== 'self' || !target.url) throw new HttpError(404, '找不到這個工具服務');
   const template = inst.template as { creator_id?: string } | null;
-  return { url: target.url, templateId: inst.template_id, creatorId: template?.creator_id ?? null };
+  const base = { templateId: inst.template_id as string | null, creatorId: template?.creator_id ?? null };
+  if (target?.kind === 'hosted' && target.hosted_version_id) {
+    const { data: version, error: versionError } = await db
+      .from('hosted_mcp_versions')
+      .select('status, sprite_url')
+      .eq('id', target.hosted_version_id)
+      .maybeSingle();
+    if (versionError) throw versionError;
+    if (version?.status === 'disabled') throw new HttpError(503, '這個工具服務已被暫停');
+    // 租用時鎖定的是已發布版本；之後只會變成下架或停用
+    if (!version || !['published', 'ready'].includes(version.status) || !version.sprite_url) {
+      throw new HttpError(404, '找不到這個工具服務');
+    }
+    return { ...base, url: `${version.sprite_url}/mcp`, edgeToken: env.spritesToken };
+  }
+  if (!target || target.kind !== 'self' || !target.url) throw new HttpError(404, '找不到這個工具服務');
+  return { ...base, url: target.url };
 }
 
 /** JSON-RPC 本文是 tools/call 時回傳工具名稱（批次取第一個），其餘回傳 null */
@@ -68,9 +85,14 @@ function rpcFailed(text: string): boolean {
   return false;
 }
 
+const WAKING = new Set([502, 503]);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * 把 MCP 請求轉給創作者，回應以串流原樣傳回。
  * onEnd 在回應結束時才呼叫（含串流時間與工具是否回報錯誤）；呼叫端自己中途取消時不呼叫。
+ * opts.edgeToken：Authorization 改用它（平台代管的 Sprite），創作者通行證只放 X-AgentHub-Token。
+ * opts.retries：休眠中的代管 Sprite 喚醒時可能先回 502／503，重試這麼多次。
  */
 export async function forwardToCreator(
   req: Request,
@@ -78,18 +100,24 @@ export async function forwardToCreator(
   url: string,
   token: string,
   onEnd?: (ok: boolean) => Promise<void>,
+  opts: { edgeToken?: string; retries?: number; retryDelayMs?: number } = {},
 ): Promise<Response> {
   const headers = new Headers();
   req.headers.forEach((v, k) => {
     if (FORWARD.includes(k) || k.startsWith('mcp-param-')) headers.set(k, v);
   });
   headers.set('x-agenthub-token', token);
-  headers.set('authorization', `Bearer ${token}`);
+  headers.set('authorization', `Bearer ${opts.edgeToken ?? token}`);
 
   let upstream: Response;
   try {
     // 不跟隨轉址：避免帶著通行證被導到 http 或其他主機
     upstream = await fetch(url, { method: req.method, headers, body, signal: req.signal, redirect: 'manual' });
+    for (let i = 0; i < (opts.retries ?? 0) && WAKING.has(upstream.status) && !req.signal.aborted; i++) {
+      await upstream.body?.cancel();
+      await sleep(opts.retryDelayMs ?? 1000);
+      upstream = await fetch(url, { method: req.method, headers, body, signal: req.signal, redirect: 'manual' });
+    }
   } catch {
     if (!req.signal.aborted) await onEnd?.(false);
     throw new HttpError(502, '工具服務無法連線');

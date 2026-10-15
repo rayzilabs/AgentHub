@@ -31,7 +31,8 @@ async function handle(req: Request, { params }: Ctx): Promise<Response> {
         mcp_name: name, tool, ok, duration_ms: Date.now() - started,
       }).catch((e) => console.error('[mcp] 無法記錄用量', e))
     : undefined;
-  return forwardToCreator(req, body, target.url, token, onEnd);
+  const hosted = target.edgeToken ? { edgeToken: target.edgeToken, retries: 2, retryDelayMs: 1000 } : {};
+  return forwardToCreator(req, body, target.url, token, onEnd, hosted);
 }
 
 export const POST = route(handle);

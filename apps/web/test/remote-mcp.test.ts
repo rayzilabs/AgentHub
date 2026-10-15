@@ -6,7 +6,7 @@ import { GET as jwks } from '@/app/.well-known/jwks.json/route';
 import { POST } from '@/app/api/mcp/[instanceId]/[name]/route';
 import { publicJwk, signProjectToken } from '@/lib/platform-tokens';
 import { forwardToCreator, toolCallName } from '@/lib/services/remote-mcp';
-import { createProject, hireAgent } from '@/lib/services/projects';
+import { createProject, deleteOwnProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
 
@@ -30,16 +30,19 @@ describe('forwardToCreator', () => {
   let server: Server;
   let base: string;
   let reply: Reply;
+  /** 先依序回這些，用完才回 reply */
+  const queue: Reply[] = [];
   const seen: IncomingHttpHeaders[] = [];
 
   beforeAll(async () => {
     server = createServer(async (req, res) => {
       seen.push(req.headers);
       req.resume();
-      res.writeHead(reply.status ?? 200, reply.headers ?? { 'content-type': 'application/json' });
-      for (const c of reply.chunks) {
+      const r = queue.shift() ?? reply;
+      res.writeHead(r.status ?? 200, r.headers ?? { 'content-type': 'application/json' });
+      for (const c of r.chunks) {
         res.write(c);
-        if (reply.delayMs) await new Promise((r) => setTimeout(r, reply.delayMs));
+        if (r.delayMs) await new Promise((resolve) => setTimeout(resolve, r.delayMs));
       }
       res.end();
     });
@@ -65,6 +68,40 @@ describe('forwardToCreator', () => {
     expect(h.cookie).toBeUndefined();
     expect(h.authorization).toBe('Bearer creator-token');
     expect(h['x-agenthub-token']).toBe('creator-token');
+  });
+
+  it('代管：Authorization 用平台的 Sprites token，創作者通行證只放 X-AgentHub-Token', async () => {
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{}}'] };
+    const res = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator-token', undefined, { edgeToken: 'sprites-token' });
+    await res.text();
+    expect(seen.at(-1)!.authorization).toBe('Bearer sprites-token');
+    expect(seen.at(-1)!['x-agenthub-token']).toBe('creator-token');
+  });
+
+  it('代管 Sprite 喚醒中回 502／503：重試（最多 2 次）；沒有設定重試時照原樣回傳', async () => {
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{}}'] };
+    queue.push({ status: 503, chunks: ['waking'] }, { status: 502, chunks: ['waking'] });
+    let before = seen.length;
+    const results: boolean[] = [];
+    const ok = await forwardToCreator(request(), '{}', `${base}/mcp`, 't', async (r) => { results.push(r); }, { retries: 2, retryDelayMs: 0 });
+    expect(ok.status).toBe(200);
+    await ok.text();
+    expect(seen.length - before).toBe(3);
+    expect(results).toEqual([true]);
+
+    queue.push({ status: 503, chunks: ['a'] }, { status: 503, chunks: ['b'] }, { status: 503, chunks: ['c'] });
+    before = seen.length;
+    const down = await forwardToCreator(request(), '{}', `${base}/mcp`, 't', undefined, { retries: 2, retryDelayMs: 0 });
+    expect(down.status).toBe(503);
+    expect(await down.text()).toBe('c');
+    expect(seen.length - before).toBe(3);
+
+    queue.push({ status: 503, chunks: ['once'] });
+    before = seen.length;
+    const plain = await forwardToCreator(request(), '{}', `${base}/mcp`, 't');
+    expect(plain.status).toBe(503);
+    await plain.text();
+    expect(seen.length - before).toBe(1);
   });
 
   it('創作者端要求轉址時不跟過去：回 502、記為失敗', async () => {
@@ -112,14 +149,14 @@ describe('forwardToCreator', () => {
 describe('遠端 MCP 閘道', () => {
   let server: Server;
   let mcpUrl: string;
-  const received: { headers: IncomingHttpHeaders; body: string }[] = [];
+  const received: { headers: IncomingHttpHeaders; body: string; url?: string }[] = [];
 
   beforeAll(async () => {
     server = createServer((req, res) => {
       let body = '';
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
-        received.push({ headers: req.headers, body });
+        received.push({ headers: req.headers, body, url: req.url });
         res.setHeader('content-type', 'application/json');
         res.setHeader('mcp-session-id', 's-1');
         res.end('{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"1.23"}]}}');
@@ -130,6 +167,7 @@ describe('遠端 MCP 閘道', () => {
     vi.stubEnv('RUNTIME_TOKEN_SECRET', SECRET);
     vi.stubEnv('MCP_SIGNING_KEY', pem);
     vi.stubEnv('PLATFORM_URL', 'https://p.test');
+    vi.stubEnv('FLY_SPRITES_TOKEN', 'sprites-test');
   });
 
   afterAll(async () => {
@@ -233,6 +271,61 @@ describe('遠端 MCP 閘道', () => {
     expect((await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET))).status).toBe(502);
     const { data } = await db.from('mcp_usage').select('tool, ok').eq('instance_id', h.instanceId);
     expect(data).toEqual([{ tool: 'rate', ok: false }]);
+  });
+
+  /** 代管版本的 sprite_url 指向本機假伺服器；版本被引用時不能刪，測試結束前先刪掉租用專案 */
+  async function hiredHosted() {
+    const creator = await seedUser(db);
+    const owner = await seedUser(db);
+    const t = await createTemplate(db, creator.id, {
+      name: '代管顧問', description: '', category: '', system_prompt: 'p',
+      mcp_servers: [{ name: 'fin', transport: 'remote', hosted: true, required_secrets: [] }],
+    });
+    const spriteUrl = mcpUrl.slice(0, -'/mcp'.length);
+    const { data: v, error } = await db.from('hosted_mcp_versions').insert({
+      template_id: t.id, mcp_name: 'fin', version: 1, status: 'published', bundle_path: 'x', sprite_name: 'agenthub-mcp-t', sprite_url: spriteUrl,
+    }).select('id').single();
+    if (error) throw error;
+    await publishTemplate(db, creator.id, t.id);
+    const p = await createProject(db, owner.id, 'p');
+    const instanceId = await hireAgent(db, owner.id, p.id, t.id, {});
+    return {
+      creatorId: creator.id, templateId: t.id, projectId: p.id, instanceId, versionId: v.id as string, spriteUrl,
+      cleanup: () => deleteOwnProject(db, owner.id, p.id),
+    };
+  }
+
+  it('代管：轉到版本的 Sprite（/mcp），Fly 用 Sprites token、創作者通行證的 aud 是 Sprite 網址；記錄用量', async () => {
+    const h = await hiredHosted();
+    try {
+      const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET));
+      expect(res.status).toBe(200);
+      await res.text();
+      const got = received.at(-1)!;
+      expect(got.url).toBe('/mcp');
+      expect(got.headers.authorization).toBe('Bearer sprites-test');
+      const pl = (got.headers['x-agenthub-token'] as string).split('.')[1];
+      expect(decode(pl)).toMatchObject({ aud: `${h.spriteUrl}/mcp`, sub: h.instanceId, project_id: h.projectId, template_id: h.templateId });
+      const { data } = await db.from('mcp_usage').select('tool, ok, creator_id').eq('instance_id', h.instanceId);
+      expect(data).toEqual([{ tool: 'rate', ok: true, creator_id: h.creatorId }]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it('代管：版本被停用 503、已下架 404', async () => {
+    const h = await hiredHosted();
+    try {
+      const token = signProjectToken(h.projectId, SECRET);
+      await db.from('hosted_mcp_versions').update({ status: 'disabled' }).eq('id', h.versionId);
+      const disabled = await call(h.instanceId, 'fin', token);
+      expect(disabled.status).toBe(503);
+      expect(await disabled.json()).toEqual({ error: '這個工具服務已被暫停' });
+      await db.from('hosted_mcp_versions').update({ status: 'retired' }).eq('id', h.versionId);
+      expect((await call(h.instanceId, 'fin', token)).status).toBe(404);
+    } finally {
+      await h.cleanup();
+    }
   });
 
   it('不是 tools/call 的請求照常轉送，但不記用量', async () => {
