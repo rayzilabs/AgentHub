@@ -1,0 +1,2 @@
+mcp==2.3.0
+pyjwt[crypto]>=2.15
