@@ -12,6 +12,9 @@ export class SkillZipError extends Error {
 /** 設定區接受 Windows 換行（CRLF）。 */
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const BOM = /^\uFEFF/;
+/** Agent Skills \u898F\u683C\uFF08\u8207 Claude Code \u76F8\u540C\uFF09 */
+const NAME = /^[a-z0-9-]{1,64}$/;
+const DESCRIPTION_MAX = 1024;
 
 function isJunk(file: string): boolean {
   return file.startsWith('__MACOSX/') || file.split('/').pop()!.startsWith('._');
@@ -53,6 +56,14 @@ export function parseSkillsZip(bytes: Uint8Array): SkillMeta[] {
     const missing = [!name && 'name', !description && 'description'].filter(Boolean);
     if (missing.length) {
       problems.push(`${file}：缺少 ${missing.join('、')}`);
+      continue;
+    }
+    if (!NAME.test(name)) {
+      problems.push(`${file}：name「${name}」只能用小寫英文字母、數字和連字號（最多 64 字元）`);
+      continue;
+    }
+    if (description.length > DESCRIPTION_MAX) {
+      problems.push(`${file}：description 最多 ${DESCRIPTION_MAX} 字元（目前 ${description.length} 字元）`);
       continue;
     }
     const duplicateOf = seen.get(name);

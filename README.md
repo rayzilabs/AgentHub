@@ -10,7 +10,7 @@ Production：https://agenthub-kappa-pink.vercel.app
 
 - **上架顧問**：創作者填寫名稱、介紹、system prompt，上傳 skill zip，設定需要的 MCP 工具後發布到市集。市集只公開介紹，不會露出 system prompt、skill 檔與 MCP 連線設定。
 - **一鍵啟用**：啟用時只複製 system prompt、skills 和 MCP 設定；執行環境與記憶都是專案自己的。MCP 需要金鑰時由使用者填寫。
-- **單一顧問**：直接對話，回覆即時串流。顧問可以讀寫專案檔案、執行指令，並自己決定要記住什麼。
+- **單一顧問**：直接對話，回覆即時串流。顧問可以讀寫專案檔案、執行指令，會把你說過的事實、偏好與指示分類記下，並自己更新或刪除過時的記憶（記憶只屬於這個專案）。
 - **多顧問**：加入第二位顧問時自動建立主管。主管可以：
   - **派工**：把工作交給某位顧問，畫面上即時顯示交辦內容、每一步工具（一句說明＋經過時間）與完成狀態。
   - **召開討論**：第一輪所有顧問同時發言，之後依序回應，最多 3 輪；全員表態「同意」就提早結束。主管最後依「各面向建議／共識方案／仍有分歧」寫總結。
@@ -181,7 +181,9 @@ DEMO_PASSWORD=<密碼> pnpm exec tsx scripts/seed-demo.ts
 
 ## 上架顧問的格式
 
-**Skill zip**：每個 skill 一個資料夾，裡面放 `SKILL.md`，開頭用 YAML 寫 `name` 和 `description`。同一個 zip 可以放多個 skill，資料夾裡的其他檔案也會一起帶進 Sprite。
+**Skill zip**：格式與 Claude Code 的 skill 相同。每個 skill 一個資料夾，裡面放 `SKILL.md`，開頭用 YAML 寫 `name`（小寫英文字母、數字、連字號，最多 64 字元）和 `description`（最多 1024 字元）。同一個 zip 可以放多個 skill，資料夾裡的其他檔案也會一起帶進 Sprite。
+
+顧問的 prompt 只列出各 skill 的名稱與說明；工作相符時，顧問用 `skill` 工具載入完整內容。載入時和 Claude Code 一樣支援 `$ARGUMENTS`、`$ARGUMENTS[N]`／`$N`、`${CLAUDE_SKILL_DIR}`，以及在交給模型前先執行的 `` !`指令` ``（以該顧問的沙盒帳號執行）。`allowed-tools`、`model`、`disable-model-invocation` 等其他欄位會接受但忽略；使用者不能用 `/名稱` 直接呼叫 skill。
 
 ```
 skills.zip

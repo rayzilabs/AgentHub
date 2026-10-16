@@ -13,7 +13,10 @@ export type ThreadMessages = {
   updatedAt: string | null;
 };
 
-export type MemoryView = { id: string; instance_id: string | null; agent_name: string | null; content: string; created_at: string };
+export type MemoryView = {
+  id: string; instance_id: string | null; agent_name: string | null;
+  name: string; description: string; type: string; content: string; updated_at: string;
+};
 
 const STALE_RUN_MS = 20 * 60_000;
 
@@ -78,18 +81,20 @@ export async function listMemories(db: Db, userId: string, projectId: string): P
   await getOwnProject(db, userId, projectId);
   const { data, error } = await db
     .from('memories')
-    .select('id, instance_id, content, created_at, agent:agent_instances!memories_instance_id_fkey(name)')
+    .select('id, instance_id, name, description, type, content, updated_at, agent:agent_instances!memories_instance_id_fkey(name)')
     .eq('project_id', projectId)
-    .order('created_at', { ascending: false });
+    .order('updated_at', { ascending: false });
   if (error) throw error;
   return data.map(({ agent, ...m }) => ({ ...m, agent_name: (agent as unknown as { name: string } | null)?.name ?? null }) as MemoryView);
 }
 
-export async function updateMemory(db: Db, userId: string, projectId: string, memoryId: string, content: string): Promise<void> {
+export async function updateMemory(
+  db: Db, userId: string, projectId: string, memoryId: string, patch: { content?: string; description?: string },
+): Promise<void> {
   await getOwnProject(db, userId, projectId);
   const { error } = await db
     .from('memories')
-    .update({ content, updated_at: new Date().toISOString() })
+    .update(patch)
     .eq('id', memoryId)
     .eq('project_id', projectId);
   if (error) throw error;

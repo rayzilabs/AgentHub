@@ -80,6 +80,18 @@ describe('parseSkillsZip', () => {
     ]);
   });
 
+  it('name 只能用小寫英文字母、數字、連字號，最多 64 字元', () => {
+    expect(problemsOf(zip({ 'a/SKILL.md': skill('Credit 5P', '說明') })))
+      .toEqual(['a/SKILL.md：name「Credit 5P」只能用小寫英文字母、數字和連字號（最多 64 字元）']);
+    expect(problemsOf(zip({ 'b/SKILL.md': skill('x'.repeat(65), '說明') }))[0]).toContain('最多 64 字元');
+    expect(parseSkillsZip(zip({ 'c/SKILL.md': skill('credit-5p', '說明') }))[0].name).toBe('credit-5p');
+  });
+
+  it('description 最多 1024 字元', () => {
+    expect(problemsOf(zip({ 'a/SKILL.md': skill('long', '字'.repeat(1025)) })))
+      .toEqual(['a/SKILL.md：description 最多 1024 字元（目前 1025 字元）']);
+  });
+
   it('不是 zip 檔', () => {
     expect(problemsOf(strToU8('not a zip'))).toEqual(['檔案不是有效的 zip']);
   });

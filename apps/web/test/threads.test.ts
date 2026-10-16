@@ -97,14 +97,22 @@ describe('threads service', () => {
     const { owner, project } = await setup();
     const other = await seedUser(db);
     const { data: agent } = await db.from('agent_instances').insert({ project_id: project.id, role: 'consultant', name: '法務顧問' }).select('id').single();
-    const { data: m1 } = await db.from('memories').insert({ project_id: project.id, instance_id: agent!.id, content: '私有記憶' }).select('id').single();
-    await db.from('memories').insert({ project_id: project.id, content: '專案記憶' });
+    const { data: m1 } = await db.from('memories')
+      .insert({ project_id: project.id, instance_id: agent!.id, name: 'style', description: '報告風格', type: 'feedback', content: '私有記憶' })
+      .select('id').single();
+    await db.from('memories').insert({ project_id: project.id, name: 'risk', description: '風險偏好', type: 'user', content: '專案記憶' });
 
     const list = await listMemories(db, owner.id, project.id);
-    expect(list.map((m) => [m.content, m.agent_name]).sort()).toEqual([['專案記憶', null], ['私有記憶', '法務顧問']]);
+    // 依更新時間新到舊
+    expect(list.map((m) => [m.name, m.type, m.description, m.content, m.agent_name])).toEqual([
+      ['risk', 'user', '風險偏好', '專案記憶', null],
+      ['style', 'feedback', '報告風格', '私有記憶', '法務顧問'],
+    ]);
 
-    await updateMemory(db, owner.id, project.id, m1!.id, '改過的記憶');
-    expect((await listMemories(db, owner.id, project.id)).map((m) => m.content)).toContain('改過的記憶');
+    await updateMemory(db, owner.id, project.id, m1!.id, { description: '新說明' });
+    expect((await listMemories(db, owner.id, project.id))[0]).toMatchObject({ name: 'style', description: '新說明', content: '私有記憶' });
+    await updateMemory(db, owner.id, project.id, m1!.id, { content: '改過的記憶' });
+    expect((await listMemories(db, owner.id, project.id))[0]).toMatchObject({ description: '新說明', content: '改過的記憶' });
     await deleteMemory(db, owner.id, project.id, m1!.id);
     expect(await listMemories(db, owner.id, project.id)).toHaveLength(1);
 
