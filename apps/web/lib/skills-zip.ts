@@ -12,7 +12,7 @@ export class SkillZipError extends Error {
 /** 設定區接受 Windows 換行（CRLF）。 */
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const BOM = /^\uFEFF/;
-/** Agent Skills \u898F\u683C\uFF08\u8207 Claude Code \u76F8\u540C\uFF09 */
+/** Agent Skills 規格（與 Claude Code 相同） */
 const NAME = /^[a-z0-9-]{1,64}$/;
 const DESCRIPTION_MAX = 1024;
 
