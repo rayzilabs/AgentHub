@@ -19,13 +19,17 @@ export function splitArgs(args: string): string[] {
   return [...args.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
 }
 
-/** 與 Claude Code 相同的替換規則；一次替換完，參數內容不會再被當成佔位符 */
+/**
+ * 與 Claude Code 相同的替換規則；一次替換完，參數內容不會再被當成佔位符。
+ * 超出參數範圍的 $N 保留原文：本文裡的金額（NT$5,000）或 awk 的 $1 不能被吃掉。
+ */
 export function expandSkill(body: string, o: { dir: string; args: string }): string {
   const list = splitArgs(o.args);
   const expanded = body.replace(PLACEHOLDER, (whole, indexed?: string, positional?: string) => {
     if (whole === '${CLAUDE_SKILL_DIR}') return o.dir;
     if (whole === '$ARGUMENTS') return o.args;
-    return list[Number(indexed ?? positional)] ?? '';
+    if (indexed !== undefined) return list[Number(indexed)] ?? '';
+    return list[Number(positional)] ?? whole;
   });
   return /\$ARGUMENTS/.test(body) || !o.args ? expanded : `${expanded}\n\nARGUMENTS: ${o.args}`;
 }

@@ -61,10 +61,11 @@ export function memoryTools(db: Db, projectId: string, instanceId: string) {
         name: nameField,
         scope: scopeField,
         type: z.enum(MEMORY_TYPES),
-        description: z.string().trim().min(1).max(200).describe('一行說明，之後看索引就能判斷相不相關'),
+        // 不叫 description：進度畫面把工具輸入的 description 當成步驟說明（DESCRIPTION_FIELD 慣例）
+        summary: z.string().trim().min(1).max(200).describe('一行說明，之後看索引就能判斷相不相關'),
         content: z.string().trim().min(1).max(5000),
       }),
-      execute: async ({ name, scope, type, description, content }) => {
+      execute: async ({ name, scope, type, summary: description, content }) => {
         const update = async (id: string) => {
           // updated_at 由資料庫觸發器設定
           const { error } = await db.from('memories').update({ content, description, type }).eq('id', id);
@@ -99,7 +100,7 @@ export function memoryTools(db: Db, projectId: string, instanceId: string) {
           .in('name', names);
         if (error) return { error: error.message };
         return {
-          memories: data.map((m) => ({ name: m.name, scope: scopeOf(m), type: m.type, description: m.description, content: m.content })),
+          memories: data.map((m) => ({ name: m.name, scope: scopeOf(m), type: m.type, summary: m.description, content: m.content })),
           missing: names.filter((n) => !data.some((m) => m.name === n)),
         };
       },

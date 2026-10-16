@@ -35,8 +35,10 @@ describe('expandSkill', () => {
       .toBe('/s/x/a.py q r p | p "q r"');
   });
 
-  it('超出範圍的參數換成空字串', () => {
-    expect(expandSkill('[$2][$ARGUMENTS[5]]', { dir: '/s', args: 'a' })).toBe('[][]');
+  it('超出範圍的 $N 保留原文，金額不會被吃掉；$ARGUMENTS[N] 超出範圍換成空字串', () => {
+    expect(expandSkill('門檻 NT$5,000，停損 $100，[$ARGUMENTS[5]]', { dir: '/s', args: 'a' }))
+      .toBe('門檻 NT$5,000，停損 $100，[]');
+    expect(expandSkill("awk '{print $1}' x.csv", { dir: '/s', args: '' })).toBe("awk '{print $1}' x.csv");
   });
 
   it('本文沒有 $ARGUMENTS 而有參數時，最後加上 ARGUMENTS 行；沒參數則不加', () => {

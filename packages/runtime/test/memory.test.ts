@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
 import { formatMemoryIndex, loadMemoryIndex, memoryTools, type MemoryRow } from '../src/tools/memory';
 import { seedConsultant, seedProject, seedUser, testDb } from './helpers';
 
@@ -14,13 +15,20 @@ async function setup() {
 }
 
 const entry = (name: string, scope: 'private' | 'project', content: string) =>
-  ({ name, scope, type: 'user' as const, description: `${name} 的說明`, content });
+  ({ name, scope, type: 'user' as const, summary: `${name} 的說明`, content });
 
 function row(fields: Partial<MemoryRow>): MemoryRow {
   return { id: '1', instance_id: null, name: 'n', description: 'd', type: 'user', content: 'c', updated_at: '', ...fields };
 }
 
 describe('記憶工具', () => {
+  it('工具輸入不用 description 欄位：進度畫面會把工具輸入的 description 當成步驟說明', () => {
+    const t = memoryTools(db, 'p', 'i');
+    for (const tool of [t.memory_write, t.memory_read, t.memory_delete]) {
+      expect(Object.keys((tool.inputSchema as unknown as z.ZodObject).shape)).not.toContain('description');
+    }
+  });
+
   it('memory_write 新增後同名同 scope 再寫是更新，不會多一筆', async () => {
     const { projectId, a } = await setup();
     const t = memoryTools(db, projectId, a);
@@ -63,7 +71,7 @@ describe('記憶工具', () => {
     const t = memoryTools(db, projectId, a);
     await t.memory_write.execute!(entry('style', 'project', '先給結論'), opts);
     expect(await t.memory_read.execute!({ names: ['style', 'nope'] }, opts)).toEqual({
-      memories: [{ name: 'style', scope: 'project', type: 'user', description: 'style 的說明', content: '先給結論' }],
+      memories: [{ name: 'style', scope: 'project', type: 'user', summary: 'style 的說明', content: '先給結論' }],
       missing: ['nope'],
     });
   });

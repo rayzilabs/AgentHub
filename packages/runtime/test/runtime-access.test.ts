@@ -42,9 +42,9 @@ describe('以 runtime 帳號通行證執行', () => {
     const app = createApp({
       openDb: runtimeDb,
       modelFor: () => mockModel(
-        toolTurn('memory_write', { name: 'risk', scope: 'project', type: 'user', description: '風險偏好', content: '保守' }, 'call-1'),
-        toolTurn('memory_write', { name: 'risk', scope: 'project', type: 'user', description: '風險偏好', content: '積極' }, 'call-2'),
-        toolTurn('memory_write', { name: 'tmp', scope: 'private', type: 'project', description: '暫時', content: '待刪' }, 'call-3'),
+        toolTurn('memory_write', { name: 'risk', scope: 'project', type: 'user', summary: '風險偏好', content: '保守' }, 'call-1'),
+        toolTurn('memory_write', { name: 'risk', scope: 'project', type: 'user', summary: '風險偏好', content: '積極' }, 'call-2'),
+        toolTurn('memory_write', { name: 'tmp', scope: 'private', type: 'project', summary: '暫時', content: '待刪' }, 'call-3'),
         toolTurn('memory_delete', { name: 'tmp', scope: 'private' }, 'call-4'),
         textTurn('已記住'),
       ),
