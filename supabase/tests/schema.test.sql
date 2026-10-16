@@ -2,7 +2,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local role postgres;
 set local search_path to public, extensions;
-select plan(5);
+select plan(7);
 
 select ok(
   (select bool_and(c.relrowsecurity)
@@ -39,6 +39,23 @@ select results_eq(
   $$ select id from storage.buckets where id in ('skills', 'project-files', 'runtime') order by id $$,
   $$ values ('project-files'::text), ('runtime'::text), ('skills'::text) $$,
   '三個 Storage bucket 都存在');
+
+select results_eq(
+  $$ select column_name::text from information_schema.columns
+      where table_schema = 'public' and table_name = 'memories' and column_name in ('name', 'description', 'type')
+        and is_nullable = 'NO' order by column_name $$,
+  $$ values ('description'::text), ('name'::text), ('type'::text) $$,
+  '記憶有必填的名稱、說明、類型');
+
+insert into public.memories (project_id, name, description, type, content)
+values ('00000000-0000-0000-0000-0000000000b1', 'risk', '風險偏好', 'user', '保守');
+
+select throws_ok(
+  $$ insert into public.memories (project_id, name, description, type, content)
+     values ('00000000-0000-0000-0000-0000000000b1', 'risk', '風險偏好', 'user', '積極') $$,
+  '23505',
+  null,
+  '同一專案的共用記憶不能同名');
 
 select * from finish();
 rollback;

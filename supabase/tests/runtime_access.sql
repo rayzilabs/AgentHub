@@ -25,6 +25,10 @@ insert into storage.objects (bucket_id, name) values
   ('skills', 'a1/x.zip'), ('skills', 'a1/y.zip'),
   ('project-files', '00000000-0000-0000-0000-0000000000b1/a.txt'),
   ('project-files', '00000000-0000-0000-0000-0000000000b2/b.txt');
+insert into public.memories (id, project_id, name, description, type, content) values
+  ('00000000-0000-0000-0000-000000000021', '00000000-0000-0000-0000-0000000000b1', 'm', '我的', 'user', '我的記憶'),
+  ('00000000-0000-0000-0000-000000000022', '00000000-0000-0000-0000-0000000000b2', 'm', '別人的', 'user', '別人的記憶'),
+  ('00000000-0000-0000-0000-000000000023', '00000000-0000-0000-0000-0000000000b1', 'gone', '要刪的', 'user', '要刪的記憶');
 
 -- runtime 身分（專案 b1）
 set local role authenticated;
@@ -72,6 +76,34 @@ delete from public.messages where id = '00000000-0000-0000-0000-000000000011';
 do $$ begin
   assert (select content from public.messages where id = '00000000-0000-0000-0000-000000000011') = 'done', '已結束的回覆不能被改或刪';
 end $$;
+-- 記憶：自己專案可改內容、說明、類型，可刪；別的專案的被規則過濾掉（影響 0 列）
+update public.memories set content = '新', description = '新說明', type = 'feedback' where name = 'm';
+delete from public.memories where name = 'gone';
+delete from public.memories where id = '00000000-0000-0000-0000-000000000022';
+do $$ begin
+  assert (select content from public.memories where id = '00000000-0000-0000-0000-000000000021') = '新', 'runtime 改得了自己專案的記憶';
+  assert (select count(*) from public.memories where name = 'gone') = 0, 'runtime 刪得了自己專案的記憶';
+  begin
+    update public.memories set name = 'x';
+    assert false, '不能改記憶名稱';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.memories set updated_at = now();
+    assert false, 'updated_at 由觸發器維護，runtime 不能直接改';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.memories set instance_id = null;
+    assert false, '不能改記憶的歸屬顧問';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.memories set project_id = '00000000-0000-0000-0000-0000000000b2';
+    assert false, '不能把記憶搬到別的專案';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
 insert into public.usage_events (project_id, model) values ('00000000-0000-0000-0000-0000000000b1', 'm');
 do $$ begin
   begin
@@ -99,6 +131,8 @@ do $$ begin
   exception when raise_exception then null;
   end;
 end $$;
+update public.memories set content = '使用者改的';
+delete from public.memories;
 
 -- 匿名（只有公開金鑰）
 set local role anon;
@@ -109,6 +143,13 @@ do $$ begin
     assert false, '匿名不能讀顧問';
   exception when insufficient_privilege then null;
   end;
+end $$;
+
+-- 回到 postgres 檢查：別的專案的記憶沒被 runtime 動到，一般使用者也改不到、刪不到
+set local role postgres;
+do $$ begin
+  assert (select content from public.memories where id = '00000000-0000-0000-0000-000000000022') = '別人的記憶', 'runtime 改不到、刪不到別的專案的記憶';
+  assert (select content from public.memories where id = '00000000-0000-0000-0000-000000000021') = '新', '一般使用者不能直接改或刪記憶';
 end $$;
 
 rollback;

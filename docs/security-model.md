@@ -63,7 +63,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `threads` | ✅ | ❌ | ❌ | ❌ | 自己專案 |
 | `runs` | ✅ | ✅ | 只能改 `status`、`error`、`finished_at` | ❌ | 自己專案的對話 |
 | `messages` | 只能讀 `id`、`thread_id`、`run_id`、`kind`、`content`、`created_at` | ✅ | 只能改還在執行中的 run 的 `final` 的 `content`、`ui_message`、`tool_events`、`updated_at` | 只能刪還在執行中的 run 的空白 `final` | 已結束的歷史訊息不能改、不能刪 |
-| `memories` | ✅ | ✅ | ❌ | ❌ | 自己專案；修改與刪除由使用者在網頁上操作 |
+| `memories` | ✅ | ✅ | 只能改 `content`、`description`、`type`（`updated_at` 由資料庫觸發器維護） | ✅ | 自己專案。顧問之間的私有記憶隔離由 runtime 的程式負責（同一專案的顧問共用一個 runtime 帳號）；使用者也能在網頁上修改與刪除 |
 | `usage_events` | ❌ | ✅ | ❌ | ❌ | 只能新增；計費帳本不能被竄改或偷看 |
 | `remote_mcp_targets` | ❌ | ❌ | ❌ | ❌ | 創作者 MCP 的網址／代管版本；只有閘道（`service_role`）讀得到（子專案 3） |
 | `mcp_usage` | ❌ | ❌ | ❌ | ❌ | 由閘道寫入；runtime 不碰（子專案 3） |
