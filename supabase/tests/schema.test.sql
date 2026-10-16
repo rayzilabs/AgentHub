@@ -10,10 +10,14 @@ select ok(
     where n.nspname = 'public' and c.relkind = 'r'),
   'public 底下所有資料表都開啟 RLS');
 
+-- 子專案 1-C 起，public 的 RLS 規則只開給 runtime 帳號、限自己專案；一般使用者與匿名仍一律拒絕
 select is(
-  (select count(*)::int from pg_policies where schemaname = 'public'),
+  (select count(*)::int from pg_policies
+    where schemaname = 'public'
+      and (roles <> '{authenticated}'::name[]
+           or coalesce(qual, '') || coalesce(with_check, '') not like '%runtime_project()%')),
   0,
-  'public 沒有任何 RLS 規則（一律拒絕直接存取）');
+  'public 的 RLS 規則只開放給 runtime 帳號，且都限 runtime_project()');
 
 insert into auth.users (id, email)
 values ('00000000-0000-0000-0000-0000000000a1', 'owner@test.local');
@@ -40,11 +44,11 @@ select results_eq(
   $$ values ('project-files'::text), ('runtime'::text), ('skills'::text) $$,
   '三個 Storage bucket 都存在');
 
-select results_eq(
-  $$ select column_name::text from information_schema.columns
-      where table_schema = 'public' and table_name = 'memories' and column_name in ('name', 'description', 'type')
-        and is_nullable = 'NO' order by column_name $$,
-  $$ values ('description'::text), ('name'::text), ('type'::text) $$,
+select is(
+  (select count(*)::int from information_schema.columns
+    where table_schema = 'public' and table_name = 'memories'
+      and column_name in ('name', 'description', 'type') and is_nullable = 'NO'),
+  3,
   '記憶有必填的名稱、說明、類型');
 
 insert into public.memories (project_id, name, description, type, content)

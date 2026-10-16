@@ -91,9 +91,10 @@ select is(
 select ok(
   not has_function_privilege('anon', 'public.hire_agent(uuid, uuid, jsonb)', 'execute'),
   'anon 不能執行 hire_agent');
+-- 子專案 1-C 起 authenticated 可以執行，由函式只放行自己專案的 runtime 帳號（runtime_access.sql 驗證）
 select ok(
-  not has_function_privilege('authenticated', 'public.get_project_secrets(uuid)', 'execute'),
-  'authenticated 不能執行 get_project_secrets');
+  not has_function_privilege('anon', 'public.get_project_secrets(uuid)', 'execute'),
+  'anon 不能執行 get_project_secrets');
 
 select * from finish();
 rollback;
