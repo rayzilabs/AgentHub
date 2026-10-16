@@ -118,16 +118,15 @@ describe('POST /chat', () => {
     expect(prompt).toContain('第二個問題');
   });
 
-  it('skills 會同步到工作目錄，prompt 帶出 SKILL.md 路徑', async () => {
+  it('skills 會同步到 skills 資料夾，prompt 列出 skill 名稱與說明', async () => {
     const zipPath = await uploadSkillsZip(db, { 'contract/SKILL.md': '# 審合約' });
-    const env = await seedEnv({ skills_zip_path: zipPath, skills: [{ name: '審合約', description: '檢查風險', path: 'contract' }] });
+    const env = await seedEnv({ skills_zip_path: zipPath, skills: [{ name: 'contract-review', description: '檢查風險', path: 'contract' }] });
     const model = mockModel(textTurn('好'));
     await (await post(app(env, model), { thread_id: env.threadId, text: '看合約' })).text();
     await waitForRunDone(db, env.threadId);
     const skillFile = path.join(skillsDir(env.roots.agentsRoot, env.consultantId), 'contract', 'SKILL.md');
     await expect(stat(skillFile)).resolves.toBeTruthy();
-    // promptText 是 JSON 字串，Windows 路徑的反斜線會被跳脫
-    expect(promptText(model)).toContain(JSON.stringify(skillFile).slice(1, -1));
+    expect(promptText(model)).toContain('- contract-review：檢查風險');
   });
 
   it('瀏覽器中途斷線，run 仍會跑完並寫入 final', async () => {

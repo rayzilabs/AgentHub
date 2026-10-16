@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readUIMessageStream } from 'ai';
@@ -7,6 +8,7 @@ import { buildConsultant, buildManager } from '../src/agents/build';
 import type { Db } from '../src/db';
 import { buildConsultantInstructions, buildManagerInstructions, SUMMARY_HEADINGS } from '../src/agents/prompts';
 import type { ConsultantRunner } from '../src/consultant';
+import { skillsDir } from '../src/sync';
 import { usageRow } from '../src/usage';
 import type { AgentInstance } from '../src/types';
 import { seedConsultant, seedManager, seedProject, seedUser, testDb, tmpRoots } from './helpers';
@@ -37,28 +39,32 @@ function instance(fields: Partial<AgentInstance> = {}): AgentInstance {
 }
 
 describe('buildConsultantInstructions', () => {
-  it('包含創作者 prompt、工作目錄、專案檔案、skill 路徑、記憶與 MCP 警告', () => {
+  it('包含創作者 prompt、工作目錄、專案檔案、skill 清單、記憶與 MCP 警告', () => {
     const text = buildConsultantInstructions({
-      instance: instance({ skills: [{ name: '審合約', description: '檢查合約風險', path: 'contract' }] }),
+      instance: instance({ skills: [{ name: 'contract-review', description: '檢查合約風險', path: 'contract' }] }),
       workDir: '/agents/x',
-      skillsDir: '/agents/x/skills',
       sharedRoot: '/shared',
       sharedFiles: ['財報.pdf'],
-      memories: [{ id: '1', instance_id: null, content: '客戶偏好保守', created_at: '' }],
+      memories: { rows: [{ id: '1', instance_id: null, name: 'risk', description: '客戶偏好保守', type: 'user', content: '保守型', updated_at: '' }], omitted: 0 },
       mcpWarnings: ['MCP「finmind」目前無法使用：timeout'],
     });
     expect(text).toContain('你是法務顧問。');
     expect(text).toContain('/agents/x');
     expect(text).toContain(path.join('/shared', '財報.pdf'));
-    expect(text).toContain(`審合約：檢查合約風險（完整說明：${path.join('/agents/x/skills', 'contract', 'SKILL.md')}）`);
-    expect(text).toContain('- [專案] 客戶偏好保守');
+    expect(text).toContain('- contract-review：檢查合約風險\n');
+    expect(text).toContain('先用 skill 工具載入它');
+    expect(text).not.toContain('SKILL.md');
+    expect(text).toContain('- [專案/user] risk — 客戶偏好保守');
+    expect(text).toContain('user（使用者是誰');
+    expect(text).toContain('不要新增重複的');
+    expect(text).toContain('相對日期');
     expect(text).toContain('MCP「finmind」目前無法使用');
   });
 
   it('沒有檔案、skill、記憶時顯示空狀態', () => {
     const text = buildConsultantInstructions({
-      instance: instance(), workDir: '/w', skillsDir: '/w/skills', sharedRoot: '/shared',
-      sharedFiles: [], memories: [], mcpWarnings: [],
+      instance: instance(), workDir: '/w', sharedRoot: '/shared',
+      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
     });
     expect(text).toContain('（目前沒有專案檔案）');
     expect(text).toContain('（沒有 skill）');
@@ -89,7 +95,7 @@ describe('usageRow', () => {
 });
 
 describe('buildConsultant', () => {
-  it('組出可串流的 agent，帶齊內建工具與 MCP 工具', async () => {
+  it('組出可串流的 agent，帶齊內建工具與 MCP 工具；沒有 skill 時不提供 skill 工具', async () => {
     const projectId = await seedProject(db, await seedUser(db));
     const id = await seedConsultant(db, projectId);
     const roots = await tmpRoots();
@@ -108,11 +114,35 @@ describe('buildConsultant', () => {
       }
       expect(last?.parts.some((p) => p.type === 'text' && p.text === '收到')).toBe(true);
       const toolNames = model.doStreamCalls[0].tools?.map((t) => t.name).sort();
-      expect(toolNames).toEqual(['bash', 'echo__echo', 'read_file', 'recall', 'remember', 'write_file']);
+      expect(toolNames).toEqual(['bash', 'echo__echo', 'memory_delete', 'memory_read', 'memory_write', 'read_file', 'write_file']);
       expect(promptText(model)).toContain('你是法務顧問。');
     } finally {
       await built.close();
     }
+  });
+
+  it('有 skill 的顧問提供 skill 工具，載入的本文交回模型', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const id = await seedConsultant(db, projectId);
+    const roots = await tmpRoots();
+    const dir = path.join(skillsDir(roots.agentsRoot, id), 'contract');
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'SKILL.md'), '---\nname: contract-review\ndescription: 檢查合約風險\n---\n\n逐條檢查違約條款');
+    const model = mockModel(toolTurn('skill', { name: 'contract-review' }), textTurn('完成'));
+    const built = await buildConsultant({
+      db, model,
+      config: { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot },
+      instance: instance({ id, project_id: projectId, skills: [{ name: 'contract-review', description: '檢查合約風險', path: 'contract' }] }),
+      sharedFiles: [],
+      secrets: {},
+    });
+    try {
+      for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '看合約' }] }) })) { /* drain */ }
+    } finally {
+      await built.close();
+    }
+    expect(model.doStreamCalls[0].tools?.map((t) => t.name)).toContain('skill');
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).toContain('逐條檢查違約條款');
   });
 
   it('過了收尾時間：不准再用工具，指示帶收尾說明；還沒到則照常', async () => {
@@ -177,7 +207,7 @@ describe('buildManagerInstructions', () => {
         instance({ id: 'c-1', name: '法務顧問', description: '契約與法遵' }),
         instance({ id: 'c-2', name: '工程顧問', description: '' }),
       ],
-      memories: [],
+      memories: { rows: [], omitted: 0 },
       sharedRoot: '/shared',
       sharedFiles: ['需求.md'],
     });
@@ -192,7 +222,7 @@ describe('buildManagerInstructions', () => {
 });
 
 describe('buildManager', () => {
-  it('主管只有 read_file、remember、recall、assign_task、convene_discussion', async () => {
+  it('主管只有 read_file、記憶工具、assign_task、convene_discussion', async () => {
     const projectId = await seedProject(db, await seedUser(db));
     const managerId = await seedManager(db, projectId);
     const roots = await tmpRoots();
@@ -209,7 +239,7 @@ describe('buildManager', () => {
     });
     for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '嗨' }] }) })) { /* drain */ }
     expect(model.doStreamCalls[0].tools?.map((t) => t.name).sort()).toEqual([
-      'assign_task', 'convene_discussion', 'read_file', 'recall', 'remember',
+      'assign_task', 'convene_discussion', 'memory_delete', 'memory_read', 'memory_write', 'read_file',
     ]);
     expect(promptText(model)).toContain('（id: c-1）');
   });

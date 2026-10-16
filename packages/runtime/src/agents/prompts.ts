@@ -1,10 +1,19 @@
 import path from 'node:path';
-import { formatMemoryBlock, type MemoryRow } from '../tools/memory';
+import { formatMemoryIndex, type MemoryIndex } from '../tools/memory';
 import type { AgentInstance } from '../types';
 
 export const SUMMARY_HEADINGS = ['## 各面向建議', '## 共識方案', '## 仍有分歧'] as const;
 
-const MEMORY_RULE = '只有使用者明確說過的事實與偏好，才用 remember 記下來。你自己或其他 agent 推論出的內容不要記。';
+const MEMORY_RULES = [
+  '記憶規則：',
+  '- 記憶分四類：user（使用者是誰：角色、背景、偏好）、feedback（使用者對你工作方式的指示，包含糾正與認可）、project（這個專案進行中的事實、目標、限制、期限）、reference（外部資源的位置）。',
+  '- 只記使用者明確說過的事實、偏好與指示。你自己或其他 agent 推論出的內容、派工與討論的內容不要記。',
+  '- 寫之前先看索引有沒有相同主題的記憶，有就用同一個名稱以 memory_write 更新，不要新增重複的；發現記憶錯了或過時就更新，或用 memory_delete 刪除。',
+  '- 一筆記憶一件事。名稱用簡短的英文小寫加連字號；說明寫一行，讓之後看索引就能判斷相不相關。',
+  '- feedback 與 project 類的內容寫成：事實，接著「為什麼：」與「怎麼用：」各一行。',
+  '- 「明天」「下週」這類相對日期換成絕對日期。',
+  '- 能從專案檔案或這次對話直接得知的東西不要記。',
+].join('\n');
 
 function filesSection(sharedRoot: string, sharedFiles: string[]): string {
   const files = sharedFiles.length
@@ -13,27 +22,24 @@ function filesSection(sharedRoot: string, sharedFiles: string[]): string {
   return ['## 專案檔案', files].join('\n');
 }
 
-function memorySection(memories: MemoryRow[]): string {
-  return ['## 記憶', formatMemoryBlock(memories), MEMORY_RULE].join('\n');
+function memorySection(memories: MemoryIndex): string {
+  return ['## 記憶', '以下是記憶索引。需要細節時用 memory_read 讀內容。', formatMemoryIndex(memories), MEMORY_RULES].join('\n');
 }
 
 export type ConsultantPromptInput = {
   instance: AgentInstance;
   workDir: string;
-  skillsDir: string;
   sharedRoot: string;
   sharedFiles: string[];
-  memories: MemoryRow[];
+  memories: MemoryIndex;
   mcpWarnings: string[];
 };
 
 export function buildConsultantInstructions(p: ConsultantPromptInput): string {
   const skills = p.instance.skills.length
     ? [
-        ...p.instance.skills.map(
-          (s) => `- ${s.name}：${s.description}（完整說明：${path.join(p.skillsDir, s.path, 'SKILL.md')}）`,
-        ),
-        '使用某個 skill 之前，先用 read_file 讀它的 SKILL.md，再照著做。',
+        ...p.instance.skills.map((s) => `- ${s.name}：${s.description}`),
+        '工作內容和上面某個 skill 相符時，這是必要步驟：先用 skill 工具載入它，再開始回答或使用其他工具。不要只憑名稱和說明猜內容。',
       ].join('\n')
     : '（沒有 skill）';
 
@@ -57,7 +63,7 @@ export function buildConsultantInstructions(p: ConsultantPromptInput): string {
 
 export type ManagerPromptInput = {
   consultants: AgentInstance[];
-  memories: MemoryRow[];
+  memories: MemoryIndex;
   sharedRoot: string;
   sharedFiles: string[];
 };

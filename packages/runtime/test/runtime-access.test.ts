@@ -41,7 +41,13 @@ describe('以 runtime 帳號通行證執行', () => {
     const token = await runtimeToken(db, env.projectId);
     const app = createApp({
       openDb: runtimeDb,
-      modelFor: () => mockModel(toolTurn('remember', { content: '客戶偏好保守', scope: 'project' }), textTurn('已記住')),
+      modelFor: () => mockModel(
+        toolTurn('memory_write', { name: 'risk', scope: 'project', type: 'user', description: '風險偏好', content: '保守' }, 'call-1'),
+        toolTurn('memory_write', { name: 'risk', scope: 'project', type: 'user', description: '風險偏好', content: '積極' }, 'call-2'),
+        toolTurn('memory_write', { name: 'tmp', scope: 'private', type: 'project', description: '暫時', content: '待刪' }, 'call-3'),
+        toolTurn('memory_delete', { name: 'tmp', scope: 'private' }, 'call-4'),
+        textTurn('已記住'),
+      ),
       config: env.config,
     });
     const res = await post(app, env.threadId, token);
@@ -58,8 +64,9 @@ describe('以 runtime 帳號通行證執行', () => {
     expect(msgs!.map((m) => m.kind)).toEqual(['user', 'final']);
     expect(msgs![1].content).toBe('已記住');
 
-    const { data: memories } = await db.from('memories').select('content, instance_id').eq('project_id', env.projectId);
-    expect(memories).toEqual([{ content: '客戶偏好保守', instance_id: null }]);
+    // 新增、同名更新、刪除都要通過 runtime 帳號的權限
+    const { data: memories } = await db.from('memories').select('name, content, instance_id').eq('project_id', env.projectId);
+    expect(memories).toEqual([{ name: 'risk', content: '積極', instance_id: null }]);
 
     const { data: usage } = await db.from('usage_events').select('creator_id').eq('project_id', env.projectId);
     expect(usage!.length).toBeGreaterThan(0);

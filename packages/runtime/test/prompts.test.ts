@@ -11,7 +11,7 @@ function consultant(name: string): AgentInstance {
 
 describe('主管 prompt 的分工規則', () => {
   const text = buildManagerInstructions({
-    consultants: [consultant('A'), consultant('B')], memories: [], sharedRoot: '/shared', sharedFiles: [],
+    consultants: [consultant('A'), consultant('B')], memories: { rows: [], omitted: 0 }, sharedRoot: '/shared', sharedFiles: [],
   });
 
   it('後一步要用前一步的結果時，依序派工並把結果交給下一步', () => {
@@ -31,7 +31,7 @@ describe('主管 prompt 的分工規則', () => {
 describe('顧問 prompt', () => {
   it('工具回傳 download_url 時用 curl 下載到工作目錄，不把大量資料貼進回覆', () => {
     const text = buildConsultantInstructions({
-      instance: consultant('A'), workDir: '/w', sharedRoot: '/shared', skillsDir: '/skills', sharedFiles: [], memories: [], mcpWarnings: [],
+      instance: consultant('A'), workDir: '/w', sharedRoot: '/shared', sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
     });
     expect(text).toContain('download_url');
     expect(text).toContain('curl');

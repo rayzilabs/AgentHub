@@ -12,7 +12,8 @@ import { agentDir, skillsDir } from '../sync';
 import { createSandbox, sandboxUserFor } from '../sandbox';
 import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
-import { loadMemories, memoryTools } from '../tools/memory';
+import { loadMemoryIndex, memoryTools } from '../tools/memory';
+import { skillTool } from '../tools/skill';
 import type { RunClock } from '../run-clock';
 import type { AgentInstance } from '../types';
 import type { StepLike } from '../usage';
@@ -120,11 +121,10 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
   const gateway = ctx.gateway && { ...ctx.gateway, instanceId: ctx.instance.id };
   const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir, sandbox, undefined, undefined, gateway);
   try {
-    const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
+    const memories = await loadMemoryIndex(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
     const instructions = buildConsultantInstructions({
       instance: ctx.instance,
       workDir,
-      skillsDir: skillsDir(ctx.config.AGENTS_ROOT, ctx.instance.id),
       sharedRoot: ctx.config.SHARED_ROOT,
       sharedFiles: ctx.sharedFiles,
       memories,
@@ -138,6 +138,11 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),
       ...mcp.tools,
     };
+    if (ctx.instance.skills.length > 0) {
+      tools.skill = skillTool({
+        skills: ctx.instance.skills, skillsDir: skillsDir(ctx.config.AGENTS_ROOT, ctx.instance.id), sandbox,
+      });
+    }
 
     const agent = new ToolLoopAgent({
       model: ctx.model,
@@ -171,7 +176,7 @@ export type ManagerContext = {
 };
 
 export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
-  const memories = await loadMemories(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id);
+  const memories = await loadMemoryIndex(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id);
   const instructions = buildManagerInstructions({
     consultants: ctx.consultants,
     memories,

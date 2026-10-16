@@ -48,7 +48,7 @@ apps/web/                Next.js 16（App Router），部署到 Vercel，root di
   scripts/               seed-demo、smoke、redeploy-runtime
 packages/runtime/        agent runtime，esbuild 打包成單一 dist/main.js
   src/agents/            主管 / 顧問的 prompt 與組裝
-  src/tools/             bash、files、memory、delegate（派工）、discuss（討論）
+  src/tools/             bash、files、skill（載入 skill）、memory（記憶索引與讀寫刪）、delegate（派工）、discuss（討論）
 supabase/migrations/     schema、RPC（hire_agent、get_project_secrets）、buckets
 supabase/tests/          pgTAP
 ```
