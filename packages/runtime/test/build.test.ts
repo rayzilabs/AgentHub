@@ -4,11 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readUIMessageStream } from 'ai';
 import { describe, expect, it, vi } from 'vitest';
-import { buildConsultant, buildManager } from '../src/agents/build';
+import { buildConsultant, buildManager, MAX_STEPS } from '../src/agents/build';
 import type { Db } from '../src/db';
 import { buildConsultantInstructions, buildManagerInstructions, SUMMARY_HEADINGS } from '../src/agents/prompts';
 import type { ConsultantRunner } from '../src/consultant';
 import { skillsDir } from '../src/sync';
+import { textOf } from '../src/ui-stream';
 import { usageRow } from '../src/usage';
 import type { AgentInstance } from '../src/types';
 import { seedConsultant, seedManager, seedProject, seedUser, testDb, tmpRoots } from './helpers';
@@ -163,6 +164,27 @@ describe('buildConsultant', () => {
     }
   });
 
+  it('最後一步不准用工具，指示帶收尾說明，一定會寫出回覆', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const id = await seedConsultant(db, projectId);
+    const roots = await tmpRoots();
+    const config = { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot };
+    const toolTurns = Array.from({ length: MAX_STEPS - 1 }, (_, i) => toolTurn('read_file', { path: 'nope.txt' }, `call-${i}`));
+    const model = mockModel(...toolTurns, textTurn('整理目前結果'));
+    const built = await buildConsultant({ db, model, config, instance: instance({ id, project_id: projectId }), sharedFiles: [], secrets: {} });
+    let last;
+    try {
+      for await (const m of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '你好' }] }) })) last = m;
+    } finally {
+      await built.close();
+    }
+    expect(model.doStreamCalls).toHaveLength(MAX_STEPS);
+    expect(model.doStreamCalls[MAX_STEPS - 2].toolChoice?.type).not.toBe('none');
+    expect(model.doStreamCalls[MAX_STEPS - 1].toolChoice).toEqual({ type: 'none' });
+    expect(promptText(model, MAX_STEPS - 1)).toContain('工具使用次數已達上限');
+    expect(textOf(last)).toBe('整理目前結果');
+  });
+
   it('依 config 的 SANDBOX_USER 建立沙盒：bash 以該帳號執行', async () => {
     const projectId = await seedProject(db, await seedUser(db));
     const id = await seedConsultant(db, projectId);
@@ -262,5 +284,26 @@ describe('buildManager', () => {
     for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '嗨' }] }) })) { /* drain */ }
     expect(model.doStreamCalls[0].toolChoice).toEqual({ type: 'none' });
     expect(promptText(model)).toContain('彙整各顧問已交回的內容');
+  });
+
+  it('最後一步：主管不准再用工具，要彙整已有結果', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const managerId = await seedManager(db, projectId);
+    const roots = await tmpRoots();
+    const toolTurns = Array.from({ length: MAX_STEPS - 1 }, (_, i) => toolTurn('read_file', { path: 'nope.txt' }, `call-${i}`));
+    const model = mockModel(...toolTurns, textTurn('總結'));
+    const built = await buildManager({
+      db, model,
+      config: { PROJECT_ID: projectId, SHARED_ROOT: roots.sharedRoot },
+      manager: instance({ id: managerId, project_id: projectId, role: 'manager', name: '主管' }),
+      consultants: [instance({ id: 'c-1', name: 'A' }), instance({ id: 'c-2', name: 'B' })],
+      sharedFiles: [],
+      runner: async function* () {},
+      record: async () => {},
+    });
+    for await (const _ of readUIMessageStream({ stream: await built.streamUI({ messages: [{ role: 'user', content: '嗨' }] }) })) { /* drain */ }
+    expect(model.doStreamCalls[MAX_STEPS - 1].toolChoice).toEqual({ type: 'none' });
+    expect(promptText(model, MAX_STEPS - 1)).toContain('工具使用次數已達上限');
+    expect(promptText(model, MAX_STEPS - 1)).toContain('彙整各顧問已交回的內容');
   });
 });

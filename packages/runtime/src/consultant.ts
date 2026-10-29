@@ -5,7 +5,7 @@ import type { Db } from './db';
 import { ConsultantStoppedError } from './errors';
 import { groupSecrets } from './project-store';
 import type { AgentInstance, SecretRow } from './types';
-import { hasContent, readSnapshots } from './ui-stream';
+import { readSnapshots, textOf } from './ui-stream';
 import { usageRecorder } from './usage';
 
 export type ConsultantRunner = (instance: AgentInstance, task: string, abortSignal?: AbortSignal) => AsyncGenerator<UIMessage>;
@@ -53,7 +53,7 @@ export function createConsultantRunner(deps: ConsultantRunnerDeps): ConsultantRu
         if (stopSignal?.aborted && !abortSignal?.aborted) throw new ConsultantStoppedError(`${instance.name} 超過時間上限`);
         throw new Error(r.value.failure);
       }
-      if (!hasContent(r.value.final)) throw new Error(`${instance.name} 沒有產生任何回覆`);
+      if (!textOf(r.value.final)) throw new Error(`${instance.name} 沒有產生任何回覆`);
     } finally {
       await built.close();
     }

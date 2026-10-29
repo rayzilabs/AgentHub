@@ -232,9 +232,10 @@ export async function startRun(
     } else {
       await dropFinal();
     }
+    // 只有工具紀錄、沒有文字仍要存下來（事後除錯用），但不算有回覆
     const error = timedOut
       ? TIMEOUT_ERROR
-      : failure ?? saveError ?? (hasContent(final) ? undefined : NO_REPLY_ERROR);
+      : failure ?? saveError ?? (textOf(final) ? undefined : NO_REPLY_ERROR);
     return error ? { status: 'failed', error } : { status: 'succeeded' };
   };
 

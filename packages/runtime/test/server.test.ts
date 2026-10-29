@@ -186,6 +186,17 @@ describe('POST /chat', () => {
     expect((await messagesOf(env.threadId)).map((m) => m.kind)).toEqual(['user']);
   });
 
+  it('只有工具呼叫、沒有文字回覆：run 標成 failed，工具紀錄仍存成 final', async () => {
+    const env = await seedEnv();
+    const model = mockModel(toolTurn('read_file', { path: 'nope.txt' }), emptyTurn());
+    await (await post(app(env, model), { thread_id: env.threadId, text: '問題' })).text();
+    const run = await waitForRunDone(db, env.threadId);
+    expect(run).toMatchObject({ status: 'failed', error: '模型沒有產生回覆' });
+    const final = (await messagesOf(env.threadId)).find((m) => m.kind === 'final');
+    expect(final.content).toBe('');
+    expect(final.tool_events.map((e: { tool: string }) => e.tool)).toEqual(['read_file']);
+  });
+
   it('模型卡住不回應：超過時間上限後 run 標成 failed，回應串流也會結束', async () => {
     const env = await seedEnv();
     const start = Date.now();

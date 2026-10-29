@@ -76,6 +76,7 @@ export function toolRecords(m: UIMessage): ToolRecord[] {
   });
 }
 
+/** 有沒有任何值得存下來的內容（文字或工具紀錄）；算不算有回覆要看 textOf */
 export function hasContent(m: UIMessage | undefined): m is UIMessage {
   return !!m && m.parts.some((p) => p.type === 'text' || p.type === 'dynamic-tool' || p.type.startsWith('tool-'));
 }

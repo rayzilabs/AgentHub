@@ -24,22 +24,35 @@ import { buildConsultantInstructions, buildManagerInstructions } from './prompts
 
 export const MAX_STEPS = 30;
 
-export const CONSULTANT_WRAP_UP =
-  '時間已到，不能再使用工具。請根據目前已取得的結果直接回覆，並明確列出哪些部分沒有完成、原因是時間不足。';
-export const MANAGER_WRAP_UP =
-  '時間已到，不能再使用工具。請彙整各顧問已交回的內容直接回覆使用者；缺漏或沒有完成的部分要明講，不要自行補數字。';
+type WrapUpNotes = { time: string; steps: string };
+
+export const CONSULTANT_WRAP_UP: WrapUpNotes = {
+  time: '時間已到，不能再使用工具。請根據目前已取得的結果直接回覆，並明確列出哪些部分沒有完成、原因是時間不足。',
+  steps: '工具使用次數已達上限，不能再使用工具。請根據目前已取得的結果直接回覆，並明確列出哪些部分沒有完成、原因是工具使用次數用完。',
+};
+export const MANAGER_WRAP_UP: WrapUpNotes = {
+  time: '時間已到，不能再使用工具。請彙整各顧問已交回的內容直接回覆使用者；缺漏或沒有完成的部分要明講，不要自行補數字。',
+  steps: '工具使用次數已達上限，不能再使用工具。請彙整各顧問已交回的內容直接回覆使用者；缺漏或沒有完成的部分要明講，不要自行補數字。',
+};
 
 /**
- * 過了 at 之後的每一步都不准呼叫工具，並在指示最後補上收尾說明。
+ * 過了 at 之後的每一步、以及最後一步，都不准呼叫工具，並在指示最後補上收尾說明。
+ * 最後一步若還在呼叫工具，迴圈結束時就沒有任何文字回覆。
  * 用 toolChoice 而不是清空工具：對話歷史裡已有工具呼叫，Gemini 需要看到工具定義。
  */
-export function wrapUpStep(at: number | undefined, instructions: string, note: string) {
-  if (at === undefined) return undefined;
-  const wrapped = `${instructions}
+export function wrapUpStep(at: number | undefined, instructions: string, notes: WrapUpNotes) {
+  const wrapped = (note: string) => ({
+    toolChoice: 'none' as const,
+    instructions: `${instructions}
 
-## 時間到
-${note}`;
-  return () => (Date.now() >= at ? { toolChoice: 'none' as const, instructions: wrapped } : {});
+## 收尾
+${note}`,
+  });
+  return ({ stepNumber }: { stepNumber: number }) => {
+    if (at !== undefined && Date.now() >= at) return wrapped(notes.time);
+    if (stepNumber >= MAX_STEPS - 1) return wrapped(notes.steps);
+    return {};
+  };
 }
 
 export type ConsultantContext = {

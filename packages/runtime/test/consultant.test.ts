@@ -5,7 +5,7 @@ import { createRun } from '../src/run-store';
 import { loadInstances } from '../src/project-store';
 import { textOf } from '../src/ui-stream';
 import { seedConsultant, seedProject, seedThread, seedUser, testDb, tmpRoots, waitFor } from './helpers';
-import { failingModel, mockModel, promptText, textTurn } from './mock-model';
+import { emptyTurn, failingModel, mockModel, promptText, textTurn, toolTurn } from './mock-model';
 import type { LanguageModel } from 'ai';
 
 const db = testDb();
@@ -47,6 +47,14 @@ describe('createConsultantRunner', () => {
       for await (const _ of run(instance, '任務')) { /* drain */ }
     };
     await expect(consume()).rejects.toThrow('顧問掛了');
+  });
+
+  it('只有工具呼叫、沒有文字回覆：丟出錯誤', async () => {
+    const { run, instance } = await setup(mockModel(toolTurn('read_file', { path: 'nope.txt' }), emptyTurn()));
+    const consume = async () => {
+      for await (const _ of run(instance, '任務')) { /* drain */ }
+    };
+    await expect(consume()).rejects.toThrow('沒有產生任何回覆');
   });
 
   it('超過 stopAt：中止顧問並丟出 ConsultantStoppedError', async () => {
