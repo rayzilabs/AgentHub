@@ -16,6 +16,12 @@ describe('模型代理', () => {
       req.on('data', (c) => { body += c; });
       req.on('end', () => {
         seen.push({ url: req.url, headers: req.headers, body });
+        if (req.url?.includes('fail-model')) {
+          res.statusCode = 400;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: { code: 400, message: 'The input token count exceeds the maximum number of tokens allowed 32768.', status: 'INVALID_ARGUMENT' } }));
+          return;
+        }
         res.setHeader('content-type', 'text/event-stream');
         res.write('data: {"a":1}\n\n');
         res.end('data: {"a":2}\n\n');
@@ -32,14 +38,34 @@ describe('模型代理', () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
-  const call = (path: string[], headers: Record<string, string>) => POST(
+  const call = (path: string[], headers: Record<string, string>, body = '{"contents":[]}') => POST(
     new Request(`https://p.test/api/runtime/model/${path.join('/')}?alt=sse`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: 'sb=1', ...headers },
-      body: '{"contents":[]}',
+      body,
     }),
     { params: Promise.resolve({ path }) },
   );
+
+  it('上游回錯誤時，錯誤訊息附上請求形狀（只有角色、類型、工具名與字元數，不含內容）', async () => {
+    const secretText = '不可以出現在診斷裡的內容';
+    const body = JSON.stringify({
+      systemInstruction: { parts: [{ text: 'sys' }] },
+      contents: [
+        { role: 'user', parts: [{ text: secretText }] },
+        { role: 'model', parts: [{ functionCall: { name: 'etf__report_inputs', args: {} }, thoughtSignature: 'sig'.repeat(10) }] },
+        { role: 'user', parts: [{ functionResponse: { name: 'etf__report_inputs', response: { content: 'x'.repeat(5000) } } }] },
+      ],
+    });
+    const res = await call(['models', 'fail-model:streamGenerateContent'], { 'x-goog-api-key': signProjectToken('p1', SECRET) }, body);
+    expect(res.status).toBe(400);
+    const { error } = await res.json();
+    expect(error.message).toContain('The input token count exceeds the maximum number of tokens allowed 32768.');
+    expect(error.message).toContain('[診斷]');
+    expect(error.message).toMatch(/#2 user functionResponse:etf__report_inputs \d{4,}/);
+    expect(error.message).toContain('sig=30');
+    expect(error.message).not.toContain(secretText);
+  });
 
   it('驗證專案通行證後換上 Vertex 金鑰轉送，串流原樣回傳', async () => {
     const res = await call(['models', 'gemini-x:streamGenerateContent'], { 'x-goog-api-key': signProjectToken('p1', SECRET) });

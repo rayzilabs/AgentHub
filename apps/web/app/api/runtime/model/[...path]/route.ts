@@ -1,5 +1,6 @@
 import { env } from '@/lib/env';
 import { HttpError, route } from '@/lib/http';
+import { describeRequest } from '@/lib/model-diagnostics';
 import { verifyProjectToken } from '@/lib/platform-tokens';
 
 export const maxDuration = 300;
@@ -28,12 +29,35 @@ async function handle(req: Request, { params }: Ctx): Promise<Response> {
     if (v) headers.set(k, v);
   }
   const started = Date.now();
-  const upstream = await fetch(target, { method: 'POST', headers, body: await req.text(), signal: req.signal });
+  const body = await req.text();
+  const upstream = await fetch(target, { method: 'POST', headers, body, signal: req.signal });
   console.log(JSON.stringify({ event: 'model_proxy', project_id: projectId, path: path.join('/'), status: upstream.status, ms: Date.now() - started }));
+  if (!upstream.ok) return withDiagnosis(upstream, body, projectId);
   const out = new Headers();
   const type = upstream.headers.get('content-type');
   if (type) out.set('content-type', type);
   return new Response(upstream.body, { status: upstream.status, headers: out });
+}
+
+/**
+ * 上游回錯誤時，在錯誤訊息後附上請求形狀（不含內容）。runtime 會把錯誤訊息存進 runs.error，
+ * 不必有 Vercel 權限也查得到是哪一段造成的。
+ */
+async function withDiagnosis(upstream: Response, body: string, projectId: string): Promise<Response> {
+  const text = await upstream.text();
+  const diagnosis = describeRequest(body);
+  console.log(JSON.stringify({ event: 'model_proxy_error', project_id: projectId, status: upstream.status, error: text.slice(0, 500), diagnosis }));
+  let out = text;
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: string } };
+    if (parsed.error) {
+      parsed.error.message = `${parsed.error.message ?? ''} ${diagnosis}`;
+      out = JSON.stringify(parsed);
+    }
+  } catch {
+    // 不是 JSON 就原樣回傳
+  }
+  return new Response(out, { status: upstream.status, headers: { 'content-type': upstream.headers.get('content-type') ?? 'application/json' } });
 }
 
 export const POST = route(handle);
