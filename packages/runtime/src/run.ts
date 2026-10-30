@@ -1,4 +1,5 @@
 import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessage, type UIMessageChunk } from 'ai';
+import { activeRuns } from './active-runs';
 import { buildConsultant, buildManager, type BuiltAgent, type PlatformGateway } from './agents/build';
 import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
@@ -154,6 +155,7 @@ export async function startRun(
   await assertThreadInProject(db, req.threadId, config.PROJECT_ID);
   await cleanOrphanRunsOnce(runDeps, db);
   const runId = await createRun(db, req.threadId);
+  activeRuns.add(runId);
 
   const keepAlive = await startKeepAlive(config.SPRITE_API_SOCK, `run-${runId}`);
   const runTimeoutMs = deps.runTimeoutMs ?? RUN_TIMEOUT_MS;
@@ -172,6 +174,8 @@ export async function startRun(
     clearTimeout(hardTimer);
     await closeAgent?.().catch(() => undefined);
     await finishRun(db, runId, result).catch((e) => console.error('[run] 無法更新 run 狀態', errorText(e)));
+    // 狀態寫完才移除：平台在「已移除、狀態還沒寫」的空檔問到時，會誤判成中斷
+    activeRuns.delete(runId);
     await keepAlive.stop();
   };
 

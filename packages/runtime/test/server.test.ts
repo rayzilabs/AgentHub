@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -58,6 +59,27 @@ describe('GET /health', () => {
     const env = await seedEnv();
     const res = await app(env, mockModel()).request('/health');
     expect(await res.json()).toEqual({ ok: true, project_id: env.projectId });
+  });
+});
+
+describe('GET /runs/:id', () => {
+  it('在跑時 active=true，結束後 active=false', async () => {
+    const env = await seedEnv();
+    const a = app(env, hangingModel(), 1_000);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    const run = await waitFor(async () => (await db.from('runs').select('id').eq('thread_id', env.threadId).maybeSingle()).data ?? undefined);
+    const ask = () => a.request(`/runs/${run.id}`, { headers: { 'x-agenthub-db-token': 'db-token' } });
+    expect(await (await ask()).json()).toEqual({ active: true });
+    await res.text();
+    await waitForRunDone(db, env.threadId);
+    expect(await (await ask()).json()).toEqual({ active: false });
+  });
+
+  it('沒有通行證或查不到這個 run 回 401', async () => {
+    const env = await seedEnv();
+    const a = app(env, mockModel(textTurn('好')));
+    expect((await a.request(`/runs/${randomUUID()}`)).status).toBe(401);
+    expect((await a.request(`/runs/${randomUUID()}`, { headers: { 'x-agenthub-db-token': 't' } })).status).toBe(401);
   });
 });
 
