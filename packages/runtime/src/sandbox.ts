@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 /** 佈建時安裝的沙盒腳本（內容在 apps/web/lib/sprites.ts 的 SANDBOX_WRAPPER_SCRIPT） */
@@ -19,34 +18,7 @@ export type Sandbox = {
   command(argv: string[], extraEnv?: Record<string, string>): { command: string; args: string[]; env: Record<string, string> };
 };
 
-/** Sprite 用 pyenv 裝的完整 Python（有 pip、venv）；佈建時 numpy、pandas 也裝在這裡 */
-export const PYENV_VERSIONS = '/.sprite/languages/python/pyenv/versions';
-
-const versionKey = (v: string) => v.split('.').map((n) => Number(n) || 0);
-
-/** 版本號最大的 pyenv Python 的 bin 目錄；沒有 pyenv（本機開發）回 undefined */
-export function pythonBin(root = PYENV_VERSIONS): string | undefined {
-  let versions: string[];
-  try {
-    versions = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && /^\d+(\.\d+)*$/.test(d.name)).map((d) => d.name);
-  } catch {
-    return undefined;
-  }
-  const latest = versions.sort((a, b) => {
-    const [x, y] = [versionKey(a), versionKey(b)];
-    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
-    return 0;
-  }).at(-1);
-  return latest && path.join(root, latest, 'bin');
-}
-
-let defaultPythonBin: string | undefined | null = null;
-
-export function sandboxEnv(
-  user: string | undefined,
-  extraEnv: Record<string, string> = {},
-  pythonDir: string | undefined = (defaultPythonBin ??= pythonBin()),
-): Record<string, string> {
+export function sandboxEnv(user: string | undefined, extraEnv: Record<string, string> = {}): Record<string, string> {
   const keys = process.platform === 'win32' ? [...ENV_ALLOWLIST, ...WINDOWS_ENV] : ENV_ALLOWLIST;
   const env: Record<string, string> = {};
   for (const k of keys) {
@@ -54,10 +26,8 @@ export function sandboxEnv(
     if (v !== undefined) env[k] = v;
   }
   env.HOME = user ? `/home/${user}` : process.env.HOME ?? process.env.USERPROFILE ?? '/tmp';
-  // sudo 會把 PATH 重設成系統預設；另外帶一份給沙盒腳本還原（node、python 裝在 /.sprite/languages 底下）。
-  // 真正的 Python 排最前面：/.sprite/bin/python3 包裝腳本第一次執行時要寫入 sprite 帳號的
-  // /etc/profile.d/languages_env，沙盒帳號沒有寫入權限，會直接失敗（2026-10-30 正式站 75% 的對話撞到）
-  if (user && env.PATH) env.SANDBOX_PATH = pythonDir ? `${pythonDir}:${env.PATH}` : env.PATH;
+  // sudo 會把 PATH 重設成系統預設；另外帶一份給沙盒腳本還原（node、python 裝在 /.sprite/languages 底下）
+  if (user && env.PATH) env.SANDBOX_PATH = env.PATH;
   return { ...env, ...safeExtraEnv(extraEnv) };
 }
 

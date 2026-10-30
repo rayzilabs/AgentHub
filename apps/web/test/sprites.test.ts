@@ -236,6 +236,19 @@ describe('SANDBOX_ADDUSER_SCRIPT', () => {
     expect(sandboxSetupScript('/home/sprite/agenthub')).toContain('sudo chmod 0711 /workspace/agents /workspace/skills');
   });
 
+  it('以 runtime 帳號替所有語言補齊 /etc/profile.d/languages_env（沙盒帳號寫不進去，包裝腳本會失敗）；補不了只警告', () => {
+    const s = sandboxSetupScript('/home/sprite/agenthub');
+    const line = s.split('\n').find((l) => l.includes('/etc/profile.d/languages_env'));
+    expect(line).toBeDefined();
+    // 從 /.sprite/bin 的包裝腳本讀出它們會寫的 export 行，依變數名稱判斷缺哪幾行
+    expect(line).toContain('/.sprite/bin/*');
+    expect(line).toContain('>> "$LANG_ENV"');
+    expect(line).toContain('grep -q "^${line%%=*}="');
+    expect(line).toMatch(/\|\| echo "\[setup\]/);
+    // 在預裝 numpy、pandas 之前
+    expect(s.indexOf('languages_env')).toBeLessThan(s.indexOf('numpy pandas'));
+  });
+
   it('預先把 numpy、pandas 裝進 pyenv 的 Python；裝不起來只警告，不讓佈建失敗', () => {
     const s = sandboxSetupScript('/home/sprite/agenthub');
     const line = s.split('\n').find((l) => l.includes('numpy pandas'));

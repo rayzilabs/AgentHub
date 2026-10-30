@@ -151,7 +151,13 @@ export function sandboxSetupScript(base: string): string {
     `printf '%s' ${shellQuote(SANDBOX_ADDUSER_SCRIPT)} | sudo tee ${SANDBOX_ADDUSER} >/dev/null`,
     `sudo chown root:root ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
     `sudo chmod 755 ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
-    // 顧問最常用的計算套件先裝進 pyenv 的 Python（沙盒的 PATH 直接用它，見 runtime 的 sandbox.ts），
+    // /.sprite/bin 的語言包裝腳本（python3、node、go、java…）第一次執行時，會把各自的 export 行寫進 runtime 帳號的
+    // /etc/profile.d/languages_env；沙盒帳號寫不進去，於是每種語言在沙盒裡都會失敗（2026-10-30 正式站 75% 的對話撞到）。
+    // 由 runtime 帳號先替所有包裝腳本補齊（讀出它們會寫的那行，不執行語言工具本身）；補不了只警告
+    'LANG_ENV=/etc/profile.d/languages_env; { [ -f "$LANG_ENV" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_ENV"; '
+      + 'grep -h \'>> "$LANG_ENV"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo .\\(export [A-Za-z_]*=.*\\). >> "\\$LANG_ENV"$/\\1/p\' | sort -u | '
+      + 'while IFS= read -r line; do grep -q "^${line%%=*}=" "$LANG_ENV" || echo "$line" >> "$LANG_ENV"; done; } || echo "[setup] 補齊 languages_env 失敗" >&2',
+    // 顧問最常用的計算套件先裝進 pyenv 的 Python，
     // 不必每次自己建 venv 安裝；裝不起來（例如暫時連不上 PyPI）只警告，顧問仍可自行安裝
     // set -euo pipefail 下沒有 pyenv 時 ls 會失敗，|| true 讓這一步不會中止整個佈建
     'py=$(ls -d /.sprite/languages/python/pyenv/versions/*/bin 2>/dev/null | sort -V | tail -1 || true); '
