@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { LXGW_WenKai_TC, Noto_Sans_TC } from 'next/font/google';
 import { Nav } from '@/components/nav';
 import { Providers } from '@/components/providers';
+import 'katex/dist/katex.min.css';
 import './globals.css';
 
 const wenkai = LXGW_WenKai_TC({ weight: ['400', '700'], variable: '--font-wenkai', preload: false, display: 'swap' });

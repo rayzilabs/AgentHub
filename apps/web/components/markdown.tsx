@@ -1,5 +1,8 @@
 import ReactMarkdown, { type Components } from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import { escapeNonMathDollars } from '@/lib/markdown-math';
 
 const components: Components = {
   // 表格只在自己的框裡橫向捲動，不撐寬版面。
@@ -21,7 +24,10 @@ export function Markdown({ text, compact = false }: { text: string; compact?: bo
         ? 'prose-sm prose-p:my-2 prose-li:my-0.5 prose-headings:mt-4 prose-headings:mb-1 prose-hr:my-3'
         : 'prose-p:my-3 prose-li:my-1 prose-headings:mt-6 prose-headings:mb-2 prose-hr:my-5',
     ].join(' ')}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown>
+      {/* 數學式用 KaTeX；不像數學式的 $（金額）先跳脫，免得被當成數學式（樣式在 app/layout.tsx 載入） */}
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[[rehypeKatex, { strict: 'ignore' }]]} components={components}>
+        {escapeNonMathDollars(text)}
+      </ReactMarkdown>
     </div>
   );
 }
