@@ -1,4 +1,5 @@
 import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   checkSandboxUser, type CommandRunner, consultantUser, createSandbox, ensureConsultantSandboxes, killArgv, runInSandbox,
@@ -74,6 +75,12 @@ describe('sandboxEnv', () => {
 
   it('本機模式不帶 SANDBOX_PATH', () => {
     expect(sandboxEnv(undefined).SANDBOX_PATH).toBeUndefined();
+  });
+
+  it('pathPrefix（顧問自己的套件環境）排在 PATH 最前面', () => {
+    expect(sandboxEnv('agent', {}, '/w/.agenthub-venv/bin').SANDBOX_PATH).toMatch(/^\/w\/\.agenthub-venv\/bin:/);
+    expect(sandboxEnv(undefined, {}, '/w/.agenthub-venv/bin').PATH!.startsWith(`/w/.agenthub-venv/bin${path.delimiter}`)).toBe(true);
+    expect(sandboxEnv('agent', { PATH: '/evil' }, '/w/bin').SANDBOX_PATH).toBe(`/w/bin:${process.env.PATH}`);
   });
 });
 

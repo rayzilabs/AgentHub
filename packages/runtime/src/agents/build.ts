@@ -15,6 +15,7 @@ import { readFileTool, writeFileTool } from '../tools/files';
 import { loadMemoryIndex, memoryTools } from '../tools/memory';
 import { skillTool } from '../tools/skill';
 import type { ImageRegistry } from '../images';
+import type { EnvResult } from '../requirements';
 import type { RunClock } from '../run-clock';
 import type { AgentInstance } from '../types';
 import type { StepLike } from '../usage';
@@ -70,6 +71,8 @@ export type ConsultantContext = {
   gateway?: PlatformGateway;
   /** read_file 讀共用資料夾圖片用（見 images.ts） */
   images?: ImageRegistry;
+  /** 顧問自己的套件環境（見 requirements.ts） */
+  env?: EnvResult;
 };
 
 export type PlatformGateway = { baseUrl: string; token: string };
@@ -130,7 +133,7 @@ function wrapAgent(agent: StreamableAgent, instructions: string, warnings: strin
 }
 
 export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgent> {
-  const sandbox = createSandbox(sandboxUserFor(ctx.config, ctx.instance.id));
+  const sandbox = createSandbox(sandboxUserFor(ctx.config, ctx.instance.id), { pathPrefix: ctx.env?.bin });
   const workDir = agentDir(ctx.config.AGENTS_ROOT, ctx.instance.id);
   await mkdir(workDir, { recursive: true });
 
@@ -145,7 +148,9 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       sharedFiles: ctx.sharedFiles,
       memories,
       mcpWarnings: mcp.warnings,
+      envFailure: ctx.env?.failure,
     });
+    const warnings = ctx.env?.failure ? [...mcp.warnings, `顧問 ${ctx.instance.name} 的套件安裝失敗`] : mcp.warnings;
 
     const tools: ToolSet = {
       bash: bashTool(workDir, sandbox),
@@ -170,7 +175,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       prepareStep: wrapUpStep(ctx.wrapUpAt, instructions, CONSULTANT_WRAP_UP),
     });
 
-    return wrapAgent(agent, instructions, mcp.warnings, mcp.close);
+    return wrapAgent(agent, instructions, warnings, mcp.close);
   } catch (e) {
     // 組裝失敗時 MCP 連線（含 stdio 子行程）沒有人會關，先關掉再往上丟
     await mcp.close();

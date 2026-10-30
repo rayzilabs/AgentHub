@@ -10,12 +10,13 @@ import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
 import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
 import { createRunClock, type RunClock } from './run-clock';
-import { ensureConsultantSandboxes } from './sandbox';
+import { consultantRequirements, ensureConsultantEnv, type EnvResult } from './requirements';
+import { createSandbox, ensureConsultantSandboxes, runInSandbox, sandboxUserFor } from './sandbox';
 import {
   assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
   type RunResult,
 } from './run-store';
-import { syncSharedFiles, syncSkills } from './sync';
+import { agentDir, skillsDir, syncSharedFiles, syncSkills } from './sync';
 import { consumeToEnd, hasContent, textOf, toolRecords } from './ui-stream';
 import { usageRecorder } from './usage';
 
@@ -73,6 +74,17 @@ async function prepareRootAgent(
   await ensureConsultantSandboxes(config.SANDBOX_USER, config.AGENTS_ROOT, consultants.map((c) => c.id));
   const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT);
   for (const i of consultants) await syncSkills(db, config.AGENTS_ROOT, i);
+  // 顧問的 requirements.txt：以顧問自己的帳號在工作目錄建虛擬環境（裝過的不重裝）
+  const envs = new Map<string, EnvResult>();
+  for (const i of consultants) {
+    const workDir = agentDir(config.AGENTS_ROOT, i.id);
+    const sandbox = createSandbox(sandboxUserFor(config, i.id));
+    envs.set(i.id, await ensureConsultantEnv({
+      workDir,
+      requirements: await consultantRequirements(skillsDir(config.AGENTS_ROOT, i.id)),
+      run: (argv, input) => runInSandbox(sandbox, argv, { cwd: workDir, input }),
+    }));
+  }
   const secrets = await loadSecrets(db, config.PROJECT_ID);
 
   if (consultants.length === 1) {
@@ -83,6 +95,7 @@ async function prepareRootAgent(
       onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
       wrapUpAt: clock.soloWrapUpAt,
       gateway,
+      env: envs.get(root.id),
     });
     return { rootId: root.id, streamUI: built.streamUI, close: built.close };
   }
@@ -104,7 +117,7 @@ async function prepareRootAgent(
   const built = await buildManager({
     db, model, config, manager, consultants, sharedFiles, record, clock, images,
     runner: createConsultantRunner({
-      db, model, config, runId, sharedFiles, secrets, images,
+      db, model, config, runId, sharedFiles, secrets, images, envs,
       wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt, gateway,
     }),
     onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: manager }),

@@ -33,6 +33,8 @@ export type ConsultantPromptInput = {
   sharedFiles: string[];
   memories: MemoryIndex;
   mcpWarnings: string[];
+  /** requirements.txt 的套件沒裝好時的錯誤摘要 */
+  envFailure?: string;
 };
 
 export function buildConsultantInstructions(p: ConsultantPromptInput): string {
@@ -57,6 +59,9 @@ export function buildConsultantInstructions(p: ConsultantPromptInput): string {
   ];
   if (p.mcpWarnings.length) {
     sections.push(['## 目前無法使用的工具', ...p.mcpWarnings.map((w) => `- ${w}`)].join('\n'));
+  }
+  if (p.envFailure) {
+    sections.push(['## 套件安裝失敗', `以下套件沒有裝好：${p.envFailure}。不要假設它們存在；需要時告知使用者這位顧問的環境不完整。`].join('\n'));
   }
   return sections.join('\n\n');
 }

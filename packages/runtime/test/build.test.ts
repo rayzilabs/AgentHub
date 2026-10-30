@@ -207,6 +207,29 @@ describe('buildConsultant', () => {
     expect(bash.output?.output).not.toContain('hi');
   });
 
+  it('套件安裝失敗：指示加一段說明、對使用者發出警告；安裝成功則不提', async () => {
+    const projectId = await seedProject(db, await seedUser(db));
+    const id = await seedConsultant(db, projectId);
+    const roots = await tmpRoots();
+    const config = { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot };
+    const failed = await buildConsultant({
+      db, model: mockModel(textTurn('好')), config, instance: instance({ id, project_id: projectId, name: '量化顧問' }), sharedFiles: [], secrets: {},
+      env: { failure: 'ERROR: No matching distribution found for nope' },
+    });
+    await failed.close();
+    expect(failed.instructions).toContain('## 套件安裝失敗');
+    expect(failed.instructions).toContain('No matching distribution found for nope');
+    expect(failed.warnings).toContain('顧問 量化顧問 的套件安裝失敗');
+
+    const ok = await buildConsultant({
+      db, model: mockModel(textTurn('好')), config, instance: instance({ id, project_id: projectId }), sharedFiles: [], secrets: {},
+      env: { bin: path.join(roots.agentsRoot, id, '.agenthub-venv', 'bin') },
+    });
+    await ok.close();
+    expect(ok.instructions).not.toContain('套件安裝失敗');
+    expect(ok.warnings).toEqual([]);
+  });
+
   it('MCP 連上之後組裝失敗：先關掉 MCP 連線再丟出錯誤', async () => {
     const roots = await tmpRoots();
     const brokenDb = { from: () => { throw new Error('資料庫掛了'); } } as unknown as Db;

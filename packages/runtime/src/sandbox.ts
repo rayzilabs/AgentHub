@@ -18,7 +18,8 @@ export type Sandbox = {
   command(argv: string[], extraEnv?: Record<string, string>): { command: string; args: string[]; env: Record<string, string> };
 };
 
-export function sandboxEnv(user: string | undefined, extraEnv: Record<string, string> = {}): Record<string, string> {
+/** pathPrefix：顧問自己的套件環境（.agenthub-venv/bin），排在 PATH 最前面 */
+export function sandboxEnv(user: string | undefined, extraEnv: Record<string, string> = {}, pathPrefix?: string): Record<string, string> {
   const keys = process.platform === 'win32' ? [...ENV_ALLOWLIST, ...WINDOWS_ENV] : ENV_ALLOWLIST;
   const env: Record<string, string> = {};
   for (const k of keys) {
@@ -27,7 +28,8 @@ export function sandboxEnv(user: string | undefined, extraEnv: Record<string, st
   }
   env.HOME = user ? `/home/${user}` : process.env.HOME ?? process.env.USERPROFILE ?? '/tmp';
   // sudo 會把 PATH 重設成系統預設；另外帶一份給沙盒腳本還原（node、python 裝在 /.sprite/languages 底下）
-  if (user && env.PATH) env.SANDBOX_PATH = env.PATH;
+  if (user && env.PATH) env.SANDBOX_PATH = pathPrefix ? `${pathPrefix}:${env.PATH}` : env.PATH;
+  else if (pathPrefix) env.PATH = env.PATH ? `${pathPrefix}${path.delimiter}${env.PATH}` : pathPrefix;
   return { ...env, ...safeExtraEnv(extraEnv) };
 }
 
@@ -54,13 +56,13 @@ export function killArgv(user: string, pgid: number): string[] {
   return ['sudo', '-n', '-u', user, '--', 'kill', '-KILL', '--', `-${pgid}`];
 }
 
-export function createSandbox(user?: string): Sandbox {
+export function createSandbox(user?: string, opts: { pathPrefix?: string } = {}): Sandbox {
   const wrap = (argv: string[]) => (user ? sudoArgv(user, argv) : argv);
   return {
     spawn(argv, { cwd, extraEnv }) {
       const [cmd, ...args] = wrap(argv);
       // detached：成為獨立的程序群組，逾時或中止時能連同子行程一起終止
-      return spawn(cmd, args, { cwd, env: sandboxEnv(user, extraEnv), detached: true });
+      return spawn(cmd, args, { cwd, env: sandboxEnv(user, extraEnv, opts.pathPrefix), detached: true });
     },
     kill(child) {
       if (child.pid === undefined) return;
@@ -77,7 +79,7 @@ export function createSandbox(user?: string): Sandbox {
     },
     command(argv, extraEnv = {}) {
       const [command, ...args] = wrap(argv);
-      return { command, args, env: sandboxEnv(user, extraEnv) };
+      return { command, args, env: sandboxEnv(user, extraEnv, opts.pathPrefix) };
     },
   };
 }
