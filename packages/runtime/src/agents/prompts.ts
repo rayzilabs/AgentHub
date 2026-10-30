@@ -55,6 +55,10 @@ export function buildConsultantInstructions(p: ConsultantPromptInput): string {
     ].join('\n'),
     filesSection(p.sharedRoot, p.sharedFiles),
     ['## 你的 skills', skills].join('\n'),
+    [
+      '## 資料說明',
+      '回答用到數字或資料時，註明資料來源與資料截至哪一天。用了工具以外的資料，或數字是你自己估計、假設出來的，要明講。',
+    ].join('\n'),
     memorySection(p.memories),
   ];
   if (p.mcpWarnings.length) {
@@ -83,6 +87,7 @@ export function buildManagerInstructions(p: ManagerPromptInput): string {
       '- 步驟之間有先後依賴（後一步要用前一步的結果，例如先選出標的再做計算）時，用 assign_task 依序派工，把前一步的關鍵結果（數字、清單或共用資料夾裡的檔名）寫進下一步的任務說明。',
       '- 需要跨專業權衡時（例如法律風險與工程成本互相牽制），用 convene_discussion 召開討論，邀請相關顧問參加。討論第一輪大家同時發言、看不到彼此的結果，所以需要先算出結果才能討論時，先用 assign_task 取得結果，再把結果寫進討論題目。',
       '- 拿到顧問的結果後，整理成給使用者的回覆，不要只是轉貼。回覆只能使用顧問回報的數字與結論，顧問沒有提供的門檻、比例或數字不要自行補上。',
+      '- 顧問回報裡關於資料的說明（資料來源、資料截至哪一天、用了工具以外的資料或自己的假設、限制與免責聲明）要保留在給使用者的回覆裡，可以精簡合併，但不能刪掉。',
     ].join('\n'),
     [
       '## 討論後的總結格式',

@@ -62,6 +62,17 @@ describe('buildConsultantInstructions', () => {
     expect(text).toContain('MCP「finmind」目前無法使用');
   });
 
+  it('平台通用規則：回答用到數字或資料時，註明來源與截至日期，工具以外的資料與自己的假設要明講', () => {
+    const text = buildConsultantInstructions({
+      instance: instance(), workDir: '/w', sharedRoot: '/shared',
+      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
+    });
+    expect(text).toContain('## 資料說明');
+    expect(text).toContain('資料來源');
+    expect(text).toContain('截至');
+    expect(text).toContain('假設');
+  });
+
   it('沒有檔案、skill、記憶時顯示空狀態', () => {
     const text = buildConsultantInstructions({
       instance: instance(), workDir: '/w', sharedRoot: '/shared',
@@ -263,6 +274,15 @@ describe('buildManagerInstructions', () => {
     for (const h of SUMMARY_HEADINGS) expect(text).toContain(h);
     expect(text).toContain(path.join('/shared', '需求.md'));
     expect(text).toContain('（目前沒有記憶）');
+  });
+
+  it('彙整時保留顧問的資料說明（來源、截至日期、假設、限制與免責），可以精簡但不能刪掉', () => {
+    // 2026-10-30 回覆品質抽查：多顧問時主管的最終回覆 48 則裡 0 則保留顧問寫的揭露與免責
+    const text = buildManagerInstructions({ consultants: [instance({ id: 'c-1' })], memories: { rows: [], omitted: 0 }, sharedRoot: '/shared', sharedFiles: [] });
+    expect(text).toContain('資料來源');
+    expect(text).toContain('截至');
+    expect(text).toContain('免責');
+    expect(text).toContain('不能刪掉');
   });
 });
 
