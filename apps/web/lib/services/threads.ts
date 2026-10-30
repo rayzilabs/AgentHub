@@ -1,5 +1,6 @@
 import type { UIMessage } from 'ai';
 import { HttpError } from '@/lib/http';
+import { defaultRunCheck, INTERRUPTED_ERROR, markRunInterrupted, type RunCheck } from '@/lib/run-liveness';
 import type { Db } from '@/lib/supabase/admin';
 import { getOwnProject, type ProjectRow, type ThreadRow } from './projects';
 
@@ -52,8 +53,8 @@ export async function getOwnThread(db: Db, userId: string, threadId: string): Pr
   }
 }
 
-export async function getThreadMessages(db: Db, userId: string, threadId: string): Promise<ThreadMessages> {
-  await getOwnThread(db, userId, threadId);
+export async function getThreadMessages(db: Db, userId: string, threadId: string, checkRun: RunCheck = defaultRunCheck(db)): Promise<ThreadMessages> {
+  const { project } = await getOwnThread(db, userId, threadId);
   const [messagesResult, runResult] = await Promise.all([
     db.from('messages').select('ui_message, run_id, updated_at').eq('thread_id', threadId).in('kind', ['user', 'final']).order('created_at'),
     db.from('runs').select('id, status, error, started_at').eq('thread_id', threadId).order('started_at', { ascending: false }).limit(1).maybeSingle(),
@@ -71,6 +72,11 @@ export async function getThreadMessages(db: Db, userId: string, threadId: string
     .reduce<string | null>((max, m) => (max === null || Date.parse(m.updated_at) > Date.parse(max) ? m.updated_at : max), null);
   const times = { startedAt: run.started_at as string, updatedAt };
   if (run.status === 'running') {
+    // 直接問 runtime：程序被砍或重啟時，它會明確說不知道這個 run，不必等到 20 分鐘
+    if (project.sprite_url && (await checkRun(project.sprite_url, run.id, project.id)) === 'gone') {
+      await markRunInterrupted(db, run.id);
+      return { messages, running: false, error: INTERRUPTED_ERROR, ...times };
+    }
     const stale = Date.now() - new Date(run.started_at).getTime() > STALE_RUN_MS;
     return { messages, running: !stale, error: stale ? '這次回覆超過 20 分鐘沒有完成' : null, ...times };
   }
