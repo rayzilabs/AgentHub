@@ -70,6 +70,28 @@ describe('ensureConsultantEnv', () => {
     const install = seen.find((s) => s.argv.join(' ').includes('pip install'))!;
     expect(install.argv.join(' ')).toContain('python3 -m venv --system-site-packages .agenthub-venv');
     expect(install.input).toBe('numpy\n');
+    // runtime 的子程序 stdin 是 socket：pip 開 /dev/stdin 會 ENXIO（2026-10-31 正式站實測），先由 cat 寫成檔案
+    expect(install.argv.join(' ')).not.toContain('/dev/stdin');
+    expect(install.argv.join(' ')).toContain('cat > .agenthub-venv/requirements.txt');
+    expect(install.argv.join(' ')).toContain('-r .agenthub-venv/requirements.txt');
+  });
+
+  it('安裝指令在真的 bash 裡、stdin 不是一般檔案時也讀得到 requirements（不靠開 /dev/stdin）', async () => {
+    const dir = await workDir();
+    let script = '';
+    await ensureConsultantEnv({
+      workDir: dir, requirements: 'six\n',
+      run: async (argv, input) => {
+        if (argv.join(' ').includes('pip install')) script = argv[2];
+        void input;
+        return { code: 1, stdout: '', stderr: '' };
+      },
+    });
+    // 把 python3 與 pip 換成假的，只驗證 requirements 檔案的內容從 stdin 寫進去
+    const fake = script.replace('python3 -m venv --system-site-packages .agenthub-venv', 'mkdir -p .agenthub-venv/bin')
+      .replace(/timeout -k 5 \d+ \.agenthub-venv\/bin\/pip install [^&]*-r (\S+)/, 'cat $1');
+    const out = execFileSync('bash', ['-c', fake], { cwd: dir, input: 'six\n' }).toString();
+    expect(out).toBe('six\n');
   });
 });
 

@@ -59,9 +59,11 @@ async function ensureOnce({ workDir, requirements, run }: { workDir: string; req
     if (age < FAILED_RETRY_MS) return { failure: failed.slice(sha.length + 1) };
   }
 
+  // 子程序的 stdin 是 socket，pip 開 /dev/stdin 會 ENXIO；先由 cat 讀成檔案。
   // timeout 會真的終止 pip（連同它編譯套件的子行程），不留在背景佔記憶體
   const result = await run(
-    ['bash', '-c', `rm -rf ${VENV} && python3 -m venv --system-site-packages ${VENV} && timeout -k 5 ${INSTALL_TIMEOUT_S} ${VENV}/bin/pip install --disable-pip-version-check -q -r /dev/stdin`],
+    ['bash', '-c', `rm -rf ${VENV} && python3 -m venv --system-site-packages ${VENV} && cat > ${VENV}/requirements.txt`
+      + ` && timeout -k 5 ${INSTALL_TIMEOUT_S} ${VENV}/bin/pip install --disable-pip-version-check -q -r ${VENV}/requirements.txt`],
     requirements,
   );
 
