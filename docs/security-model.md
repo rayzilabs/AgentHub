@@ -102,7 +102,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - 「以哪個帳號執行」是參數：顧問用自己的帳號，主管用 `agent`。顧問目錄 `/workspace/agents/<id>` 是 `sprite:agent-<id12> 2770`，只有 runtime 與該顧問進得去；`/shared` 所有帳號共用（子專案 2，見 `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md`）。
 - 已知限制：顧問之間看得到彼此的程序清單（名稱與參數）；祕密一律不放在參數裡。
 - 語言工具（2026-10-30）：`/.sprite/bin` 的包裝腳本（python3、node、go、java、ruby…，共 40 多個）第一次執行時，要把各自的 `export` 行寫進 `sprite` 帳號的 `/etc/profile.d/languages_env`，沙盒帳號沒有寫入權限，寫不進去就失敗；10/13 改用沙盒帳號後，新建的 Sprite 除了 Node 之外全部會撞到。佈建時由 runtime 帳號從包裝腳本讀出這些行、補齊缺的（不執行語言工具），並以 root 把 numpy、pandas 裝進 pyenv 的 Python。`probe-sandbox.ts` 以沙盒帳號逐一檢查常用工具。
-- 顧問的 Python 套件（2026-10-30）：創作者在 skill 資料夾放 `requirements.txt`。上架時平台只接受 PyPI 上的具名套件（不接受選項、網址、`@`、本機路徑、環境標記），並向 PyPI 確認套件與版本存在。runtime 每次 run 以**該顧問的沙盒帳號**在工作目錄建 `.agenthub-venv`（`--system-site-packages`，看得到預裝的 numpy、pandas）並以 pip 安裝，所以套件的安裝腳本只有顧問自己的權限、受同一個記憶體上限。以內容雜湊決定是否重裝，失敗的同一份不重試；安裝最多 180 秒。顧問的 bash 與 stdio MCP 把這個環境的 `bin` 排在 `PATH` 最前面；主管不用。創作者說明：`docs/creator/python-packages.md`。
+- 顧問的 Python 套件（2026-10-30）：創作者在 skill 資料夾放 `requirements.txt`。上架時平台只接受 PyPI 上的具名套件（不接受選項、網址、`@`、本機路徑、環境標記），並向 PyPI 確認套件與版本存在。runtime 每次 run 以**該顧問的沙盒帳號**在工作目錄建 `.agenthub-venv`（`--system-site-packages`，看得到預裝的 numpy、pandas）並以 pip 安裝，所以套件的安裝腳本只有顧問自己的權限、受同一個記憶體上限。以內容雜湊決定是否重裝，失敗的同一份一小時內不重試；pip 以 `timeout` 限制 180 秒（逾時會被終止）；同一位顧問同時兩個對話共用一次安裝。只讀有 `SKILL.md` 的資料夾裡的 `requirements.txt`（和上架檢查同一批檔案）。顧問的 bash 與 stdio MCP 把這個環境的 `bin` 排在 `PATH` 最前面；主管不用。創作者說明：`docs/creator/python-packages.md`。
 - 記憶體上限（2026-10-30）：沙盒腳本在降權前把自己放進 cgroup v2 `agenthub-sandbox`（`memory.max` 6 GiB；Sprite 8 GB、沒有 swap），所有沙盒程序共用這個上限，超過時核心只砍群組內的程序，runtime 不受影響。設定失敗就不執行。
 - runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。
 

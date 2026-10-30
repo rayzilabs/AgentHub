@@ -81,7 +81,7 @@ async function prepareRootAgent(
     const sandbox = createSandbox(sandboxUserFor(config, i.id));
     envs.set(i.id, await ensureConsultantEnv({
       workDir,
-      requirements: await consultantRequirements(skillsDir(config.AGENTS_ROOT, i.id)),
+      requirements: await consultantRequirements(skillsDir(config.AGENTS_ROOT, i.id), i.skills),
       run: (argv, input) => runInSandbox(sandbox, argv, { cwd: workDir, input }),
     }));
   }
