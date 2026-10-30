@@ -235,4 +235,13 @@ describe('SANDBOX_ADDUSER_SCRIPT', () => {
     expect(SANDBOX_ADDUSER_SCRIPT).not.toMatch(/-R |find /);
     expect(sandboxSetupScript('/home/sprite/agenthub')).toContain('sudo chmod 0711 /workspace/agents /workspace/skills');
   });
+
+  it('預先把 numpy、pandas 裝進 pyenv 的 Python；裝不起來只警告，不讓佈建失敗', () => {
+    const s = sandboxSetupScript('/home/sprite/agenthub');
+    const line = s.split('\n').find((l) => l.includes('numpy pandas'));
+    expect(line).toBeDefined();
+    expect(line).toContain('/.sprite/languages/python/pyenv/versions/');
+    expect(line).toContain('sort -V | tail -1');
+    expect(line).toMatch(/sudo "\$py\/pip" install .*numpy pandas \|\| echo /);
+  });
 });

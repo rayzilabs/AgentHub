@@ -151,6 +151,11 @@ export function sandboxSetupScript(base: string): string {
     `printf '%s' ${shellQuote(SANDBOX_ADDUSER_SCRIPT)} | sudo tee ${SANDBOX_ADDUSER} >/dev/null`,
     `sudo chown root:root ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
     `sudo chmod 755 ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
+    // 顧問最常用的計算套件先裝進 pyenv 的 Python（沙盒的 PATH 直接用它，見 runtime 的 sandbox.ts），
+    // 不必每次自己建 venv 安裝；裝不起來（例如暫時連不上 PyPI）只警告，顧問仍可自行安裝
+    // set -euo pipefail 下沒有 pyenv 時 ls 會失敗，|| true 讓這一步不會中止整個佈建
+    'py=$(ls -d /.sprite/languages/python/pyenv/versions/*/bin 2>/dev/null | sort -V | tail -1 || true); '
+      + 'if [ -n "$py" ]; then sudo "$py/pip" install --quiet --disable-pip-version-check numpy pandas || echo "[setup] 預先安裝 numpy、pandas 失敗" >&2; fi',
     // .env 可能由檔案 API 以別的帳號寫入，先改回 runtime 帳號再收緊
     `sudo chown "$(id -un)" ${q(`${base}/.env`)}`,
     `chmod 600 ${q(`${base}/.env`)}`,

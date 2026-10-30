@@ -100,6 +100,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - 執行路徑：`sudo unshare --mount` → 沙盒腳本 `/usr/local/bin/agenthub-sandbox` 在獨立的掛載命名空間裡用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `agent`。Sprite 內部 API 能建立以 runtime 帳號（有 sudo）執行的服務，而它在唯讀掛載上、改不了權限，所以只能在命名空間裡蓋掉。
 - 「以哪個帳號執行」是參數：顧問用自己的帳號，主管用 `agent`。顧問目錄 `/workspace/agents/<id>` 是 `sprite:agent-<id12> 2770`，只有 runtime 與該顧問進得去；`/shared` 所有帳號共用（子專案 2，見 `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md`）。
 - 已知限制：顧問之間看得到彼此的程序清單（名稱與參數）；祕密一律不放在參數裡。
+- Python（2026-10-30）：沙盒的 PATH 把 pyenv 真正的 Python（`/.sprite/languages/python/pyenv/versions/<最新>/bin`）排最前面。`/.sprite/bin/python3` 包裝腳本第一次執行時要寫入 `sprite` 帳號的 `/etc/profile.d/languages_env`，沙盒帳號沒有寫入權限會直接失敗；10/13 改用沙盒帳號後新建的 Sprite 都會撞到。佈建時以 root 把 numpy、pandas 裝進這個 Python。
 - 記憶體上限（2026-10-30）：沙盒腳本在降權前把自己放進 cgroup v2 `agenthub-sandbox`（`memory.max` 6 GiB；Sprite 8 GB、沒有 swap），所有沙盒程序共用這個上限，超過時核心只砍群組內的程序，runtime 不受影響。設定失敗就不執行。
 - runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。
 

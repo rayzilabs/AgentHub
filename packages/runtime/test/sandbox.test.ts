@@ -1,7 +1,9 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  checkSandboxUser, type CommandRunner, consultantUser, createSandbox, ensureConsultantSandboxes, killArgv, runInSandbox,
+  checkSandboxUser, type CommandRunner, consultantUser, createSandbox, ensureConsultantSandboxes, killArgv, pythonBin, runInSandbox,
   SANDBOX_ADDUSER, SANDBOX_WRAPPER, sandboxEnv, sandboxUserFor, sudoArgv,
 } from '../src/sandbox';
 
@@ -58,6 +60,24 @@ describe('sandboxEnv', () => {
     expect(env.PATH).toBeTruthy();
     // sudo 會把 PATH 重設成系統預設，另外帶一份給沙盒腳本還原（node、python 在 /.sprite/languages 底下）
     expect(env.SANDBOX_PATH).toBe(env.PATH);
+  });
+
+  it('有真正的 Python 目錄時排在 SANDBOX_PATH 最前面（不經過要寫設定檔的 /.sprite/bin 包裝腳本）', () => {
+    const env = sandboxEnv('agent', {}, '/py/3.13.7/bin');
+    expect(env.SANDBOX_PATH).toBe(`/py/3.13.7/bin:${env.PATH}`);
+  });
+});
+
+describe('pythonBin', () => {
+  it('挑版本號最大的 pyenv 版本（數字比較，3.13.10 比 3.13.7 新）', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyenv-'));
+    for (const v of ['3.9.1', '3.13.7', '3.13.10']) await mkdir(path.join(root, v, 'bin'), { recursive: true });
+    await writeFile(path.join(root, 'README'), 'x');
+    expect(pythonBin(root)).toBe(path.join(root, '3.13.10', 'bin'));
+  });
+
+  it('沒有 pyenv（本機開發）回 undefined', () => {
+    expect(pythonBin(path.join(os.tmpdir(), 'no-such-pyenv'))).toBeUndefined();
   });
 
   it('extraEnv（創作者定義的金鑰名稱）不能蓋掉或注入會影響執行的變數', () => {

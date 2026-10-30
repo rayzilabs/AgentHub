@@ -32,7 +32,9 @@ async function sh(sprite: Sprite, cmd: string): Promise<{ code: number; out: str
   }
 }
 // 與 runtime 的 sandbox.ts 相同的執行路徑：root 開獨立掛載命名空間 → 沙盒腳本蓋掉內部 API → 降權成 agent
-const sandboxPrefix = () => `SANDBOX_PATH="$PATH" sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} agent`;
+// SANDBOX_PATH 同 runtime 的 sandboxEnv：pyenv 真正的 Python 排最前面（不經過 /.sprite/bin 包裝腳本）
+const PY_BIN = '$(ls -d /.sprite/languages/python/pyenv/versions/*/bin | sort -V | tail -1)';
+const sandboxPrefix = () => `SANDBOX_PATH="${PY_BIN}:$PATH" sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} agent`;
 const asAgent = (cmd: string) => `${sandboxPrefix()} bash -c ${JSON.stringify(cmd)}`;
 
 async function health(url: string): Promise<string> {
@@ -184,6 +186,9 @@ try {
   const oldMgr = await sh(sprite, asUser('agent', `cat ${dirOld}/old.txt`));
   const oldOwner = await sh(sprite, asUser(userOf(idOld), `cat ${dirOld}/old.txt`));
   record('1-A 時期的目錄轉成顧問群組：主管讀不到、該顧問讀得到', conv.code === 0 && oldMgr.code !== 0 && oldOwner.out.trim() === 'old', `${conv.out} | ${oldMgr.out} | ${oldOwner.out}`);
+  // Python：沙盒帳號用 pyenv 真正的 Python（2026-10-30 前走 /.sprite/bin 包裝腳本，寫不了設定檔而失敗），且 numpy、pandas 已預裝
+  const py = await sh(sprite, asAgent('command -v python3; python3 -c "import numpy, pandas; print(\'np-pd-ok\')"; pip --version'));
+  record('沙盒的 python3 是 pyenv 版本，能 import numpy、pandas，pip 可用', py.out.includes('/pyenv/versions/') && py.out.includes('np-pd-ok') && /pip \d/.test(py.out), py.out);
   // 記憶體上限：沙盒程序都在 agenthub-sandbox cgroup（6 GiB）；吃超過只砍那個指令，runtime 照樣活著
   const cg = await sh(sprite, asAgent('cat /proc/self/cgroup'));
   record('沙盒程序在 agenthub-sandbox cgroup', cg.out.includes('0::/agenthub-sandbox'), cg.out);
