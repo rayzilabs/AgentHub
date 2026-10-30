@@ -188,7 +188,11 @@ describe('sandboxSetupScript', () => {
     expect(lines[3]).toBe('unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind /dev/null /.sprite/api.sock');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('exec /usr/bin/setpriv');
-    // 降權前把自己放進記憶體上限 6 GiB 的 cgroup；設定失敗（set -eu）就不執行
+    // 降權前盡量把自己放進記憶體上限 6 GiB 的 cgroup。Sprite 的 cgroup 根目錄本身有程序，
+    // 核心不准在那層啟用記憶體控制器（EBUSY）；設不起來時照常執行，不能讓顧問的每個指令都失敗
+    const cgLines = lines.filter((l) => l.includes('cgroup') || l.startsWith('cg='));
+    expect(cgLines.length).toBeGreaterThan(0);
+    for (const l of cgLines.filter((x) => !x.startsWith('cg='))) expect(l).toMatch(/2>\/dev\/null \|\| true$/);
     const cg = SANDBOX_WRAPPER_SCRIPT.indexOf('/sys/fs/cgroup/agenthub-sandbox');
     expect(cg).toBeGreaterThan(-1);
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('6442450944');
@@ -247,6 +251,18 @@ describe('SANDBOX_ADDUSER_SCRIPT', () => {
     expect(line).toMatch(/\|\| echo "\[setup\]/);
     // 在預裝 numpy、pandas 之前
     expect(s.indexOf('languages_env')).toBeLessThan(s.indexOf('numpy pandas'));
+  });
+
+  it('也補齊 /etc/profile.d/languages_paths（包裝腳本寫不進去會在每次執行時印 Permission denied）；補不了只警告', () => {
+    const s = sandboxSetupScript('/home/sprite/agenthub');
+    const line = s.split('\n').find((l) => l.includes('/etc/profile.d/languages_paths'));
+    expect(line).toBeDefined();
+    // 路徑寫成 "$PYENV_ROOT/shims" 這種形式，用剛補齊的 languages_env 展開；展開不出來的（變數沒定義）跳過
+    expect(line).toContain('. "$LANG_ENV"');
+    expect(line).toContain('>> "$LANG_PATHS"');
+    expect(line).toContain('grep -qxF "$d" "$LANG_PATHS"');
+    expect(line).toMatch(/\|\| echo "\[setup\]/);
+    expect(s.indexOf('LANG_ENV=/etc/profile.d/languages_env')).toBeLessThan(s.indexOf('/etc/profile.d/languages_paths'));
   });
 
   it('預先把 numpy、pandas 裝進 pyenv 的 Python；裝不起來只警告，不讓佈建失敗', () => {

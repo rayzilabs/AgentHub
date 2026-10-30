@@ -30,13 +30,10 @@ export const SANDBOX_WRAPPER_SCRIPT = [
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /var/tmp',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /dev/shm',
-  // 所有沙盒程序共用一個記憶體上限 6 GiB 的 cgroup（Sprite 8 GB、沒有 swap）：
-  // 超過時核心只砍群組裡的程序，runtime 不會被拖垮。每次都確認，Sprite 重開後 cgroup 不會留著
+  // 盡量讓所有沙盒程序共用一個記憶體上限 6 GiB 的 cgroup（Sprite 8 GB、沒有 swap）：超過時核心只砍群組裡的程序。
+  // Sprite 的 cgroup 根目錄本身有程序，核心不准在那層啟用記憶體控制器（EBUSY）；設不起來就照常執行，不加入群組
   'cg=/sys/fs/cgroup/agenthub-sandbox',
-  '/usr/bin/mkdir -p "$cg"',
-  '/usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control',
-  '[ "$(/usr/bin/cat "$cg/memory.max")" = 6442450944 ] || echo 6442450944 > "$cg/memory.max"',
-  'echo $$ > "$cg/cgroup.procs"',
+  '{ /usr/bin/mkdir -p "$cg" && { /usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control; } && { [ "$(/usr/bin/cat "$cg/memory.max")" = 6442450944 ] || echo 6442450944 > "$cg/memory.max"; } && echo $$ > "$cg/cgroup.procs"; } 2>/dev/null || true',
   'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
   '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
   '',
@@ -157,6 +154,12 @@ export function sandboxSetupScript(base: string): string {
     'LANG_ENV=/etc/profile.d/languages_env; { [ -f "$LANG_ENV" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_ENV"; '
       + 'grep -h \'>> "$LANG_ENV"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo .\\(export [A-Za-z_]*=.*\\). >> "\\$LANG_ENV"$/\\1/p\' | sort -u | '
       + 'while IFS= read -r line; do grep -q "^${line%%=*}=" "$LANG_ENV" || echo "$line" >> "$LANG_ENV"; done; } || echo "[setup] 補齊 languages_env 失敗" >&2',
+    // 包裝腳本也把自己的路徑（"$PYENV_ROOT/shims" 這類）寫進 languages_paths；寫不進去只印 Permission denied，
+    // 但每次執行都會混進顧問看到的輸出。以剛補齊的 languages_env 展開後補上；變數沒定義、展開不完整的跳過
+    'LANG_PATHS=/etc/profile.d/languages_paths; { [ -f "$LANG_PATHS" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_PATHS"; '
+      + '( set +u; . "$LANG_ENV"; grep -h \'>> "$LANG_PATHS"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo "\\([^"]*\\)" >> "\\$LANG_PATHS".*$/\\1/p\' | sort -u | '
+      + 'while IFS= read -r p; do eval "d=\\"$p\\""; case "$d" in /?*/*) ;; *) continue ;; esac; grep -qxF "$d" "$LANG_PATHS" || echo "$d" >> "$LANG_PATHS"; done ); } '
+      + '|| echo "[setup] 補齊 languages_paths 失敗" >&2',
     // 顧問最常用的計算套件先裝進 pyenv 的 Python，
     // 不必每次自己建 venv 安裝；裝不起來（例如暫時連不上 PyPI）只警告，顧問仍可自行安裝
     // set -euo pipefail 下沒有 pyenv 時 ls 會失敗，|| true 讓這一步不會中止整個佈建
