@@ -117,6 +117,18 @@ describe('templates service', () => {
     expect(await getTemplate(db, t.id, creator.id)).toHaveProperty('skills_zip_path', null);
   });
 
+  it('requirements.txt 寫了不接受的內容：400 並指出檔案與行號，資料不變', async () => {
+    const creator = await seedUser(db);
+    const t = await createTemplate(db, creator.id, { name: 'x', description: '', category: '', system_prompt: 'p', mcp_servers: [] });
+    const { signedUrl } = await createSkillsUploadUrl(db, creator.id, t.id);
+    await uploadViaSignedUrl(signedUrl, zipSync({
+      'review/SKILL.md': strToU8('---\nname: review\ndescription: 審合約\n---\n'),
+      'review/requirements.txt': strToU8('numpy\n-e git+https://example.com/x.git\n'),
+    }));
+    await expectStatus(updateTemplate(db, creator.id, t.id, { process_upload: true }), 400, 'review/requirements.txt：第 2 行：不接受 - 開頭的選項（只能寫套件名稱與版本）');
+    expect(await getTemplate(db, t.id, creator.id)).toHaveProperty('skills_zip_path', null);
+  });
+
   it('還沒上傳就要求處理：400', async () => {
     const creator = await seedUser(db);
     const t = await createTemplate(db, creator.id, { name: 'x', description: '', category: '', system_prompt: 'p', mcp_servers: [] });

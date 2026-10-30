@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
+import { unzipSync } from 'fflate';
 import { HttpError } from '@/lib/http';
+import { requirementsProblems } from '@/lib/requirements';
 import type { McpServer, TemplateInput, TemplatePatch } from '@/lib/schemas';
 import { parseSkillsZip, SkillZipError, type SkillMeta } from '@/lib/skills-zip';
 import type { Db } from '@/lib/supabase/admin';
@@ -108,6 +110,9 @@ async function processSkillsUpload(db: Db, id: string): Promise<{ skills_zip_pat
     if (e instanceof SkillZipError) throw new HttpError(400, e.problems.join('\n'));
     throw e;
   }
+  // skill 的 requirements.txt：格式與 PyPI 上是否存在，有問題就不收（runtime 會依它安裝顧問的套件）
+  const requirementProblems = await requirementsProblems(unzipSync(bytes), skills);
+  if (requirementProblems.length) throw new HttpError(400, requirementProblems.join('\n'));
 
   const sha = createHash('sha256').update(bytes).digest('hex');
   const finalPath = `${id}/${sha}.zip`;
