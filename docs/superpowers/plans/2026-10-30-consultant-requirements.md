@@ -151,4 +151,9 @@ it('consultantRequirements：依 skill 資料夾名稱排序合併', async () =>
 
 ## 實測
 
-（Task 5 完成後填寫。）
+2026-10-31，正式站（runtime main-f30238f.js），臨時帳號 e2e，結束後刪除帳號、範本、專案與 Sprite。
+
+- 上架含錯字套件（`reqeusts-no-such-pkg-xyz==1.0`）的 zip：400，「q/requirements.txt：第 2 行：PyPI 上找不到套件…」。通過。
+- 同一專案租用兩位顧問（`requests==2.31.0`／`requests==2.32.3`），各自執行 `python3 -c "import requests, numpy; …"`：分別印出 2.31.0 與 2.32.3（numpy 2.5.4 來自預裝）。通過。
+- 再問一次：兩位的 `.requirements-sha256` 修改時間不變，第一次 42 秒、第二次 25 秒。通過。
+- 第一次上線（main-0a5811e）實測失敗：runtime 子程序的 stdin 是 socket，pip 開 `/dev/stdin` 得到 ENXIO，一個套件都沒裝；驗收腳本用 shell pipe 測，沒抓到。759968d 改成先 `cat` 寫成檔案再交給 pip，驗收腳本也改成照 runtime 的方式由 Node spawn 送內容（f30238f）。
