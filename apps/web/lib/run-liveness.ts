@@ -1,4 +1,3 @@
-import { env } from '@/lib/env';
 import { runtimeAccessToken } from '@/lib/runtime-session';
 import type { Db } from '@/lib/supabase/admin';
 
@@ -16,8 +15,7 @@ export const INTERRUPTED_ERROR = '執行環境中斷';
 export async function askRuntime(spriteUrl: string, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch): Promise<Liveness> {
   try {
     const res = await fetchImpl(`${spriteUrl}/runs/${encodeURIComponent(runId)}`, {
-      // authorization 給 Fly 驗證 Sprite 網址（驗證後拿掉，到不了 runtime）；runtime 自己用資料庫通行證確認專案
-      headers: { authorization: `Bearer ${env.spritesToken}`, 'x-agenthub-db-token': dbToken },
+      headers: { 'x-agenthub-db-token': dbToken },
       signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
     });
     if (!res.ok) return 'unknown';
