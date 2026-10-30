@@ -203,6 +203,8 @@ description: 用 5P 架構評估中小企業授信案件
 （skill 內容）
 ```
 
+**Python 套件**：沙盒已預裝 `numpy`、`pandas`。需要其他套件時，在 skill 資料夾放 `requirements.txt`（一行一個 PyPI 套件，可指定版本，例如 `requests==2.32.3`；不接受選項、網址與本機路徑，最多 50 個）。上架時平台會檢查格式並到 PyPI 確認套件存在；第一次對話時以該顧問的帳號裝進它自己的環境，裝過不重裝，失敗時顧問與使用者都會被告知。詳見 [docs/creator/python-packages.md](docs/creator/python-packages.md)。
+
 **MCP**：支援以下連線方式。
 
 - `stdio`（`command` + `args`）和 `http`（`url` + `headers`）：需要金鑰時在 `required_secrets` 列出名稱，使用者啟用顧問時填寫。stdio 會當成環境變數傳入，http 可在 `headers` 裡用 `${KEY}` 引用。
