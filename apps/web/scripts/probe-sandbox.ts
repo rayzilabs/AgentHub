@@ -201,6 +201,11 @@ try {
   }
   const np = await sh(sprite, asAgent('cd /tmp && python3 -c "import numpy, pandas; print(\'np-pd-ok\')"'));
   record('沙盒帳號能 import 預裝的 numpy、pandas', np.out.includes('np-pd-ok'), np.out);
+  // 顧問的 requirements.txt：runtime 以顧問帳號建 --system-site-packages 的虛擬環境再 pip install（見 runtime 的 requirements.ts）
+  const venv = await sh(sprite, asAgent(
+    'cd /tmp && python3 -m venv --system-site-packages v && echo six | v/bin/pip install --disable-pip-version-check -q -r /dev/stdin && v/bin/python -c "import six, numpy; print(\'venv-ok\')"',
+  ));
+  record('沙盒帳號能建虛擬環境、安裝套件，並同時用到預裝的 numpy', venv.out.includes('venv-ok'), venv.out);
   // 記憶體上限：沙盒程序都在 agenthub-sandbox cgroup（6 GiB）；吃超過只砍那個指令，runtime 照樣活著
   const cg = await sh(sprite, asAgent('cat /proc/self/cgroup'));
   record('沙盒程序在 agenthub-sandbox cgroup', cg.out.includes('0::/agenthub-sandbox'), cg.out);
