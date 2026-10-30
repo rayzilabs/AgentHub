@@ -1,6 +1,7 @@
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { env } from '@/lib/env';
 import { askRuntime, markRunInterrupted, shouldAsk } from '@/lib/run-liveness';
 import { createProject } from '@/lib/services/projects';
 import { createThread, getThreadMessages } from '@/lib/services/threads';
@@ -36,6 +37,8 @@ describe('run 存活確認', () => {
   it('askRuntime：依 Sprite 回答分成 active / gone / unknown，帶上資料庫通行證', async () => {
     expect(await askRuntime(base, 'a', 't')).toBe('active');
     expect(seen.at(-1)?.headers['x-agenthub-db-token']).toBe('t');
+    // Sprite 的網址要先通過 Fly 驗證（和 forwardChat、health 一樣）；少了它一律被擋，永遠判斷不了（2026-10-31 正式站實測）
+    expect(seen.at(-1)?.headers.authorization).toBe(`Bearer ${env.spritesToken}`);
     expect(await askRuntime(base, 'g', 't')).toBe('gone');
     expect(await askRuntime(base, 'e', 't')).toBe('unknown');
     expect(await askRuntime(base, 'odd', 't')).toBe('unknown');
