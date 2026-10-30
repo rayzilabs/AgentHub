@@ -71,7 +71,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `hosted_mcp_secrets`／Vault | ❌ | ❌ | ❌ | ❌ | 創作者給代管 MCP 的金鑰；只透過 `set_hosted_mcp_secret`／`get_hosted_mcp_secrets`，只有 `service_role` 能執行（3b） |
 | `project_runtime_accounts` | ❌ | ❌ | ❌ | ❌ | runtime 帳號的密碼與通行證快取；只有 Vercel（`service_role`）讀得到 |
 | Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip |
-| Storage `project-files` | 列出、下載 | ❌ | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；上傳由網頁處理 |
+| Storage `project-files` | 列出、下載、簽 1 小時網址 | ❌ | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；上傳由網頁處理。簽名網址只給 `read_file` 確認過與上傳版本逐位元組相同的圖片，只送往 Vertex（模型依網址自己下載），不給顧問、不寫進資料庫（2026-10-30） |
 | Storage `runtime` | ❌ | ❌ | ❌ | ❌ | 安裝時由 Vercel 給一次性下載連結 |
 | Storage `mcp-bundles` | ❌ | ❌ | ❌ | ❌ | 創作者上傳的代管 MCP 套件；部署時由 Vercel 給代管 Sprite 一次性下載連結（3b） |
 | 模型（Vertex） | 透過 Vercel 代理呼叫 | | | | Sprite 不放 Vertex 金鑰；可設每專案用量上限 |
@@ -100,6 +100,8 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - 執行路徑：`sudo unshare --mount` → 沙盒腳本 `/usr/local/bin/agenthub-sandbox` 在獨立的掛載命名空間裡用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `agent`。Sprite 內部 API 能建立以 runtime 帳號（有 sudo）執行的服務，而它在唯讀掛載上、改不了權限，所以只能在命名空間裡蓋掉。
 - 「以哪個帳號執行」是參數：顧問用自己的帳號，主管用 `agent`。顧問目錄 `/workspace/agents/<id>` 是 `sprite:agent-<id12> 2770`，只有 runtime 與該顧問進得去；`/shared` 所有帳號共用（子專案 2，見 `docs/superpowers/specs/2026-10-13-consultant-isolation-design.md`）。
 - 已知限制：顧問之間看得到彼此的程序清單（名稱與參數）；祕密一律不放在參數裡。
+- 記憶體上限（2026-10-30）：沙盒腳本在降權前把自己放進 cgroup v2 `agenthub-sandbox`（`memory.max` 6 GiB；Sprite 8 GB、沒有 swap），所有沙盒程序共用這個上限，超過時核心只砍群組內的程序，runtime 不受影響。設定失敗就不執行。
+- runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。
 
 **驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。
 

@@ -14,6 +14,7 @@ import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
 import { loadMemoryIndex, memoryTools } from '../tools/memory';
 import { skillTool } from '../tools/skill';
+import type { ImageRegistry } from '../images';
 import type { RunClock } from '../run-clock';
 import type { AgentInstance } from '../types';
 import type { StepLike } from '../usage';
@@ -67,6 +68,8 @@ export type ConsultantContext = {
   wrapUpAt?: number;
   /** remote 型 MCP 經平台閘道；沒有時這類 MCP 列為無法使用 */
   gateway?: PlatformGateway;
+  /** read_file 讀共用資料夾圖片用（見 images.ts） */
+  images?: ImageRegistry;
 };
 
 export type PlatformGateway = { baseUrl: string; token: string };
@@ -146,7 +149,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
 
     const tools: ToolSet = {
       bash: bashTool(workDir, sandbox),
-      read_file: readFileTool(workDir, sandbox),
+      read_file: readFileTool(workDir, sandbox, ctx.images),
       write_file: writeFileTool(workDir, sandbox),
       ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),
       ...mcp.tools,
@@ -186,6 +189,7 @@ export type ManagerContext = {
   record: RecordSpeech;
   onStepEnd?: (step: StepLike) => Promise<void> | void;
   clock?: Pick<RunClock, 'consultantWrapUpAt' | 'consultantStopAt'>;
+  images?: ImageRegistry;
 };
 
 export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
@@ -197,7 +201,7 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
     sharedFiles: ctx.sharedFiles,
   });
   const tools: ToolSet = {
-    read_file: readFileTool(ctx.config.SHARED_ROOT, createSandbox(ctx.config.SANDBOX_USER)),
+    read_file: readFileTool(ctx.config.SHARED_ROOT, createSandbox(ctx.config.SANDBOX_USER), ctx.images),
     ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.manager.id),
     assign_task: assignTaskTool({
       consultants: ctx.consultants, run: ctx.runner, record: ctx.record, acceptUntil: ctx.clock?.consultantWrapUpAt,

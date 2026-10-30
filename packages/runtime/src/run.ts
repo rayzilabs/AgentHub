@@ -1,5 +1,6 @@
 import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIMessage, type UIMessageChunk } from 'ai';
 import { activeRuns } from './active-runs';
+import { createImageRegistry, type ImageRegistry } from './images';
 import { buildConsultant, buildManager, type BuiltAgent, type PlatformGateway } from './agents/build';
 import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
@@ -26,14 +27,14 @@ const NO_REPLY_ERROR = '模型沒有產生回覆';
 export type RunDeps = {
   /** 用 Vercel 附上的 runtime 帳號通行證開這次 run 的資料庫連線 */
   openDb: (dbToken: string) => Db;
-  /** 模型經平台代理呼叫，用專案通行證驗證 */
-  modelFor: (platformToken: string | undefined) => LanguageModel;
+  /** 模型經平台代理呼叫，用專案通行證驗證；images 讓請求送出前把共用資料夾的圖片換成簽名網址 */
+  modelFor: (platformToken: string | undefined, images?: ImageRegistry) => LanguageModel;
   config: Config;
   runTimeoutMs?: number;
   progressIntervalMs?: number;
 };
 
-type ActiveDeps = Omit<RunDeps, 'openDb' | 'modelFor'> & { db: Db; model: LanguageModel };
+type ActiveDeps = Omit<RunDeps, 'openDb' | 'modelFor'> & { db: Db; model: LanguageModel; images: ImageRegistry };
 
 // 每個程序在第一次 run 前清一次上個程序遺留的 running run（開機時沒有通行證，無法在開機時清）。
 // 在本程序建立任何 run 之前完成，所以不會誤清自己的 run。以 deps 為 key，每個 app 各自一份。
@@ -63,7 +64,7 @@ async function prepareRootAgent(
   clock: RunClock,
   gateway: PlatformGateway | undefined,
 ): Promise<PreparedRoot> {
-  const { db, config, model } = deps;
+  const { db, config, model, images } = deps;
   const instances = await loadInstances(db, config.PROJECT_ID);
   const consultants = instances.filter((i) => i.role === 'consultant');
   if (consultants.length === 0) throw new Error('專案裡還沒有任何顧問');
@@ -77,7 +78,7 @@ async function prepareRootAgent(
   if (consultants.length === 1) {
     const root = consultants[0];
     const built = await buildConsultant({
-      db, model, config, instance: root, sharedFiles,
+      db, model, config, instance: root, sharedFiles, images,
       secrets: groupSecrets(secrets, root.id),
       onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
       wrapUpAt: clock.soloWrapUpAt,
@@ -101,9 +102,9 @@ async function prepareRootAgent(
     });
   };
   const built = await buildManager({
-    db, model, config, manager, consultants, sharedFiles, record, clock,
+    db, model, config, manager, consultants, sharedFiles, record, clock, images,
     runner: createConsultantRunner({
-      db, model, config, runId, sharedFiles, secrets,
+      db, model, config, runId, sharedFiles, secrets, images,
       wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt, gateway,
     }),
     onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: manager }),
@@ -150,8 +151,11 @@ export async function startRun(
   req: { threadId: string; text: string; platformToken?: string; dbToken: string },
 ): Promise<Response> {
   const { openDb, modelFor, ...rest } = runDeps;
-  const deps: ActiveDeps = { ...rest, db: openDb(req.dbToken), model: modelFor(req.platformToken) };
-  const { db, config } = deps;
+  const { config } = rest;
+  const db = openDb(req.dbToken);
+  // 一個 run 一份：read_file 確認過的共用資料夾圖片，送模型請求前換成簽名網址
+  const images = createImageRegistry(db, config.PROJECT_ID, config.SHARED_ROOT);
+  const deps: ActiveDeps = { ...rest, db, images, model: modelFor(req.platformToken, images) };
   await assertThreadInProject(db, req.threadId, config.PROJECT_ID);
   await cleanOrphanRunsOnce(runDeps, db);
   const runId = await createRun(db, req.threadId);

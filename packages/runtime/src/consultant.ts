@@ -3,6 +3,7 @@ import { buildConsultant, type PlatformGateway } from './agents/build';
 import type { Config } from './config';
 import type { Db } from './db';
 import { ConsultantStoppedError } from './errors';
+import type { ImageRegistry } from './images';
 import { groupSecrets } from './project-store';
 import type { AgentInstance, SecretRow } from './types';
 import { readSnapshots, textOf } from './ui-stream';
@@ -24,6 +25,7 @@ export type ConsultantRunnerDeps = {
   /** 過了這個時間強制停止顧問 */
   stopAt?: number;
   gateway?: PlatformGateway;
+  images?: ImageRegistry;
 };
 
 export function createConsultantRunner(deps: ConsultantRunnerDeps): ConsultantRunner {
@@ -40,6 +42,7 @@ export function createConsultantRunner(deps: ConsultantRunnerDeps): ConsultantRu
       onStepEnd: usageRecorder({ db: deps.db, projectId: deps.config.PROJECT_ID, runId: deps.runId, instance }),
       wrapUpAt: deps.wrapUpAt,
       gateway: deps.gateway,
+      images: deps.images,
     });
     try {
       const snapshots = readSnapshots(await built.streamUI({ messages: [{ role: 'user', content: task }], abortSignal: signal }));
