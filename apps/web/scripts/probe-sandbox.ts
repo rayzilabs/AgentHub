@@ -202,10 +202,12 @@ try {
   }
   const np = await sh(sprite, asAgent('cd /tmp && python3 -c "import numpy, pandas; print(\'np-pd-ok\')"'));
   record('沙盒帳號能 import 預裝的 numpy、pandas', np.out.includes('np-pd-ok'), np.out);
-  // 顧問的 requirements.txt：runtime 以顧問帳號建 --system-site-packages 的虛擬環境再 pip install（見 runtime 的 requirements.ts）
-  const venv = await sh(sprite, asAgent(
-    'cd /tmp && python3 -m venv --system-site-packages v && echo six | v/bin/pip install --disable-pip-version-check -q -r /dev/stdin && v/bin/python -c "import six, numpy; print(\'venv-ok\')"',
-  ));
+  // 顧問的 requirements.txt：runtime 以顧問帳號建 --system-site-packages 的虛擬環境再 pip install（見 runtime 的 requirements.ts）。
+  // 照 runtime 的方式由 Node spawn、從 stdin 送內容（stdin 是 socket；2026-10-31 shell pipe 測過、runtime 卻 ENXIO）
+  const install = 'cd /tmp && rm -rf v && python3 -m venv --system-site-packages v && cat > v/requirements.txt'
+    + ' && timeout -k 5 180 v/bin/pip install --disable-pip-version-check -q -r v/requirements.txt && v/bin/python -c "import six, numpy; print(\'venv-ok\')"';
+  const spawnJs = `const c=require('node:child_process').spawn('sudo',['-n','-E','--','unshare','--mount','--propagation','private','--','${SANDBOX_WRAPPER}','agent','bash','-c',${JSON.stringify(install)}],{cwd:'/',env:{PATH:process.env.PATH,SANDBOX_PATH:process.env.PATH,HOME:'/home/agent'}});let o='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>o+=d);c.on('close',()=>console.log(o));c.stdin.end('six\\n');`;
+  const venv = await sh(sprite, `echo ${Buffer.from(spawnJs).toString('base64')} | base64 -d > /tmp/probe-venv.js && node /tmp/probe-venv.js; rm -f /tmp/probe-venv.js`);
   record('沙盒帳號能建虛擬環境、安裝套件，並同時用到預裝的 numpy', venv.out.includes('venv-ok'), venv.out);
   // 記憶體上限：Sprite 的 cgroup 根目錄有程序，核心不准啟用記憶體控制器（EBUSY），沙盒腳本設不起來就照常執行。
   // 這裡只確認沙盒腳本沒有因此失敗；上限是否生效如實印出（2026-10-31 實測：沒有生效）
