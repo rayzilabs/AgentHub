@@ -11,6 +11,12 @@ export const DESCRIPTION_FIELD = z
 export const BASH_TIMEOUT_MS = 120_000;
 export const MAX_OUTPUT = 20_000;
 const KILL_GRACE_MS = 200;
+const OOM_NOTE = '\n[指令被終止：可能是沙盒記憶體超過 6 GB 上限。請改用較省記憶體的做法（例如不要安裝或載入大型模型）。]';
+
+/** 不是我們（逾時、中止）砍的 SIGKILL，幾乎都是沙盒 cgroup 超過記憶體上限被核心終止 */
+export function killedNote(signal: NodeJS.Signals | null, killedByUs: boolean): string {
+  return signal === 'SIGKILL' && !killedByUs ? OOM_NOTE : '';
+}
 
 export function truncate(text: string, max = MAX_OUTPUT): string {
   if (text.length <= max) return text;
@@ -77,7 +83,7 @@ export function runBash(
     child.on('exit', () => {
       if (killed) forceDone();
     });
-    child.on('close', (code) => done(code));
+    child.on('close', (code, signal) => done(code, killedNote(signal, killed)));
     child.on('error', (err) => done(null, `\n${err.message}`));
   });
 }

@@ -188,6 +188,13 @@ describe('sandboxSetupScript', () => {
     expect(lines[3]).toBe('unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV IFS SHELLOPTS');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('/usr/bin/mount --bind /dev/null /.sprite/api.sock');
     expect(SANDBOX_WRAPPER_SCRIPT).toContain('exec /usr/bin/setpriv');
+    // 降權前把自己放進記憶體上限 6 GiB 的 cgroup；設定失敗（set -eu）就不執行
+    const cg = SANDBOX_WRAPPER_SCRIPT.indexOf('/sys/fs/cgroup/agenthub-sandbox');
+    expect(cg).toBeGreaterThan(-1);
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('6442450944');
+    expect(SANDBOX_WRAPPER_SCRIPT).toContain('+memory');
+    expect(SANDBOX_WRAPPER_SCRIPT.indexOf('cgroup.procs')).toBeLessThan(SANDBOX_WRAPPER_SCRIPT.indexOf('exec /usr/bin/setpriv'));
+    expect(cg).toBeLessThan(SANDBOX_WRAPPER_SCRIPT.indexOf('exec /usr/bin/setpriv'));
     // 子專案 2：只接受 agent 或顧問帳號；每個帳號一份私人 /tmp
     // 整串比對（-z：整個參數視為一筆），多行參數不能靠其中一行合格混過去
     expect(SANDBOX_WRAPPER_SCRIPT).toContain("printf '%s' \"$user\" | /usr/bin/grep -Ezqx 'agent(-[0-9a-f]{12})?'");

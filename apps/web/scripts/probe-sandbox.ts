@@ -184,6 +184,13 @@ try {
   const oldMgr = await sh(sprite, asUser('agent', `cat ${dirOld}/old.txt`));
   const oldOwner = await sh(sprite, asUser(userOf(idOld), `cat ${dirOld}/old.txt`));
   record('1-A 時期的目錄轉成顧問群組：主管讀不到、該顧問讀得到', conv.code === 0 && oldMgr.code !== 0 && oldOwner.out.trim() === 'old', `${conv.out} | ${oldMgr.out} | ${oldOwner.out}`);
+  // 記憶體上限：沙盒程序都在 agenthub-sandbox cgroup（6 GiB）；吃超過只砍那個指令，runtime 照樣活著
+  const cg = await sh(sprite, asAgent('cat /proc/self/cgroup'));
+  record('沙盒程序在 agenthub-sandbox cgroup', cg.out.includes('0::/agenthub-sandbox'), cg.out);
+  const hog = await sh(sprite, asAgent('/usr/bin/python3 -c "b = bytearray(7 * 1024**3); print(len(b))"'));
+  record('配置 7 GB 的程式被砍掉', hog.code !== 0 && !hog.out.includes(String(7 * 1024 ** 3)), hog.out);
+  const after = await health(sprite.url!);
+  record('之後 runtime 仍正常回應', after.includes(projectId), after);
 } finally {
   await destroyProjectSprite(name).catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
 }

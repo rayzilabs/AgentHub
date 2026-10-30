@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { bashTool, MAX_OUTPUT, runBash, truncate } from '../src/tools/bash';
+import { bashTool, killedNote, MAX_OUTPUT, runBash, truncate } from '../src/tools/bash';
 import type { z } from 'zod';
 import { readFileTool, writeFileTool } from '../src/tools/files';
 import { createSandbox } from '../src/sandbox';
@@ -29,6 +29,21 @@ describe('runBash', () => {
     const r = await runBash(local, 'echo boom >&2; exit 3', await workDir());
     expect(r.exitCode).toBe(3);
     expect(r.output).toContain('boom');
+  });
+
+  it('killedNote：只有不是我們砍的 SIGKILL 才說明記憶體上限', () => {
+    expect(killedNote('SIGKILL', false)).toContain('記憶體超過 6 GB 上限');
+    expect(killedNote('SIGKILL', true)).toBe('');
+    expect(killedNote(null, false)).toBe('');
+    expect(killedNote('SIGTERM', false)).toBe('');
+  });
+
+  // Windows 的 Git Bash 把 SIGKILL 回報成結束碼 2304、signal 為 null；Sprite（Linux）才會回報 SIGKILL
+  it.skipIf(process.platform === 'win32')('被 SIGKILL 終止（沙盒記憶體超過上限時核心就是這樣砍）：輸出說明原因；一般失敗不加', async () => {
+    const killed = await runBash(local, 'echo 開始; kill -9 $$', await workDir());
+    expect(killed.output).toContain('記憶體超過 6 GB 上限');
+    const failed = await runBash(local, 'exit 3', await workDir());
+    expect(failed.output).not.toContain('記憶體');
   });
 
   it('逾時會中止', async () => {

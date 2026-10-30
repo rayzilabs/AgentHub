@@ -30,6 +30,13 @@ export const SANDBOX_WRAPPER_SCRIPT = [
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /var/tmp',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /dev/shm',
+  // 所有沙盒程序共用一個記憶體上限 6 GiB 的 cgroup（Sprite 8 GB、沒有 swap）：
+  // 超過時核心只砍群組裡的程序，runtime 不會被拖垮。每次都確認，Sprite 重開後 cgroup 不會留著
+  'cg=/sys/fs/cgroup/agenthub-sandbox',
+  '/usr/bin/mkdir -p "$cg"',
+  '/usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control',
+  '[ "$(/usr/bin/cat "$cg/memory.max")" = 6442450944 ] || echo 6442450944 > "$cg/memory.max"',
+  'echo $$ > "$cg/cgroup.procs"',
   'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
   '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
   '',
