@@ -91,6 +91,19 @@ describe('run 存活確認', () => {
     expect((await db.from('runs').select('status').eq('id', run!.id).single()).data!.status).toBe('failed');
   });
 
+  it('getThreadMessages：問 Sprite 的空檔裡 run 剛好正常完成 → 照實際結果回答，不報中斷', async () => {
+    const { owner, project, thread } = await setup();
+    await db.from('projects').update({ sprite_status: 'ready', sprite_url: 'https://sprite.example' }).eq('id', project.id);
+    const { data: run } = await db.from('runs').insert({ thread_id: thread.id }).select('id').single();
+    // runtime 寫完「完成」、從進行中名單移除後才收到詢問，所以回答 gone（2026-10-31 正式站實測會發生）
+    const finishedMeanwhile = async () => {
+      await db.from('runs').update({ status: 'succeeded', finished_at: new Date().toISOString() }).eq('id', run!.id);
+      return 'gone' as const;
+    };
+    expect(await getThreadMessages(db, owner.id, thread.id, finishedMeanwhile)).toMatchObject({ running: false, error: null });
+    expect((await db.from('runs').select('status, error').eq('id', run!.id).single()).data).toEqual({ status: 'succeeded', error: null });
+  });
+
   it('getThreadMessages：專案沒有 sprite_url 時不問', async () => {
     const { owner, thread } = await setup();
     await db.from('runs').insert({ thread_id: thread.id });

@@ -74,8 +74,11 @@ export async function getThreadMessages(db: Db, userId: string, threadId: string
   if (run.status === 'running') {
     // 直接問 runtime：程序被砍或重啟時，它會明確說不知道這個 run，不必等到 20 分鐘
     if (project.sprite_url && (await checkRun(project.sprite_url, run.id, project.id)) === 'gone') {
-      await markRunInterrupted(db, run.id);
-      return { messages, running: false, error: INTERRUPTED_ERROR, ...times };
+      if (await markRunInterrupted(db, run.id)) return { messages, running: false, error: INTERRUPTED_ERROR, ...times };
+      // 沒改到：問的空檔裡 runtime 剛好寫完結果才回答「不在」，照實際結果回答
+      const { data: latest, error } = await db.from('runs').select('status, error').eq('id', run.id).single();
+      if (error) throw error;
+      return { messages, running: false, error: latest.status === 'failed' ? latest.error : null, ...times };
     }
     const stale = Date.now() - new Date(run.started_at).getTime() > STALE_RUN_MS;
     return { messages, running: !stale, error: stale ? '這次回覆超過 20 分鐘沒有完成' : null, ...times };
