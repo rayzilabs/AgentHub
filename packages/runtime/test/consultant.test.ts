@@ -6,7 +6,8 @@ import { loadInstances } from '../src/project-store';
 import { textOf } from '../src/ui-stream';
 import { seedConsultant, seedProject, seedThread, seedUser, testDb, tmpRoots, waitFor } from './helpers';
 import { emptyTurn, failingModel, mockModel, promptText, textTurn, toolTurn } from './mock-model';
-import type { LanguageModel } from 'ai';
+import { APICallError, type LanguageModel } from 'ai';
+import { MockLanguageModelV4 } from 'ai/test';
 
 const db = testDb();
 
@@ -47,6 +48,19 @@ describe('createConsultantRunner', () => {
       for await (const _ of run(instance, '任務')) { /* drain */ }
     };
     await expect(consume()).rejects.toThrow('顧問掛了');
+  });
+
+  it('模型配額用完：錯誤訊息是「目前使用人數較多，請稍後再試」', async () => {
+    const busy = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new APICallError({ message: 'Resource exhausted.', url: 'u', requestBodyValues: {}, statusCode: 429, isRetryable: false });
+      },
+    });
+    const { run, instance } = await setup(busy);
+    const consume = async () => {
+      for await (const _ of run(instance, '任務')) { /* drain */ }
+    };
+    await expect(consume()).rejects.toThrow('目前使用人數較多，請稍後再試');
   });
 
   it('只有工具呼叫、沒有文字回覆：丟出錯誤', async () => {

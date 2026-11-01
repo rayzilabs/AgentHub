@@ -31,8 +31,9 @@ describe('runBash', () => {
     expect(r.output).toContain('boom');
   });
 
-  it('killedNote：只有不是我們砍的 SIGKILL 才說明記憶體上限', () => {
-    expect(killedNote('SIGKILL', false)).toContain('記憶體超過 6 GB 上限');
+  it('killedNote：只有不是我們砍的 SIGKILL 才說明可能是記憶體不足（沙盒沒有獨立上限，和整台環境共用 8 GB）', () => {
+    expect(killedNote('SIGKILL', false)).toContain('記憶體不足');
+    expect(killedNote('SIGKILL', false)).not.toContain('6 GB');
     expect(killedNote('SIGKILL', true)).toBe('');
     expect(killedNote(null, false)).toBe('');
     expect(killedNote('SIGTERM', false)).toBe('');
@@ -41,7 +42,7 @@ describe('runBash', () => {
   // Windows 的 Git Bash 把 SIGKILL 回報成結束碼 2304、signal 為 null；Sprite（Linux）才會回報 SIGKILL
   it.skipIf(process.platform === 'win32')('被 SIGKILL 終止（沙盒記憶體超過上限時核心就是這樣砍）：輸出說明原因；一般失敗不加', async () => {
     const killed = await runBash(local, 'echo 開始; kill -9 $$', await workDir());
-    expect(killed.output).toContain('記憶體超過 6 GB 上限');
+    expect(killed.output).toContain('記憶體不足');
     const failed = await runBash(local, 'exit 3', await workDir());
     expect(failed.output).not.toContain('記憶體');
   });

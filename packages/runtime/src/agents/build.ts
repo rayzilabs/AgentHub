@@ -5,7 +5,7 @@ import {
 } from 'ai';
 import type { Config } from '../config';
 import type { Db } from '../db';
-import { errorText } from '../errors';
+import { modelErrorText } from '../errors';
 import { connectMcpServers } from '../mcp';
 import { withToolTimes } from '../tool-clock';
 import { agentDir, skillsDir } from '../sync';
@@ -25,6 +25,8 @@ import { conveneDiscussionTool } from '../tools/discuss';
 import { buildConsultantInstructions, buildManagerInstructions } from './prompts';
 
 export const MAX_STEPS = 30;
+/** 模型呼叫失敗（多半是尖峰時配額用完）的重試次數；間隔 2、4、8、16、32 秒，撐過約一分鐘的尖峰 */
+export const MODEL_RETRIES = 5;
 
 type WrapUpNotes = { time: string; steps: string };
 
@@ -126,7 +128,7 @@ function wrapAgent(agent: StreamableAgent, instructions: string, warnings: strin
     close,
     streamUI: async ({ messages, abortSignal }) => {
       const result = await agent.stream({ messages, abortSignal });
-      const ui = result.toUIMessageStream({ generateMessageId: generateId, onError: errorText });
+      const ui = result.toUIMessageStream({ generateMessageId: generateId, onError: modelErrorText });
       return withWarnings(withToolTimes(ui), warnings);
     },
   };
@@ -149,6 +151,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       memories,
       mcpWarnings: mcp.warnings,
       envFailure: ctx.env?.failure,
+      envPackages: ctx.env?.packages,
     });
     const warnings = ctx.env?.failure ? [...mcp.warnings, `顧問 ${ctx.instance.name} 的套件安裝失敗`] : mcp.warnings;
 
@@ -170,7 +173,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       instructions,
       tools,
       stopWhen: stepCountIs(MAX_STEPS),
-      maxRetries: 3,
+      maxRetries: MODEL_RETRIES,
       onStepEnd: ctx.onStepEnd,
       prepareStep: wrapUpStep(ctx.wrapUpAt, instructions, CONSULTANT_WRAP_UP),
     });
@@ -220,7 +223,7 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
     instructions,
     tools,
     stopWhen: stepCountIs(MAX_STEPS),
-    maxRetries: 3,
+    maxRetries: MODEL_RETRIES,
     onStepEnd: ctx.onStepEnd,
     prepareStep: wrapUpStep(ctx.clock?.consultantStopAt, instructions, MANAGER_WRAP_UP),
   });

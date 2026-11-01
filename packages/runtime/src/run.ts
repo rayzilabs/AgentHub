@@ -74,17 +74,16 @@ async function prepareRootAgent(
   await ensureConsultantSandboxes(config.SANDBOX_USER, config.AGENTS_ROOT, consultants.map((c) => c.id));
   const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT);
   for (const i of consultants) await syncSkills(db, config.AGENTS_ROOT, i);
-  // 顧問的 requirements.txt：以顧問自己的帳號在工作目錄建虛擬環境（裝過的不重裝）
-  const envs = new Map<string, EnvResult>();
-  for (const i of consultants) {
+  // 顧問的 requirements.txt：以顧問自己的帳號在工作目錄建虛擬環境（裝過的不重裝）；各顧問同時裝，最多等一份的時間
+  const envs = new Map<string, EnvResult>(await Promise.all(consultants.map(async (i): Promise<[string, EnvResult]> => {
     const workDir = agentDir(config.AGENTS_ROOT, i.id);
     const sandbox = createSandbox(sandboxUserFor(config, i.id));
-    envs.set(i.id, await ensureConsultantEnv({
+    return [i.id, await ensureConsultantEnv({
       workDir,
       requirements: await consultantRequirements(skillsDir(config.AGENTS_ROOT, i.id), i.skills),
       run: (argv, input) => runInSandbox(sandbox, argv, { cwd: workDir, input }),
-    }));
-  }
+    })];
+  })));
   const secrets = await loadSecrets(db, config.PROJECT_ID);
 
   if (consultants.length === 1) {

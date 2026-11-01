@@ -11,9 +11,9 @@ export const DESCRIPTION_FIELD = z
 export const BASH_TIMEOUT_MS = 120_000;
 export const MAX_OUTPUT = 20_000;
 const KILL_GRACE_MS = 200;
-const OOM_NOTE = '\n[指令被終止：可能是沙盒記憶體超過 6 GB 上限。請改用較省記憶體的做法（例如不要安裝或載入大型模型）。]';
+const OOM_NOTE = '\n[指令被終止：可能是記憶體不足（整個 agent 環境共用 8 GB）。請改用較省記憶體的做法（例如分批處理、不要安裝或載入大型模型）。]';
 
-/** 不是我們（逾時、中止）砍的 SIGKILL，幾乎都是沙盒 cgroup 超過記憶體上限被核心終止 */
+/** 不是我們（逾時、中止）砍的 SIGKILL，幾乎都是記憶體不足被核心終止（Sprite 上設不了沙盒自己的上限） */
 export function killedNote(signal: NodeJS.Signals | null, killedByUs: boolean): string {
   return signal === 'SIGKILL' && !killedByUs ? OOM_NOTE : '';
 }

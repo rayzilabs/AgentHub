@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, utimes, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { consultantRequirements, ensureConsultantEnv } from '../src/requirements';
@@ -50,10 +51,12 @@ describe('ensureConsultantEnv', () => {
     const dir = await workDir();
     const calls: string[][] = [];
     const failing = fakeRun(dir, { ok: false, stderr: 'ERROR: No matching distribution found for nope' }, calls);
-    const first = await ensureConsultantEnv({ workDir: dir, requirements: 'nope\n', run: failing });
+    const first = await ensureConsultantEnv({ workDir: dir, requirements: '# 註解\nnope\nsix==1.16.0\n', run: failing });
     expect(first.bin).toBeUndefined();
     expect(first.failure).toContain('No matching distribution found for nope');
-    expect(await ensureConsultantEnv({ workDir: dir, requirements: 'nope\n', run: failing })).toEqual(first);
+    // 顧問要知道是哪些套件沒裝好，不只是 pip 的錯誤訊息
+    expect(first.packages).toEqual(['nope', 'six==1.16.0']);
+    expect(await ensureConsultantEnv({ workDir: dir, requirements: '# 註解\nnope\nsix==1.16.0\n', run: failing })).toEqual(first);
     expect(installs(calls)).toBe(1);
     const fixed = await ensureConsultantEnv({ workDir: dir, requirements: 'requests\n', run: fakeRun(dir, { ok: true }, calls) });
     expect(fixed.bin).toBeDefined();
@@ -92,6 +95,20 @@ describe('ensureConsultantEnv', () => {
       .replace(/timeout -k 5 \d+ \.agenthub-venv\/bin\/pip install [^&]*-r (\S+)/, 'cat $1');
     const out = execFileSync('bash', ['-c', fake], { cwd: dir, input: 'six\n' }).toString();
     expect(out).toBe('six\n');
+  });
+});
+
+describe('ensureConsultantEnv：狀態檔', () => {
+  // 狀態檔在顧問可寫的工作目錄，runtime 以自己的帳號讀；換成 symlink 時不跟過去（當成沒有）
+  it.skipIf(process.platform === 'win32')('狀態檔是 symlink 時不採信，照常安裝', async () => {
+    const dir = await workDir();
+    const sha = createHash('sha256').update('six\n').digest('hex');
+    await mkdir(path.join(dir, '.agenthub-venv'), { recursive: true });
+    await writeFile(path.join(dir, 'elsewhere'), sha);
+    await symlink(path.join(dir, 'elsewhere'), path.join(dir, '.agenthub-venv', '.requirements-sha256'));
+    const calls: string[][] = [];
+    await ensureConsultantEnv({ workDir: dir, requirements: 'six\n', run: fakeRun(dir, { ok: true }, calls) });
+    expect(installs(calls)).toBe(1);
   });
 });
 

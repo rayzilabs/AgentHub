@@ -225,10 +225,11 @@ describe('buildConsultant', () => {
     const config = { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot };
     const failed = await buildConsultant({
       db, model: mockModel(textTurn('好')), config, instance: instance({ id, project_id: projectId, name: '量化顧問' }), sharedFiles: [], secrets: {},
-      env: { failure: 'ERROR: No matching distribution found for nope' },
+      env: { failure: 'ERROR: No matching distribution found for nope', packages: ['nope', 'six==1.16.0'] },
     });
     await failed.close();
     expect(failed.instructions).toContain('## 套件安裝失敗');
+    expect(failed.instructions).toContain('nope、six==1.16.0');
     expect(failed.instructions).toContain('No matching distribution found for nope');
     expect(failed.warnings).toContain('顧問 量化顧問 的套件安裝失敗');
 

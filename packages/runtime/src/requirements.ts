@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { SkillMeta } from './types';
 
@@ -8,7 +8,8 @@ import type { SkillMeta } from './types';
  * runtime 以該顧問的沙盒帳號建立 <工作目錄>/.agenthub-venv 並安裝，之後顧問的 python3 就是這個環境。
  * 以內容雜湊決定是否重裝：裝過的不重裝；失敗過的同一份一小時內不重試（等創作者改內容，或暫時的問題過去）。
  */
-export type EnvResult = { bin?: string; failure?: string };
+/** failure：pip 的錯誤摘要；packages：沒裝好的那份 requirements（讓顧問知道是哪些套件） */
+export type EnvResult = { bin?: string; failure?: string; packages?: string[] };
 type Run = (argv: string[], input?: string) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 const VENV = '.agenthub-venv';
@@ -32,7 +33,14 @@ export async function consultantRequirements(skillsDir: string, skills: Pick<Ski
   return merged;
 }
 
-const read = (file: string) => readFile(file, 'utf8').catch(() => null);
+/** 狀態檔在顧問可寫的工作目錄、runtime 以自己的帳號讀：是 symlink 就不採信 */
+async function read(file: string): Promise<string | null> {
+  const st = await lstat(file).catch(() => null);
+  if (!st?.isFile()) return null;
+  return readFile(file, 'utf8').catch(() => null);
+}
+
+const packagesOf = (requirements: string) => requirements.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
 
 /** 同一位顧問同時有兩個對話時共用同一次安裝，避免互相 rm -rf */
 const inflight = new Map<string, Promise<EnvResult>>();
@@ -55,8 +63,8 @@ async function ensureOnce({ workDir, requirements, run }: { workDir: string; req
   const failedPath = path.join(venv, FAILED_FILE);
   const failed = await read(failedPath);
   if (failed && failed.split('\n', 1)[0] === sha) {
-    const age = Date.now() - (await stat(failedPath)).mtimeMs;
-    if (age < FAILED_RETRY_MS) return { failure: failed.slice(sha.length + 1) };
+    const age = Date.now() - (await lstat(failedPath)).mtimeMs;
+    if (age < FAILED_RETRY_MS) return { failure: failed.slice(sha.length + 1), packages: packagesOf(requirements) };
   }
 
   // 子程序的 stdin 是 socket，pip 開 /dev/stdin 會 ENXIO；先由 cat 讀成檔案。
@@ -75,5 +83,5 @@ async function ensureOnce({ workDir, requirements, run }: { workDir: string; req
     ? `安裝超過 ${INSTALL_TIMEOUT_S} 秒`
     : `${result.stderr}${result.stdout}`.trim().slice(-SUMMARY_MAX) || '安裝失敗';
   await run(['bash', '-c', `mkdir -p ${VENV} && rm -f ${VENV}/${OK_FILE} && cat > ${VENV}/${FAILED_FILE}`], `${sha}\n${summary}`);
-  return { failure: summary };
+  return { failure: summary, packages: packagesOf(requirements) };
 }
