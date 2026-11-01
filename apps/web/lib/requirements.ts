@@ -33,11 +33,15 @@ export function parseRequirements(text: string): { requirements: Requirement[]; 
     const m = NAME.exec(line);
     const specs = m?.[3] ? m[3].split(',').map((s) => SPEC.exec(s)) : [];
     if (!m || specs.some((s) => !s)) return problems.push(`第 ${n} 行：格式不正確，例如 numpy、pandas>=2.0、requests==2.32.3`);
-    const exact = specs.length === 1 && specs[0]![1] === '==' ? specs[0]![2] : undefined;
+    // ==2.* 是萬用字元比對，不是指定單一版本，不查 PyPI 的版本
+    const exact = specs.length === 1 && specs[0]![1] === '==' && !specs[0]![2].includes('*') ? specs[0]![2] : undefined;
     requirements.push({ name: m[1], normalized: normalizeName(m[1]), line: n, ...(exact ? { pinned: exact } : {}) });
   });
   return { requirements, problems };
 }
+
+/** PEP 440：結尾補零視為同一版（2.31 = 2.31.0） */
+const sameRelease = (a: string, b: string) => a.replace(/(\.0+)+$/, '') === b.replace(/(\.0+)+$/, '');
 
 export async function checkOnPyPI(reqs: Requirement[], fetchImpl: typeof fetch = fetch): Promise<string[]> {
   let unreachable = false;
@@ -47,7 +51,7 @@ export async function checkOnPyPI(reqs: Requirement[], fetchImpl: typeof fetch =
       if (res.status === 404) return `第 ${r.line} 行：PyPI 上找不到套件 ${r.name}`;
       if (!res.ok) { unreachable = true; return null; }
       const body = (await res.json()) as { releases?: Record<string, unknown> };
-      if (r.pinned && !(r.pinned in (body.releases ?? {}))) return `第 ${r.line} 行：${r.name} 沒有 ${r.pinned} 這個版本`;
+      if (r.pinned && !Object.keys(body.releases ?? {}).some((v) => sameRelease(v, r.pinned!))) return `第 ${r.line} 行：${r.name} 沒有 ${r.pinned} 這個版本`;
       return null;
     } catch {
       unreachable = true;

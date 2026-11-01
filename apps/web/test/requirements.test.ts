@@ -36,6 +36,12 @@ describe('checkOnPyPI', () => {
     expect((await checkOnPyPI(parseRequirements('requests==9.9.9').requirements, pypi))[0]).toContain('9.9.9');
   });
 
+  it('pip 接受的合法寫法不誤擋：==2.*（萬用字元）、==2.31（等於 2.31.0）', async () => {
+    expect(parseRequirements('requests==2.*').requirements[0].pinned).toBeUndefined();
+    expect(await checkOnPyPI(parseRequirements('requests==2.*\nrequests==2.31\nrequests==2.31.0.0').requirements, pypi)).toEqual([]);
+    expect((await checkOnPyPI(parseRequirements('requests==2.33').requirements, pypi))[0]).toContain('2.33');
+  });
+
   it('連不上 PyPI：請創作者稍後再試', async () => {
     const down = (async () => { throw new Error('ECONNREFUSED'); }) as typeof fetch;
     expect((await checkOnPyPI(parseRequirements('requests').requirements, down))[0]).toContain('稍後再試');
