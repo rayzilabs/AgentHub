@@ -15,6 +15,7 @@ export type DelegationOutput = {
   status: 'working' | 'done' | 'failed';
   message?: UIMessage; // 只含文字片段
   tools?: ToolEvent[];
+  warnings?: string[]; // 顧問的提醒（套件安裝失敗、MCP 無法使用）
   error?: string;
   cutoff?: Cutoff;
 };

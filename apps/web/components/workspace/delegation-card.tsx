@@ -36,6 +36,11 @@ export function DelegationCard({ output, task, color, failedText, live }: {
             <p className="mt-1 whitespace-pre-wrap text-ink">{task}</p>
           </details>
         )}
+        {output?.warnings?.map((w) => (
+          <p key={w} role="status" className="notice notice-warn mt-3">
+            <span className="font-medium text-ochre">提醒</span>　{w}
+          </p>
+        ))}
         <ToolSteps tools={output?.tools} ended={!live || failedText !== undefined || (!!output && output.status !== 'working')} />
         {output?.cutoff === 'wrap-up' && <p className="notice notice-warn mt-3">時間到，已提前收尾</p>}
         {failedText !== undefined && <p className="notice notice-error mt-3">{failedText}</p>}

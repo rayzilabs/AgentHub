@@ -56,6 +56,19 @@ describe('assign_task', () => {
       .toEqual({ type: 'text', value: '初步看法：有風險' });
   });
 
+  it('顧問的提醒（套件安裝失敗、MCP 無法使用）放進 warnings，使用者在派工卡片上看得到', async () => {
+    const run: ConsultantRunner = async function* () {
+      yield {
+        id: 'm', role: 'assistant',
+        parts: [{ type: 'data-warning', data: { text: '顧問 法務顧問 的套件安裝失敗' } }, { type: 'text', text: '完成' }],
+      } as unknown as UIMessage;
+    };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0 });
+    const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+    expect(outputs.at(-1)).toMatchObject({ status: 'done', warnings: ['顧問 法務顧問 的套件安裝失敗'] });
+    expect(textOf(outputs.at(-1)!.message)).toBe('完成');
+  });
+
   it('顧問出錯：不丟例外，回傳錯誤給主管，已產生的內容仍記錄下來', async () => {
     const run: ConsultantRunner = async function* () {
       yield msg('寫到一半');
