@@ -518,14 +518,36 @@ git add apps/web/scripts/migrate-project-files.ts apps/web/test/migrate-project-
 git commit -m "feat: 舊制專案檔案搬進雲端資料夾，更新權限文件"
 ```
 
-- [ ] **Step 6: 上線（每一步先跟使用者確認）**
+- [ ] **Step 6: 上線（開始前一次取得同意，之後網站部署到 Sprite redeploy 連續做完）**
 
-1. 走 `superpowers:finishing-a-development-branch`。
-2. push main（Vercel 自動部署網站）。
-3. 立刻跑 `migrate-project-files.ts`（網站部署後到腳本跑完之前，舊檔案在網站上暫時看不到）。
-4. publish-runtime，**經使用者同意後** redeploy 所有 Sprite。
-5. 正式站 e2e（臨時帳號，照規格第 5 節）：開專案租 ETF 顧問 → 請它把一份簡短報告存成 docx 並交付 → 回覆有下載按鈕、下載的檔案打得開 → 側欄與我的雲端都看得到 → 改名、搬移後舊按鈕仍能下載 → 刪除後按鈕顯示「檔案已刪除」→ 加投組顧問、另開對話請它讀那份檔案，讀得到 → 刪專案後 storage 沒有殘留。
-6. 把結果寫進這份計畫最後的「實測」段。
+為什麼要連續做完：網站與 Sprite 上的 runtime 新舊混用時，顧問那一側有空窗——
+
+- 新網站已部署、Sprite 還是舊 runtime：新上傳的檔案放在 `<專案>/files/<id>`，舊 runtime 的 `list(<專案>)` 會濾掉 `files` 子資料夾（`id === null`），顧問看不到新上傳的檔案。
+- 搬移腳本跑完、Sprite 還沒 redeploy：舊 runtime 下一次 run 在第一層找不到物件，照舊的 `/shared/.sync.json` 把 `/shared` 裡每個舊副本刪掉，顧問在 redeploy 前看不到任何使用者檔案；剛好在 storage 改名那一刻下載的 run 會以 SyncError 失敗。
+
+所以順序固定如下，中間不停下來等使用者：
+
+0. **上線前**
+   - 取得使用者同意：這次會 redeploy **所有** Sprite（正在跑的 run 會被中斷），並說明上面的空窗，同意後才開始 1～7。
+   - 在一台真的 Sprite 上跑 `probe-sandbox.ts`（`pnpm --filter @agenthub/runtime publish-runtime -- --versioned-only` 後，`cd apps/web && pnpm exec tsx scripts/probe-sandbox.ts main-<sha>.js`），全部通過，包含兩個新的 symlink 項目（同步遇到被換成 symlink 的資料夾會還原成真資料夾、沒寫進顧問 A 的目錄；沙盒帳號跟著 `/shared` 裡的 symlink 也寫不進顧問 A 的目錄）與同步寫入的權限項目（`agent:workspace 664`、不留暫存檔、其他顧問讀得到）。
+   - 記下每個專案 `project-files/<專案>/` 第一層的物件數（`id !== null`），第 5 步要對。
+1. 走 `superpowers:finishing-a-development-branch`，合併進 main（先不 push）。
+2. `pnpm --filter @agenthub/runtime publish-runtime`：只把新的 `main.js` 上傳到 storage，不重啟任何 Sprite。
+3. 確認目前沒有正在跑的 run（`runs` 沒有 `status = 'running'`）；有的話等它結束。
+4. push main，等 Vercel 部署完成（部署狀態顯示 Ready、正式站載得到新版）。
+5. **立刻**跑 `migrate-project-files.ts`；每個專案印出的「搬了 N 個」要等於第 0 步記下的第一層物件數，有失敗的專案先處理（腳本可重跑）。
+6. **立刻**跑 `redeploy-runtime.ts` redeploy 所有 Sprite，全部成功。
+7. 上線後檢查：
+   - 請正式站使用者重新整理已開著的分頁（舊版側欄預期檔案清單是陣列，新 API 回傳的是樹，不重新整理會壞掉）。
+   - 選一台有舊制檔案的 Sprite：`/workspace/shared/我上傳的/…` 存在，檔案是 `agent:workspace` 664、資料夾 2775；顧問帳號 `cat` 得到；`~/agenthub/shared-sync.json` 存在；`/workspace/shared` 第一層沒有舊副本、也沒有 `/workspace/shared/.sync.json`。
+   - 記錄 redeploy 後第一次 run 的準備時間（整棵重新下載、每個檔案一次 sudo），以檔案最多的專案為準。
+   - 在 Linux／Sprite 上確認：交付拒絕 chmod 000 的檔案、拒絕指向超過 50 MB 檔案的 symlink；同步或交付時把目標換成 FIFO，只有那一個操作失敗或逾時（同步 120 秒上限），run 照常進行。
+8. 正式站 e2e（臨時帳號，照規格第 5 節）：
+   - 開專案租 ETF 顧問 → 請它把一份簡短報告存成 docx 並交付 → 回覆有下載按鈕、下載的檔案打得開 → 側欄與我的雲端都看得到 → 改名、搬移後舊按鈕仍能下載 → 刪除後按鈕顯示「檔案已刪除」→ 加投組顧問、另開對話請它讀那份檔案，讀得到。
+   - 檔案卡片：單一顧問模式、主管模式（委派與討論）都會出現；重新整理頁面後卡片還在；主管的「這次交付的檔案」清單沒有重複。
+   - 刪掉一個搬移過來的舊制檔案，下一次 run 後 `ls /workspace/shared`（與 `我上傳的/`）看不到它。
+   - 刪專案（含一個交付失敗留下、沒有資料表紀錄的孤兒物件）後，`list(<專案>)` 與 `list(<專案>/files)` 都是空的。
+9. 把結果寫進這份計畫最後的「實測」段。
 
 ---
 
