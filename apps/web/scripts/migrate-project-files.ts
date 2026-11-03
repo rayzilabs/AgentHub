@@ -53,7 +53,8 @@ export async function migrateProjectFiles(db: Db, projectId: string): Promise<{ 
     });
     if (error) {
       // 登記失敗就搬回原位，下次重跑還找得到，不會變成沒有紀錄的物件
-      await db.storage.from(BUCKET).move(to, from);
+      const { error: backError } = await db.storage.from(BUCKET).move(to, from);
+      if (backError) console.error(`搬回原位失敗（已搬 ${from} → ${to}），請手動把 ${to} 搬回 ${from}：${backError.message}`);
       throw error;
     }
     moved++;
