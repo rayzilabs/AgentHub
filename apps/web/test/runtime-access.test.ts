@@ -164,6 +164,32 @@ describe('雲端資料夾的 runtime 權限', () => {
     expect((await deliver(ra, id, a.instanceId, '../x')).error).not.toBeNull();
   });
 
+  it('專案擁有者本人的一般通行證不能交付，也讀不到雲端資料夾的資料表', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+    expect((await deliver(ra, await upload(ra, a.project.id), a.instanceId)).error).toBeNull();
+
+    const auth = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data } = await auth.auth.signInWithPassword({ email: a.owner.email, password: a.owner.password });
+    const owner = asToken(data.session!.access_token);
+
+    const id = randomUUID();
+    expect((await db.storage.from('project-files').upload(`${a.project.id}/files/${id}`, Buffer.from('1'))).error).toBeNull();
+    const delivered = await deliver(owner, id, a.instanceId);
+    expect(delivered.error?.message).toBe('not allowed');
+    expect(delivered.data).toBeNull();
+    expect((await db.from('project_files').select('id').eq('id', id)).data).toEqual([]);
+
+    for (const table of ['project_folders', 'project_files']) {
+      // 唯一的讀取 policy 只認 runtime 通行證：查詢不報錯，只是一筆都拿不到
+      const { data: rows, error } = await owner.from(table).select('id').eq('project_id', a.project.id);
+      expect(error).toBeNull();
+      expect(rows).toEqual([]);
+    }
+  });
+
   it('storage 物件不存在就拒絕', async () => {
     const a = await seedProject('PROMPT A');
     const ra = asToken(await runtimeAccessToken(db, a.project.id));
