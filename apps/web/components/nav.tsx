@@ -8,7 +8,7 @@ export async function Nav() {
   const user = await currentUser();
   const links = [
     { href: '/', label: '市集' },
-    ...(user ? [{ href: '/projects', label: '我的專案' }, { href: '/creator', label: '我上架的 agent' }] : []),
+    ...(user ? [{ href: '/projects', label: '我的專案' }, { href: '/cloud', label: '我的雲端' }, { href: '/creator', label: '我上架的 agent' }] : []),
   ];
   return (
     <header id="site-nav" className="material scroll-edge sticky top-0 z-30">
