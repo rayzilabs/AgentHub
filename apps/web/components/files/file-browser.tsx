@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
 import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
-import { buildTree, descendantFolderIds, folderPath, formatSize, type TreeNode } from '@/lib/file-tree';
+import { ancestorFolderIds, buildTree, descendantFolderIds, folderPath, formatSize, isValidSelection, type TreeNode } from '@/lib/file-tree';
 import type { FileRow, ProjectTree } from '@/lib/services/files';
 
 type Target = { kind: 'file' | 'folder'; id: string };
@@ -17,7 +17,7 @@ function NameInput({ initial, label, busy, onSubmit, onCancel }: { initial: stri
   const [value, setValue] = useState(initial);
   return (
     <form className="flex items-center gap-1 py-1" onSubmit={(e) => { e.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}>
-      <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} aria-label={label} maxLength={100} className="input min-w-0 flex-1 py-1 text-sm" />
+      <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} aria-label={label} maxLength={100} className="field mt-0 w-auto min-w-0 flex-1 py-1 text-sm" />
       <button type="submit" disabled={busy} className="btn btn-sm btn-secondary">確定</button>
       <button type="button" onClick={onCancel} className={linkBtn}>取消</button>
     </form>
@@ -35,7 +35,7 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
 
   const base = `/api/projects/${projectId}`;
   const load = useCallback(() => api<ProjectTree>(`${base}/files`)
-    .then((t) => { setTree(t); setError(null); })
+    .then((t) => { setTree(t); setError(null); setSelected((s) => (isValidSelection(t.folders, s) ? s : null)); })
     .catch((e) => setError(e.message)), [base]);
   useEffect(() => { void load(); }, [load]);
 
@@ -65,8 +65,12 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
   });
   const createFolder = (name: string, parentId: string | null) => run(() => api(`${base}/folders`, json('POST', { name, parentId })));
   const rename = (t: Target, name: string) => run(() => api(`${base}/${t.kind === 'file' ? 'files' : 'folders'}/${t.id}`, json('PATCH', { name })));
-  const move = (t: Target, dest: string) => run(() => api(`${base}/${t.kind === 'file' ? 'files' : 'folders'}/${t.id}`,
-    json('PATCH', t.kind === 'file' ? { folderId: dest } : { parentId: dest || null })));
+  const move = (t: Target, dest: string) => run(async () => {
+    await api(`${base}/${t.kind === 'file' ? 'files' : 'folders'}/${t.id}`,
+      json('PATCH', t.kind === 'file' ? { folderId: dest } : { parentId: dest || null }));
+    // 展開目的地與它的祖先，搬過去的項目才看得到
+    if (dest && tree) setCollapsed((s) => { const n = new Set(s); ancestorFolderIds(tree.folders, dest).forEach((id) => n.delete(id)); return n; });
+  });
   const remove = (t: Target, name: string) => {
     const msg = t.kind === 'file' ? `確定要刪除「${name}」？刪除後無法復原。` : `確定要刪除「${name}」和裡面所有檔案？刪除後無法復原。`;
     if (window.confirm(msg)) void run(async () => {
@@ -95,7 +99,7 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
       .map((f) => ({ id: f.id, path: folderPath(folders, f.id) })).sort((a, b) => (a.path < b.path ? -1 : 1));
     return (
       <div className="flex items-center gap-1 py-1">
-        <select aria-label={`把 ${name} 搬到`} defaultValue="__" onChange={(e) => void move(t, e.target.value)} className="input min-w-0 flex-1 py-1 text-sm">
+        <select aria-label={`把 ${name} 搬到`} defaultValue="__" onChange={(e) => void move(t, e.target.value)} disabled={busy} className="field mt-0 w-auto min-w-0 flex-1 py-1 text-sm">
           <option value="__" disabled>選擇資料夾…</option>
           {t.kind === 'folder' && currentParent !== null && <option value="">最上層</option>}
           {options.map((o) => <option key={o.id} value={o.id}>{o.path}</option>)}
@@ -114,10 +118,10 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
       <>
         {mode === 'menu' && (
           <span className="flex shrink-0 items-center">
-            <button className={linkBtn} aria-label={`改名 ${name}`} onClick={() => open(t, 'rename')}>改名</button>
-            <button className={linkBtn} aria-label={`搬移 ${name}`} onClick={() => open(t, 'move')}>搬移</button>
-            {t.kind === 'folder' && <button className={linkBtn} aria-label={`在 ${name} 裡新增資料夾`} onClick={() => open(t, 'newfolder')}>新增資料夾</button>}
-            <button className={`${linkBtn} text-seal`} aria-label={`刪除 ${name}`} onClick={() => remove(t, name)}>刪除</button>
+            <button disabled={busy} className={linkBtn} aria-label={`改名 ${name}`} onClick={() => open(t, 'rename')}>改名</button>
+            <button disabled={busy} className={linkBtn} aria-label={`搬移 ${name}`} onClick={() => open(t, 'move')}>搬移</button>
+            {t.kind === 'folder' && <button disabled={busy} className={linkBtn} aria-label={`在 ${name} 裡新增資料夾`} onClick={() => open(t, 'newfolder')}>新增資料夾</button>}
+            <button disabled={busy} className={`${linkBtn} text-seal`} aria-label={`刪除 ${name}`} onClick={() => remove(t, name)}>刪除</button>
           </span>
         )}
         <button className={linkBtn} aria-label={`更多 ${name}`} aria-expanded={mode === 'menu'} onClick={() => (mode === 'menu' ? setEditing(null) : open(t, 'menu'))}>⋯</button>
@@ -164,7 +168,7 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
               <span className="truncate" title={file.name}>{file.name}</span>
               <span className="shrink-0 text-muted">{formatSize(file.size)}</span>
             </span>
-            <button className={linkBtn} aria-label={`下載 ${file.name}`} onClick={() => void download(file)}>下載</button>
+            <button disabled={busy} className={linkBtn} aria-label={`下載 ${file.name}`} onClick={() => void download(file)}>下載</button>
           </>
         )}
         {actions(t, file.name, file.folder_id)}
