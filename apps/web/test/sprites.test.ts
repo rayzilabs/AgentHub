@@ -1,7 +1,7 @@
 import { APIError, type Sprite } from '@fly/sprites';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, spriteName } from '@/lib/sprites';
+import { errorText, forwardChat, installRuntime, isNotFound, retryTransient, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, shellQuote, spriteName, startRuntimeService } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
@@ -125,6 +125,7 @@ describe('installRuntime', () => {
     for (const k of ['PLATFORM_URL', 'VERCEL_PROJECT_PRODUCTION_URL']) vi.stubEnv(k, '');
     const calls: string[] = [];
     const written: Record<string, string> = {};
+    let serviceConfig: unknown;
     const logStream = (label: string) => ({ processAll: async () => { calls.push(`${label}:drained`); } });
     const sprite = {
       execFile: async (_cmd: string, args: string[]) => {
@@ -132,10 +133,12 @@ describe('installRuntime', () => {
         return { stdout: '/home/sprite\n' };
       },
       filesystem: () => ({ writeFile: async (name: string, content: string) => { calls.push(`write:${name}`); written[name] = content; } }),
-      createService: async (name: string, _config: unknown, duration?: string) => {
+      createService: async (name: string, config: unknown, duration?: string) => {
         calls.push(`create:${name}:${duration}`);
+        serviceConfig = config;
         return logStream('create');
       },
+      getService: async () => { throw new Error('Service not found: '); },
       restartService: async (name: string, duration?: string) => {
         calls.push(`restart:${name}:${duration}`);
         return logStream('restart');
@@ -151,6 +154,8 @@ describe('installRuntime', () => {
       'create:runtime:10s', 'create:drained',
       'restart:runtime:10s', 'restart:drained',
     ]);
+    // 服務經由看守腳本啟動 node：node 結束後先清掉沙盒程序，Sprite 才會馬上重啟服務
+    expect(serviceConfig).toEqual({ cmd: '/usr/local/bin/agenthub-runtime', args: ['/home/sprite/agenthub'], httpPort: 8080 });
     expect(written['.env']).toContain('AGENTS_ROOT="/workspace/agents"');
     expect(written['.env']).toContain('SHARED_ROOT="/workspace/shared"');
     expect(written['.env']).toContain('SANDBOX_USER="agent"');
@@ -159,6 +164,38 @@ describe('installRuntime', () => {
     expect(written['.env']).toContain('SUPABASE_PUBLISHABLE_KEY="x"');
     expect(written['.env']).not.toContain('SUPABASE_SECRET_KEY');
     expect(written['.env']).not.toContain('VERTEX_API_EXPRESS_MODE_KEY');
+  });
+});
+
+describe('startRuntimeService', () => {
+  function fakeSprite(existing: { cmd: string; args: string[] } | null) {
+    const calls: string[] = [];
+    const drained = { processAll: async () => {} };
+    const sprite = {
+      getService: async () => {
+        if (!existing) throw new Error('Service not found: {"error":"service not found"}');
+        return { name: 'runtime', ...existing, needs: [] };
+      },
+      deleteService: async () => { calls.push('delete'); },
+      createService: async () => { calls.push('create'); return drained; },
+      restartService: async () => { calls.push('restart'); return drained; },
+    } as unknown as Sprite;
+    return { sprite, calls };
+  }
+
+  it('舊版服務直接執行 node：Sprites API 不准用 PUT 改既有服務的設定（409），先刪掉再建立', async () => {
+    const { sprite, calls } = fakeSprite({ cmd: 'node', args: ['--env-file=/home/sprite/agenthub/.env', '/home/sprite/agenthub/main.js'] });
+    await startRuntimeService(sprite, '/home/sprite/agenthub');
+    expect(calls).toEqual(['delete', 'create', 'restart']);
+  });
+
+  it('設定相同或還沒有服務時不刪除', async () => {
+    const same = fakeSprite({ cmd: '/usr/local/bin/agenthub-runtime', args: ['/home/sprite/agenthub'] });
+    await startRuntimeService(same.sprite, '/home/sprite/agenthub');
+    expect(same.calls).toEqual(['create', 'restart']);
+    const none = fakeSprite(null);
+    await startRuntimeService(none.sprite, '/home/sprite/agenthub');
+    expect(none.calls).toEqual(['create', 'restart']);
   });
 });
 
@@ -210,10 +247,44 @@ describe('sandboxSetupScript', () => {
     }
   });
 
+  it('沙盒程序的 OOM 優先順序設成最高：記憶體吃光時核心先砍顧問的程式，不砍 runtime；設不起來照常執行', () => {
+    const line = SANDBOX_WRAPPER_SCRIPT.split('\n').find((l) => l.includes('oom_score_adj'));
+    expect(line).toBe('{ echo 1000 > /proc/self/oom_score_adj; } 2>/dev/null || true');
+    // 降權前設定（root 才能設，之後的子程序都會繼承）
+    expect(SANDBOX_WRAPPER_SCRIPT.indexOf('oom_score_adj')).toBeLessThan(SANDBOX_WRAPPER_SCRIPT.indexOf('exec /usr/bin/setpriv'));
+  });
+
+  it('安裝 runtime 的看守腳本（只有 root 能改）', () => {
+    const s = sandboxSetupScript('/home/sprite/agenthub');
+    expect(s).toContain(`printf '%s' ${shellQuote(RUNTIME_SUPERVISOR_SCRIPT)} | sudo tee /usr/local/bin/agenthub-runtime >/dev/null`);
+    expect(s).toContain('sudo chown root:root /usr/local/bin/agenthub-sandbox /usr/local/bin/agenthub-sandbox-adduser /usr/local/bin/agenthub-runtime');
+    expect(s).toContain('sudo chmod 755 /usr/local/bin/agenthub-sandbox /usr/local/bin/agenthub-sandbox-adduser /usr/local/bin/agenthub-runtime');
+  });
+
   it('把仍是 workspace 群組的舊顧問目錄（已移出專案、adduser 不會再處理）收成只有 runtime 能進', () => {
     expect(sandboxSetupScript('/home/sprite/agenthub')).toContain(
       'sudo find /workspace/agents -mindepth 1 -maxdepth 1 -type d -group workspace -exec chmod 0700 {} +',
     );
+  });
+});
+
+describe('RUNTIME_SUPERVISOR_SCRIPT', () => {
+  const lines = RUNTIME_SUPERVISOR_SCRIPT.split('\n');
+
+  it('在背景執行 node，把服務收到的停止訊號轉給 node，等 node 真的結束', () => {
+    expect(lines[0]).toBe('#!/bin/sh');
+    expect(RUNTIME_SUPERVISOR_SCRIPT).toContain('node --env-file="$1/.env" "$1/main.js" &');
+    expect(RUNTIME_SUPERVISOR_SCRIPT).toContain('trap \'kill -TERM "$pid" 2>/dev/null\' TERM INT HUP');
+    // wait 會被訊號打斷；node 還在就繼續等
+    expect(RUNTIME_SUPERVISOR_SCRIPT).toContain('while :; do wait "$pid"; code=$?; kill -0 "$pid" 2>/dev/null || break; done');
+  });
+
+  it('node 結束後砍掉所有沙盒帳號的程序，再以 node 的結束碼退出', () => {
+    const kill = lines.findIndex((l) => l.includes('pkill'));
+    expect(kill).toBeGreaterThan(lines.findIndex((l) => l.startsWith('while :;')));
+    expect(RUNTIME_SUPERVISOR_SCRIPT).toContain("grep -Ex 'agent(-[0-9a-f]{12})?'");
+    expect(lines[kill]).toContain('sudo -n /usr/bin/pkill -KILL -u "$users"');
+    expect(lines.filter(Boolean).at(-1)).toBe('exit "$code"');
   });
 });
 

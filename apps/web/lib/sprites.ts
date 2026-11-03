@@ -34,6 +34,8 @@ export const SANDBOX_WRAPPER_SCRIPT = [
   // Sprite 的 cgroup 根目錄本身有程序，核心不准在那層啟用記憶體控制器（EBUSY）；設不起來就照常執行，不加入群組
   'cg=/sys/fs/cgroup/agenthub-sandbox',
   '{ /usr/bin/mkdir -p "$cg" && { /usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control; } && { [ "$(/usr/bin/cat "$cg/memory.max")" = 6442450944 ] || echo 6442450944 > "$cg/memory.max"; } && echo $$ > "$cg/cgroup.procs"; } 2>/dev/null || true',
+  // 記憶體吃光時讓核心先砍沙盒的程序（子程序會繼承），不砍 runtime
+  '{ echo 1000 > /proc/self/oom_score_adj; } 2>/dev/null || true',
   'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
   '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
   '',
@@ -66,6 +68,25 @@ export const SANDBOX_ADDUSER_SCRIPT = [
   '/usr/bin/chown "$owner:$user" "$dir" "$skills"',
   '/usr/bin/chmod 2770 "$dir"',
   '/usr/bin/chmod 2750 "$skills"',
+  '',
+].join('\n');
+
+export const RUNTIME_SUPERVISOR = '/usr/local/bin/agenthub-runtime';
+
+/**
+ * runtime 服務的啟動指令，參數是 runtime 目錄。runtime 不論怎麼結束，都先砍掉沙盒帳號的程序再退出：
+ * 沙盒程序還在時 Sprite 不會重啟服務（2026-11-01 實測等了 233 秒），這段期間整個專案都連不上。
+ */
+export const RUNTIME_SUPERVISOR_SCRIPT = [
+  '#!/bin/sh',
+  'node --env-file="$1/.env" "$1/main.js" &',
+  'pid=$!',
+  'trap \'kill -TERM "$pid" 2>/dev/null\' TERM INT HUP',
+  // wait 會被訊號打斷；node 還在就繼續等
+  'while :; do wait "$pid"; code=$?; kill -0 "$pid" 2>/dev/null || break; done',
+  'users=$(/usr/bin/getent passwd | /usr/bin/cut -d: -f1 | /usr/bin/grep -Ex \'agent(-[0-9a-f]{12})?\' | /usr/bin/paste -sd, -)',
+  '[ -z "$users" ] || /usr/bin/sudo -n /usr/bin/pkill -KILL -u "$users"',
+  'exit "$code"',
   '',
 ].join('\n');
 
@@ -146,8 +167,9 @@ export function sandboxSetupScript(base: string): string {
     // runtime 透過這兩支腳本以沙盒帳號執行指令、建立顧問帳號（見 packages/runtime/src/sandbox.ts）
     `printf '%s' ${shellQuote(SANDBOX_WRAPPER_SCRIPT)} | sudo tee ${SANDBOX_WRAPPER} >/dev/null`,
     `printf '%s' ${shellQuote(SANDBOX_ADDUSER_SCRIPT)} | sudo tee ${SANDBOX_ADDUSER} >/dev/null`,
-    `sudo chown root:root ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
-    `sudo chmod 755 ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER}`,
+    `printf '%s' ${shellQuote(RUNTIME_SUPERVISOR_SCRIPT)} | sudo tee ${RUNTIME_SUPERVISOR} >/dev/null`,
+    `sudo chown root:root ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER} ${RUNTIME_SUPERVISOR}`,
+    `sudo chmod 755 ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER} ${RUNTIME_SUPERVISOR}`,
     // /.sprite/bin 的語言包裝腳本（python3、node、go、java…）第一次執行時，會把各自的 export 行寫進 runtime 帳號的
     // /etc/profile.d/languages_env；沙盒帳號寫不進去，於是每種語言在沙盒裡都會失敗（2026-10-30 正式站 75% 的對話撞到）。
     // 由 runtime 帳號先替所有包裝腳本補齊（讀出它們會寫的那行，不執行語言工具本身）；補不了只警告
@@ -203,16 +225,25 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string, 
     PLATFORM_URL: env.platformUrl,
   }));
   await sprite.execFile('bash', ['-lc', sandboxSetupScript(base)]);
-  const logs = await sprite.createService(SERVICE, {
-    cmd: 'node',
-    args: [`--env-file=${base}/.env`, `${base}/main.js`],
-    httpPort: 8080,
-  }, '10s');
+  await startRuntimeService(sprite, base);
+  return base;
+}
+
+export async function startRuntimeService(sprite: Sprite, base: string): Promise<void> {
+  const config = { cmd: RUNTIME_SUPERVISOR, args: [base], httpPort: 8080 };
+  const existing = await sprite.getService(SERVICE).catch((e: unknown) => {
+    if (isNotFound(e)) return null;
+    throw e;
+  });
+  // Sprites API 不准用 PUT 改既有服務的設定（409）；舊版服務直接執行 node，要先刪掉
+  if (existing && (existing.cmd !== config.cmd || existing.args.join('\0') !== config.args.join('\0'))) {
+    await sprite.deleteService(SERVICE);
+  }
+  const logs = await sprite.createService(SERVICE, config, '10s');
   await logs.processAll(() => {});
   // 重新佈建已存在的 Sprite 時，createService 不會重啟正在跑的程序；重新啟動才會載入剛下載的 main.js 與 .env
   const restartLogs = await sprite.restartService(SERVICE, '10s');
   await restartLogs.processAll(() => {});
-  return base;
 }
 
 async function waitForHealth(url: string, projectId: string): Promise<void> {
