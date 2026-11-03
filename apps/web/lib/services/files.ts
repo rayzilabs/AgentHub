@@ -184,6 +184,27 @@ export async function updateFolder(
   return data as FolderRow;
 }
 
+// PostgREST 每次最多回 1000 筆，所以要分頁；資料夾 id 也分批，避免 URL 過長
+export async function collectFileIds(db: Db, projectId: string, folderIds: string[], pageSize = 1000, chunkSize = 100): Promise<string[]> {
+  const out: string[] = [];
+  for (let i = 0; i < folderIds.length; i += chunkSize) {
+    const chunk = folderIds.slice(i, i + chunkSize);
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await db
+        .from('project_files')
+        .select('id')
+        .eq('project_id', projectId)
+        .in('folder_id', chunk)
+        .order('id')
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      out.push(...(data as { id: string }[]).map((f) => f.id));
+      if (data.length < pageSize) break;
+    }
+  }
+  return out;
+}
+
 export async function deleteFolder(db: Db, userId: string, projectId: string, folderId: string): Promise<void> {
   await getOwnProject(db, userId, projectId);
   const folders = await loadFolders(db, projectId);
@@ -198,10 +219,8 @@ export async function deleteFolder(db: Db, userId: string, projectId: string, fo
       }
     }
   }
-  const { data, error } = await db.from('project_files').select('id').eq('project_id', projectId).in('folder_id', [...ids]);
-  if (error) throw error;
   // 先刪物件再刪資料列（理由同 deleteFile）
-  await removeObjects(db, (data as { id: string }[]).map((f) => storagePath(projectId, f.id)));
+  await removeObjects(db, (await collectFileIds(db, projectId, [...ids])).map((id) => storagePath(projectId, id)));
   const { error: delError } = await db.from('project_folders').delete().eq('id', folderId).eq('project_id', projectId);
   if (delError) throw delError;
 }

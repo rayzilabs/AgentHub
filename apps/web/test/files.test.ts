@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collectFileIds,
   completeUpload,
   createFolder,
   createUploadUrl,
@@ -90,6 +91,20 @@ describe('files service', () => {
     const names = (data ?? []).map((o) => o.name);
     expect(names).not.toContain(f1.id);
     expect(names).not.toContain(f2.id);
+  });
+
+  it('collectFileIds 分頁與分批後仍收齊所有檔案', async () => {
+    const { owner, p } = await setup();
+    const a = await createFolder(db, owner.id, p.id, { name: 'A', parentId: null });
+    const b = await createFolder(db, owner.id, p.id, { name: 'B', parentId: null });
+    const made = [
+      await upload(db, owner.id, p.id, '1.txt', a.id),
+      await upload(db, owner.id, p.id, '2.txt', a.id),
+      await upload(db, owner.id, p.id, '3.txt', a.id),
+      await upload(db, owner.id, p.id, '4.txt', b.id),
+    ];
+    const ids = await collectFileIds(db, p.id, [a.id, b.id], 2, 1);
+    expect(ids.sort()).toEqual(made.map((f) => f.id).sort());
   });
 
   it('下載已刪除的檔案回 404', async () => {
