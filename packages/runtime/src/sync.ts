@@ -149,25 +149,38 @@ async function isRealDirChain(root: string, p: string): Promise<boolean> {
 // 共用資料夾所有顧問都能寫，顧問可以把資料夾換成 symlink；以沙盒帳號執行時，跟著 symlink 走到的地方也只是顧問本來就碰得到的。
 // 路徑一律以參數傳入（相對 sharedRoot、已檢查過每一段），不接進腳本；檔案內容從 stdin 傳入。
 
-// $1 是檔案，其後是由上往下的每一層資料夾：被換成 symlink 或不是資料夾就刪掉重建
+// $1 是檔案（一定在某個資料夾裡），其後是由上往下的每一層資料夾：被換成 symlink 或不是資料夾就刪掉重建。
+// 內容先寫進同一層新建的暫存檔再改名蓋過去：mktemp 一定建立新檔，不會開到顧問換上的 FIFO 而卡住；
+// 改名是原子的，顧問不會讀到寫一半的檔案，原本的是唯讀檔或 symlink 也一併換掉。
+// 被砍掉時可能留下 .agenthub-sync.* 暫存檔，它不在同步紀錄裡，之後的同步不會碰它。
 const WRITE_SCRIPT = [
   'f=$1; shift',
   'for d in "$@"; do',
   '  if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then rm -f -- "$d" || exit 1; fi',
   '  [ -d "$d" ] || mkdir -- "$d" || exit 1',
   'done',
-  // agent 可能建立了同名唯讀檔案，先刪再寫
-  'rm -f -- "$f" && cat > "$f"',
+  't=$(mktemp -- "${f%/*}/.agenthub-sync.XXXXXXXXXX") || exit 1',
+  'trap \'rm -f -- "$t"; exit 1\' TERM',
+  // mktemp 建立的是 600；改成跟直接建立檔案一樣（沙盒的 umask 002 → 664），其他顧問才讀得到
+  'chmod -- "$(printf %o $((0666 & ~$(umask))))" "$t" && cat > "$t" && mv -fT -- "$t" "$f" || { rm -f -- "$t"; exit 1; }',
 ].join('\n');
 
-// $1 是檔案，其後是由下往上的每一層資料夾：變空的就刪，遇到非空（顧問自己放的東西）就停
+// $1 是檔案，其後是由下往上的每一層資料夾：變空的就刪，遇到非空（顧問自己放的東西）就停。
+// 原位置變成真的資料夾（顧問自己放的）就不刪，當成已處理；其他刪不掉的情況回報失敗，下次再試
 const DELETE_SCRIPT = [
-  'rm -f -- "$1" 2>/dev/null; shift',
+  'if ! rm -f -- "$1"; then [ -d "$1" ] && [ ! -L "$1" ] || exit 1; fi',
+  'shift',
   'for d in "$@"; do rmdir -- "$d" 2>/dev/null || exit 0; done',
 ].join('\n');
 
+/** 單一指令的時間上限（秒）：顧問能讓寫入卡住（例如換上 FIFO），不能讓整個 run 停在準備階段 */
+const SHARED_TIMEOUT_SECONDS = 120;
+
 async function inShared(sandbox: Sandbox, sharedRoot: string, script: string, args: string[], input?: Uint8Array): Promise<void> {
-  const r = await runInSandbox(sandbox, ['bash', '-c', script, 'sync', ...args], { cwd: sharedRoot, input });
+  // timeout 在沙盒帳號裡執行，砍得掉自己的子行程；-k：送 TERM 後 5 秒還沒結束就 KILL
+  const argv = ['timeout', '-k', '5', String(SHARED_TIMEOUT_SECONDS), 'bash', '-c', script, 'sync', ...args];
+  const r = await runInSandbox(sandbox, argv, { cwd: sharedRoot, input });
+  if (r.code === 124 || r.code === 137) throw new Error(`超過 ${SHARED_TIMEOUT_SECONDS} 秒`);
   if (r.code !== 0) throw new Error(r.stderr.trim() || `結束碼 ${r.code}`);
 }
 
@@ -189,17 +202,22 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
   const wanted = new Set(files.map((f) => f.path));
   const previous = await readSyncState(io.statePath);
 
+  // 沒處理好的路徑留在紀錄裡，下次再試：刪不掉的保留原本的 fileId；寫不進去的記成 ''
+  // （'' 不會等於任何 fileId，下次一定重寫；之後雲端刪掉它，本機留著的舊副本也會被清掉）
+  const next: Record<string, string> = {};
+  const synced: SharedFile[] = [];
+
   // 先刪掉不在清單裡的，資料夾與檔案互換名稱時才不會卡住
   for (const p of Object.keys(previous)) {
     if (wanted.has(p)) continue;
     // 上層被換成 symlink 就不碰
     if (!(await isRealDirChain(sharedRoot, p))) continue;
-    await inShared(io.sandbox, sharedRoot, DELETE_SCRIPT, [p, ...ancestors(p).reverse()])
-      .catch((e) => console.warn(`[sync] 無法刪除 ${p}：${errorText(e)}`));
+    await inShared(io.sandbox, sharedRoot, DELETE_SCRIPT, [p, ...ancestors(p).reverse()]).catch((e) => {
+      next[p] = previous[p];
+      console.warn(`[sync] 無法刪除 ${p}：${errorText(e)}`);
+    });
   }
 
-  const next: Record<string, string> = {};
-  const synced: SharedFile[] = [];
   for (const f of files) {
     try {
       const local = path.join(sharedRoot, ...f.path.split('/'));
@@ -215,6 +233,7 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
       next[f.path] = f.fileId;
       synced.push(f);
     } catch (e) {
+      next[f.path] = '';
       console.warn(`[sync] 略過專案檔案 ${f.path}：${errorText(e)}`);
     }
   }

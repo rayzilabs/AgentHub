@@ -193,18 +193,28 @@ try {
     '  if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then rm -f -- "$d" || exit 1; fi',
     '  [ -d "$d" ] || mkdir -- "$d" || exit 1',
     'done',
-    'rm -f -- "$f" && cat > "$f"',
+    't=$(mktemp -- "${f%/*}/.agenthub-sync.XXXXXXXXXX") || exit 1',
+    'trap \'rm -f -- "$t"; exit 1\' TERM',
+    'chmod -- "$(printf %o $((0666 & ~$(umask))))" "$t" && cat > "$t" && mv -fT -- "$t" "$f" || { rm -f -- "$t"; exit 1; }',
   ].join('\n');
   // 照 runtime 的 runInSandbox：由 Node spawn、cwd 是 /shared、路徑當參數、內容從 stdin 送
   const syncWrite = async (file: string, content: string) => {
     const segs = file.split('/');
     const dirs = segs.slice(1).map((_, i) => segs.slice(0, i + 1).join('/'));
-    const argv = ['-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, 'agent', 'bash', '-c', SYNC_WRITE_SCRIPT, 'sync', file, ...dirs];
+    const argv = ['-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, 'agent', 'timeout', '-k', '5', '120', 'bash', '-c', SYNC_WRITE_SCRIPT, 'sync', file, ...dirs];
     const js = `const c=require('node:child_process').spawn('sudo',${JSON.stringify(argv)},{cwd:${JSON.stringify(`${WORKSPACE}/shared`)},env:{PATH:process.env.PATH,SANDBOX_PATH:process.env.PATH,HOME:'/home/agent'}});let o='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>o+=d);c.on('close',k=>console.log(o+'exit='+k));c.stdin.end(${JSON.stringify(content)});`;
     return sh(sprite, `echo ${Buffer.from(js).toString('base64')} | base64 -d > /tmp/probe-sync.js && node /tmp/probe-sync.js; rm -f /tmp/probe-sync.js`);
   };
   const syncDir = `${WORKSPACE}/shared/我上傳的`;
   const first = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-1');
+  // 先寫暫存檔（mktemp 建立的是 600）再改名：權限要改回跟直接建立的一樣，其他顧問才讀得到
+  const perm = await sh(sprite, `stat -c '%U:%G %a' '${syncDir}/brief.md'; ls -A '${syncDir}'`);
+  const permB = await sh(sprite, asUser(B, `cat '${syncDir}/brief.md'`));
+  record(
+    '同步寫入的檔案是 agent:workspace 664、不留暫存檔，其他顧問讀得到',
+    perm.out.includes('agent:workspace 664') && !perm.out.includes('.agenthub-sync.') && permB.out.includes('MARK-SYNC-1'),
+    `${perm.out} | ${permB.out}`,
+  );
   // 顧問把同步下來的資料夾換成指向顧問 A 私人目錄的 symlink，下一次同步時 runtime 照樣寫入（上層不是真資料夾就重寫）
   const swap = await sh(sprite, `sudo -n rm -rf '${syncDir}' && sudo -n ln -s ${dirA} '${syncDir}' && [ -L '${syncDir}' ] && echo swapped`);
   const second = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-2');

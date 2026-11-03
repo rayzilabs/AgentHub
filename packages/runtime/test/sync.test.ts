@@ -1,3 +1,4 @@
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -5,7 +6,7 @@ import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../src/db';
 import { SyncError } from '../src/errors';
-import { createSandbox } from '../src/sandbox';
+import { createSandbox, type Sandbox } from '../src/sandbox';
 import { agentDir, skillsDir, syncSharedFiles, syncSkills } from '../src/sync';
 import {
   type Roots, runtimeDb, runtimeToken, seedProject, seedSharedFile, seedUser, testDb, tmpRoots, uploadSkillsZip,
@@ -309,4 +310,129 @@ describe('syncSharedFiles', () => {
   it('專案沒有檔案時回傳空陣列', async () => {
     expect(await sync(db, await newProject(), await tmpRoots())).toEqual([]);
   });
+
+  /** 讓符合條件的沙盒指令失敗（模擬權限不足、逾時這類寫入或刪除失敗） */
+  const failing = (match: (argv: string[]) => boolean): Sandbox => ({
+    ...sandbox,
+    spawn: (argv, opts) => sandbox.spawn(match(argv) ? ['bash', '-c', 'echo 模擬失敗 >&2; exit 1'] : argv, opts),
+  });
+  const isWrite = (argv: string[]) => argv.some((a) => a.includes('mktemp'));
+  const isDelete = (argv: string[]) => argv.some((a) => a.includes('rmdir'));
+  const syncWith = (projectId: string, roots: Roots, s: Sandbox) =>
+    syncSharedFiles(db, projectId, roots.sharedRoot, { sandbox: s, statePath: roots.syncState });
+  const state = async (roots: Roots) => JSON.parse(await readFile(roots.syncState, 'utf8')) as Record<string, string>;
+  const leftovers = async (dir: string) => (await readdir(dir)).filter((n) => n.startsWith('.agenthub-sync.'));
+
+  it('寫入失敗的路徑仍留在同步紀錄：下次重寫，雲端刪掉後本機的舊副本也會清掉', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a1 = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    await sync(db, projectId, roots);
+    must(await db.from('project_files').delete().eq('id', a1));
+    const a2 = await seedSharedFile(db, projectId, '資料/a.txt', 'A2');
+
+    expect(await syncWith(projectId, roots, failing(isWrite))).toEqual([]);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A1');
+    expect(await state(roots)).toEqual({ '資料/a.txt': '' });
+
+    must(await db.from('project_files').delete().eq('id', a2));
+    expect(await sync(db, projectId, roots)).toEqual([]);
+    expect(await exists(path.join(roots.sharedRoot, '資料', 'a.txt'))).toBe(false);
+    expect(await state(roots)).toEqual({});
+  });
+
+  it('寫入失敗後下次同步會重寫（即使雲端的檔案沒變）', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    expect(await syncWith(projectId, roots, failing(isWrite))).toEqual([]);
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A1');
+  });
+
+  it('刪除失敗的路徑保留在同步紀錄，下次同步再刪', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    await sync(db, projectId, roots);
+    must(await db.from('project_files').delete().eq('id', a));
+
+    expect(await syncWith(projectId, roots, failing(isDelete))).toEqual([]);
+    expect(await exists(path.join(roots.sharedRoot, '資料', 'a.txt'))).toBe(true);
+    expect(await state(roots)).toEqual({ '資料/a.txt': a });
+
+    expect(await sync(db, projectId, roots)).toEqual([]);
+    expect(await exists(path.join(roots.sharedRoot, '資料', 'a.txt'))).toBe(false);
+    expect(await state(roots)).toEqual({});
+  });
+
+  it('目標被換成 symlink：整個換成一般檔案，不寫到 symlink 指向的檔案；不留暫存檔', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'new');
+    const outside = path.join((await tmpRoots()).sharedRoot, 'target.txt');
+    await mkdir(path.dirname(outside), { recursive: true });
+    await writeFile(outside, 'keep');
+    await mkdir(path.join(roots.sharedRoot, '資料'), { recursive: true });
+    await symlink(outside, path.join(roots.sharedRoot, '資料', 'a.txt'));
+
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect((await lstat(path.join(roots.sharedRoot, '資料', 'a.txt'))).isFile()).toBe(true);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('new');
+    expect(await readFile(outside, 'utf8')).toBe('keep');
+    expect(await leftovers(path.join(roots.sharedRoot, '資料'))).toEqual([]);
+  });
+
+  it('目標位置是資料夾時寫入失敗：資料夾不動、暫存檔清掉，資料夾移走後下次同步寫入', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    const target = path.join(roots.sharedRoot, '資料', 'a.txt');
+    await mkdir(target, { recursive: true });
+
+    expect(await sync(db, projectId, roots)).toEqual([]);
+    expect((await lstat(target)).isDirectory()).toBe(true);
+    expect(await leftovers(path.join(roots.sharedRoot, '資料'))).toEqual([]);
+
+    await rm(target, { recursive: true });
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect(await readFile(target, 'utf8')).toBe('A1');
+  });
+
+  it.skipIf(process.platform === 'win32')('寫入的檔案權限與直接建立的檔案相同（其他顧問讀得到）', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    await sync(db, projectId, roots);
+    const umask = process.umask();
+    expect((await stat(path.join(roots.sharedRoot, '資料', 'a.txt'))).mode & 0o777).toBe(0o666 & ~umask);
+  });
+
+  // Windows（Git Bash）的 FIFO 是模擬的：Node 看不到，mv 也蓋不掉，只能在 Linux／Sprite 上驗
+  it.skipIf(process.platform === 'win32')('目標被換成 FIFO 時不會卡住，照樣寫入一般檔案', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    const target = path.join(roots.sharedRoot, '資料', 'a.txt');
+    await mkdir(path.dirname(target), { recursive: true });
+    execFileSync('mkfifo', [target]);
+
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect((await lstat(target)).isFile()).toBe(true);
+    expect(await readFile(target, 'utf8')).toBe('A1');
+  }, 30_000);
+
+  it.skipIf(process.platform === 'win32')('同步時顧問不停把目標換成 FIFO，同步仍會結束', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    const target = path.join(roots.sharedRoot, '資料', 'a.txt');
+    await mkdir(path.dirname(target), { recursive: true });
+    const racer = spawn('bash', ['-c', 'while :; do rm -f -- "$1"; mkfifo -- "$1" 2>/dev/null; done', 'racer', target], { stdio: 'ignore' });
+    try {
+      expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    } finally {
+      racer.kill('SIGKILL');
+    }
+  }, 30_000);
 });
