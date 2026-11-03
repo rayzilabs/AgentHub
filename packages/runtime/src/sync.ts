@@ -1,4 +1,5 @@
-import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { type FileHandle, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
 import type { Db } from './db';
@@ -184,6 +185,54 @@ async function inShared(sandbox: Sandbox, sharedRoot: string, script: string, ar
   if (r.code !== 0) throw new Error(r.stderr.trim() || `結束碼 ${r.code}`);
 }
 
+/** 舊制的同步紀錄 { [檔名]: updated_at }，舊 runtime 寫在 /shared 第一層 */
+const LEGACY_STATE = '.sync.json';
+const LEGACY_STATE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * 讀舊制同步紀錄裡的檔名；沒有紀錄（或不是一般檔案）回傳 null，讀不到或損毀當成沒有檔名。
+ * 共用資料夾所有顧問都能改：O_NOFOLLOW 不跟 symlink、O_NONBLOCK 讓換上的 FIFO 不會卡住，再以 fstat 確認是一般檔案
+ */
+async function readLegacyNames(file: string): Promise<string[] | null> {
+  if (!(await lstat(file).catch(() => null))?.isFile()) return null;
+  let fh: FileHandle | undefined;
+  try {
+    fh = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    if (!(await fh.stat()).isFile()) return [];
+    const buf = Buffer.alloc(LEGACY_STATE_MAX_BYTES + 1);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    if (bytesRead > LEGACY_STATE_MAX_BYTES) return [];
+    const state: unknown = JSON.parse(buf.subarray(0, bytesRead).toString('utf8'));
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return [];
+    return Object.keys(state).filter((name) => isPlainName(name) && name !== LEGACY_STATE);
+  } catch {
+    return [];
+  } finally {
+    await fh?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * 舊制檔案搬進雲端資料夾後，清掉舊 runtime 留在 /shared 第一層的副本與舊同步紀錄（只做一次：紀錄刪掉後就不會再進來）。
+ * 只刪紀錄裡列出、且現在是一般檔案的第一層項目；symlink 與資料夾不碰。刪除一樣以沙盒帳號執行
+ * （/shared 是 2770、沒有 sticky bit，任何顧問本來就能刪第一層的項目）。有刪不掉的就保留紀錄，下次再試
+ */
+async function cleanLegacyShared(sandbox: Sandbox, sharedRoot: string): Promise<void> {
+  const names = await readLegacyNames(path.join(sharedRoot, LEGACY_STATE));
+  if (names === null) return;
+  let ok = true;
+  for (const name of names) {
+    if (!(await lstat(path.join(sharedRoot, name)).catch(() => null))?.isFile()) continue;
+    await inShared(sandbox, sharedRoot, DELETE_SCRIPT, [name]).catch((e) => {
+      ok = false;
+      console.warn(`[sync] 無法刪除舊制檔案 ${name}：${errorText(e)}`);
+    });
+  }
+  if (!ok) return;
+  await inShared(sandbox, sharedRoot, DELETE_SCRIPT, [LEGACY_STATE])
+    .catch((e) => console.warn(`[sync] 無法刪除舊制同步紀錄：${errorText(e)}`));
+}
+
 export type SharedSyncIo = {
   /** 寫入與刪除用的沙盒帳號（Sprite 上是 config.SANDBOX_USER） */
   sandbox: Sandbox;
@@ -201,6 +250,7 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
   const files = await listSharedFiles(db, projectId);
   const wanted = new Set(files.map((f) => f.path));
   const previous = await readSyncState(io.statePath);
+  await cleanLegacyShared(io.sandbox, sharedRoot);
 
   // 沒處理好的路徑留在紀錄裡，下次再試：刪不掉的保留原本的 fileId；寫不進去的記成 ''
   // （'' 不會等於任何 fileId，下次一定重寫；之後雲端刪掉它，本機留著的舊副本也會被清掉）

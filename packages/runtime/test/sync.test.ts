@@ -435,4 +435,82 @@ describe('syncSharedFiles', () => {
       racer.kill('SIGKILL');
     }
   }, 30_000);
+
+  describe('舊制留在 /shared 第一層的副本', () => {
+    const legacy = async (roots: Roots, state: unknown) => {
+      await mkdir(roots.sharedRoot, { recursive: true });
+      await writeFile(path.join(roots.sharedRoot, '.sync.json'), typeof state === 'string' ? state : JSON.stringify(state));
+    };
+    const at = (roots: Roots, name: string) => path.join(roots.sharedRoot, name);
+
+    it('第一次同步刪掉紀錄裡列出的第一層一般檔案與舊紀錄；symlink、資料夾、顧問自己的檔案不碰', async () => {
+      const projectId = await newProject();
+      const roots = await tmpRoots();
+      const fileId = await seedSharedFile(db, projectId, '我上傳的/old.txt', '雲端版本');
+      const outsideRoot = (await tmpRoots()).sharedRoot;
+      await mkdir(outsideRoot, { recursive: true });
+      const outside = path.join(outsideRoot, 'secret.txt');
+      await writeFile(outside, 'keep');
+      await legacy(roots, { 'old.txt': 't', 'link.txt': 't', 'dir': 't', 'missing.txt': 't', '../escape.txt': 't' });
+      await writeFile(at(roots, 'old.txt'), '舊副本');
+      await symlink(outside, at(roots, 'link.txt'));
+      await mkdir(at(roots, 'dir'));
+      await writeFile(path.join(at(roots, 'dir'), 'x.txt'), 'x');
+      await writeFile(at(roots, 'notes.txt'), '顧問筆記');
+      await writeFile(path.join(roots.sharedRoot, '..', 'escape.txt'), 'keep');
+
+      expect(await sync(db, projectId, roots)).toEqual([{ path: '我上傳的/old.txt', fileId }]);
+      expect(await exists(at(roots, 'old.txt'))).toBe(false);
+      expect(await exists(at(roots, '.sync.json'))).toBe(false);
+      expect((await lstat(at(roots, 'link.txt'))).isSymbolicLink()).toBe(true);
+      expect(await readFile(outside, 'utf8')).toBe('keep');
+      expect(await readFile(path.join(at(roots, 'dir'), 'x.txt'), 'utf8')).toBe('x');
+      expect(await readFile(at(roots, 'notes.txt'), 'utf8')).toBe('顧問筆記');
+      expect(await readFile(path.join(roots.sharedRoot, '..', 'escape.txt'), 'utf8')).toBe('keep');
+      expect(await readFile(at(roots, '我上傳的/old.txt'), 'utf8')).toBe('雲端版本');
+    });
+
+    it('舊紀錄是 symlink 時不讀也不刪', async () => {
+      const projectId = await newProject();
+      const roots = await tmpRoots();
+      const outsideRoot = (await tmpRoots()).sharedRoot;
+      await mkdir(outsideRoot, { recursive: true });
+      const fake = path.join(outsideRoot, 'state.json');
+      await writeFile(fake, JSON.stringify({ 'old.txt': 't' }));
+      await mkdir(roots.sharedRoot, { recursive: true });
+      await writeFile(at(roots, 'old.txt'), '舊副本');
+      await symlink(fake, at(roots, '.sync.json'));
+
+      await sync(db, projectId, roots);
+      expect(await readFile(at(roots, 'old.txt'), 'utf8')).toBe('舊副本');
+      expect((await lstat(at(roots, '.sync.json'))).isSymbolicLink()).toBe(true);
+      expect(await readFile(fake, 'utf8')).toBe(JSON.stringify({ 'old.txt': 't' }));
+    });
+
+    it('舊紀錄損毀時只刪掉紀錄本身', async () => {
+      const projectId = await newProject();
+      const roots = await tmpRoots();
+      await legacy(roots, '{壞掉的 json');
+      await writeFile(at(roots, 'old.txt'), '舊副本');
+
+      await sync(db, projectId, roots);
+      expect(await exists(at(roots, '.sync.json'))).toBe(false);
+      expect(await readFile(at(roots, 'old.txt'), 'utf8')).toBe('舊副本');
+    });
+
+    it('有舊副本刪不掉時保留舊紀錄，下次同步再刪', async () => {
+      const projectId = await newProject();
+      const roots = await tmpRoots();
+      await legacy(roots, { 'old.txt': 't' });
+      await writeFile(at(roots, 'old.txt'), '舊副本');
+
+      await syncWith(projectId, roots, failing(isDelete));
+      expect(await exists(at(roots, 'old.txt'))).toBe(true);
+      expect(await exists(at(roots, '.sync.json'))).toBe(true);
+
+      await sync(db, projectId, roots);
+      expect(await exists(at(roots, 'old.txt'))).toBe(false);
+      expect(await exists(at(roots, '.sync.json'))).toBe(false);
+    });
+  });
 });

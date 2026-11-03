@@ -162,4 +162,5 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
   - 交付失敗時（例如登記被拒），runtime 刪不掉剛上傳的物件（沒有 delete 權限），會留下沒有資料表紀錄的物件，刪專案時才清掉。
   - 同步的權限分離（`/shared` 寫入改由 `agent` 執行）與交付時「讀不到的檔案交不出去」只有在 Linux／Sprite 上才驗得到，本機測試涵蓋不到；Sprite 上的驗收在 `probe-sandbox.ts`。
   - `agent` 帳號仍可能被 symlink 騙去寫進它自己的家目錄或主管的私人 `/tmp`；這些都是 `agent` 本來就能寫的地方，目前沒有可利用的目標。
-  - 舊制檔案（`project-files/<專案>/<檔名>`）以 `apps/web/scripts/migrate-project-files.ts` 搬進「我上傳的」後，Sprite 的 `/shared` 第一層仍留著舊檔案的副本與舊的 `/shared/.sync.json`，不會自動刪除。
+  - 舊制檔案（`project-files/<專案>/<檔名>`）以 `apps/web/scripts/migrate-project-files.ts` 搬進「我上傳的」後，新 runtime 第一次同步會清掉舊 runtime 留在 `/shared` 第一層的副本與舊的 `/shared/.sync.json`：只刪舊紀錄裡列出、且現在是一般檔案的第一層項目（symlink、資料夾不碰，舊紀錄本身是 symlink 就整個略過），以 `agent` 執行。`/shared` 是 2770、沒有 sticky bit，任何顧問本來就能刪第一層的項目，所以這不會多給誰能力；但顧問自己在第一層建立、剛好與舊紀錄裡的檔名同名的一般檔案也會被刪掉。有刪不掉的就保留舊紀錄，下次同步再試。
+  - 同步寫入 `/shared` 的每個指令都有 120 秒上限（在 `agent` 帳號裡以 `timeout -k 5 120` 執行）：顧問能讓單一檔案的寫入失敗或逾時，但不能讓整個 run 停在準備階段。被砍掉時可能在該資料夾留下 `.agenthub-sync.*` 暫存檔，同步不會碰它。
