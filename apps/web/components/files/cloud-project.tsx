@@ -21,7 +21,7 @@ export function CloudProject({ id, name }: { id: string; name: string }) {
       </div>
       {/* 收合時內容不掛載，避免每個專案都先打一次 API */}
       <div id={panelId} hidden={!open} className="mt-2">
-        {open && <FileBrowser projectId={id} />}
+        {open && <FileBrowser projectId={id} title={`${name} 的檔案`} />}
       </div>
     </div>
   );

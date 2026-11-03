@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactElement } from 'react';
 import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
 import { ancestorFolderIds, buildTree, descendantFolderIds, folderPath, formatSize, isValidSelection, type TreeNode } from '@/lib/file-tree';
@@ -32,6 +32,8 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
   const [editing, setEditing] = useState<Editing | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 同一頁可能掛多個 FileBrowser（我的雲端），標題 id 必須唯一
+  const titleId = useId();
 
   const base = `/api/projects/${projectId}`;
   const load = useCallback(() => api<ProjectTree>(`${base}/files`)
@@ -180,8 +182,8 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
   const selectedName = tree?.folders.find((f) => f.id === selected)?.name;
 
   return (
-    <section aria-labelledby="files-title">
-      <h2 id="files-title" className="group-title">{title}</h2>
+    <section aria-labelledby={titleId}>
+      <h2 id={titleId} className="group-title">{title}</h2>
       <div className="panel p-4">
         <ul className="text-sm">
           {roots.map((n) => folderNode(n, 0))}
