@@ -139,3 +139,25 @@ export async function runtimeToken(db: Db, projectId: string): Promise<string> {
 export function runtimeDb(token: string): Db {
   return createUserDb(inject('supabaseUrl'), inject('supabasePublishableKey'), token);
 }
+
+/** 測試用：建好路徑上的資料夾、上傳 <專案>/files/<id>、登記成使用者上傳的檔案。filePath 以 / 分隔，最後一段是檔名；回傳檔案 id */
+export async function seedSharedFile(db: Db, projectId: string, filePath: string, content: string | Uint8Array): Promise<string> {
+  const segs = filePath.split('/');
+  let folderId: string | null = null;
+  for (const name of segs.slice(0, -1)) {
+    const { data, error } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: folderId, p_name: name });
+    if (error) throw error;
+    folderId = data as string;
+  }
+  if (!folderId) throw new Error('檔案必須放在資料夾裡');
+  const id = randomUUID();
+  const bytes = Buffer.from(content);
+  const contentType = 'application/octet-stream';
+  const { error: uploadError } = await db.storage.from('project-files').upload(`${projectId}/files/${id}`, bytes, { contentType });
+  if (uploadError) throw uploadError;
+  const { error } = await db.from('project_files').insert({
+    id, project_id: projectId, folder_id: folderId, name: segs.at(-1), size: bytes.length, content_type: contentType, source: 'user',
+  });
+  if (error) throw error;
+  return id;
+}

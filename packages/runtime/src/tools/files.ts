@@ -13,10 +13,12 @@ const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const sh = (sandbox: Sandbox, cwd: string, script: string, target: string) =>
   runInSandbox(sandbox, ['bash', '-c', script, 'read_file', target], { cwd });
 
-/** 只有共用資料夾第一層的檔案才有 Storage 版本可比對（同步就是這樣放的） */
+/** 共用資料夾底下的檔案才有 Storage 版本可比對：回傳相對 sharedRoot、以 / 連接的路徑 */
 function sharedName(images: ImageRegistry, target: string): string | null {
   const rel = path.relative(images.sharedRoot, target);
-  return rel && !rel.startsWith('..') && !path.isAbsolute(rel) && !rel.includes(path.sep) ? rel : null;
+  if (!rel || path.isAbsolute(rel)) return null;
+  const segs = rel.split(path.sep);
+  return segs.includes('..') ? null : segs.join('/');
 }
 
 /**

@@ -45,13 +45,13 @@ describe('buildConsultantInstructions', () => {
       instance: instance({ skills: [{ name: 'contract-review', description: '檢查合約風險', path: 'contract' }] }),
       workDir: '/agents/x',
       sharedRoot: '/shared',
-      sharedFiles: ['財報.pdf'],
+      sharedFiles: [{ path: '資料/財報.pdf', fileId: 'f1' }],
       memories: { rows: [{ id: '1', instance_id: null, name: 'risk', description: '客戶偏好保守', type: 'user', content: '保守型', updated_at: '' }], omitted: 0 },
       mcpWarnings: ['MCP「finmind」目前無法使用：timeout'],
     });
     expect(text).toContain('你是法務顧問。');
     expect(text).toContain('/agents/x');
-    expect(text).toContain(path.join('/shared', '財報.pdf'));
+    expect(text).toContain(path.join('/shared', '資料', '財報.pdf'));
     expect(text).toContain('- contract-review：檢查合約風險\n');
     expect(text).toContain('先用 skill 工具載入它');
     expect(text).not.toContain('SKILL.md');
@@ -277,14 +277,14 @@ describe('buildManagerInstructions', () => {
       ],
       memories: { rows: [], omitted: 0 },
       sharedRoot: '/shared',
-      sharedFiles: ['需求.md'],
+      sharedFiles: [{ path: '資料/規格/需求.md', fileId: 'f2' }],
     });
     expect(text).toContain('- 法務顧問（id: c-1）：契約與法遵');
     expect(text).toContain('- 工程顧問（id: c-2）：（沒有介紹）');
     expect(text).toContain('assign_task');
     expect(text).toContain('convene_discussion');
     for (const h of SUMMARY_HEADINGS) expect(text).toContain(h);
-    expect(text).toContain(path.join('/shared', '需求.md'));
+    expect(text).toContain(path.join('/shared', '資料', '規格', '需求.md'));
     expect(text).toContain('（目前沒有記憶）');
   });
 

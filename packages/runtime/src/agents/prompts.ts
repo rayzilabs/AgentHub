@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { formatMemoryIndex, type MemoryIndex } from '../tools/memory';
+import type { SharedFile } from '../sync';
 import type { AgentInstance } from '../types';
 
 export const SUMMARY_HEADINGS = ['## 各面向建議', '## 共識方案', '## 仍有分歧'] as const;
@@ -15,11 +16,15 @@ const MEMORY_RULES = [
   '- 能從專案檔案或這次對話直接得知的東西不要記。',
 ].join('\n');
 
-function filesSection(sharedRoot: string, sharedFiles: string[]): string {
-  const files = sharedFiles.length
-    ? sharedFiles.map((f) => `- ${path.join(sharedRoot, f)}`).join('\n')
-    : '（目前沒有專案檔案）';
-  return ['## 專案檔案', files].join('\n');
+/** prompt 裡最多列出幾個共用檔案，其餘請 agent 自己用 ls -R 看 */
+export const SHARED_FILES_LISTED = 50;
+
+function filesSection(sharedRoot: string, sharedFiles: SharedFile[]): string {
+  if (!sharedFiles.length) return ['## 專案檔案', '（目前沒有專案檔案）'].join('\n');
+  const lines = sharedFiles.slice(0, SHARED_FILES_LISTED).map((f) => `- ${path.join(sharedRoot, ...f.path.split('/'))}`);
+  const more = sharedFiles.length - SHARED_FILES_LISTED;
+  if (more > 0) lines.push(`- …還有 ${more} 個檔案，用 bash 執行 ls -R ${sharedRoot} 查看`);
+  return ['## 專案檔案', ...lines].join('\n');
 }
 
 function memorySection(memories: MemoryIndex): string {
@@ -30,7 +35,7 @@ export type ConsultantPromptInput = {
   instance: AgentInstance;
   workDir: string;
   sharedRoot: string;
-  sharedFiles: string[];
+  sharedFiles: SharedFile[];
   memories: MemoryIndex;
   mcpWarnings: string[];
   /** requirements.txt 的套件沒裝好時的錯誤摘要 */
@@ -81,7 +86,7 @@ export type ManagerPromptInput = {
   consultants: AgentInstance[];
   memories: MemoryIndex;
   sharedRoot: string;
-  sharedFiles: string[];
+  sharedFiles: SharedFile[];
 };
 
 export function buildManagerInstructions(p: ManagerPromptInput): string {

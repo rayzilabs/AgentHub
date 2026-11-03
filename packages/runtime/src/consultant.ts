@@ -5,6 +5,7 @@ import type { Db } from './db';
 import { ConsultantStoppedError } from './errors';
 import type { ImageRegistry } from './images';
 import type { EnvResult } from './requirements';
+import type { SharedFile } from './sync';
 import { groupSecrets } from './project-store';
 import type { AgentInstance, SecretRow } from './types';
 import { readSnapshots, textOf } from './ui-stream';
@@ -19,7 +20,7 @@ export type ConsultantRunnerDeps = {
   model: LanguageModel;
   config: Pick<Config, 'PROJECT_ID' | 'AGENTS_ROOT' | 'SHARED_ROOT' | 'SANDBOX_USER'>;
   runId: string;
-  sharedFiles: string[];
+  sharedFiles: SharedFile[];
   secrets: SecretRow[];
   /** 過了這個時間顧問收尾（不准再用工具） */
   wrapUpAt?: number;

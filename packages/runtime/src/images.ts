@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Db } from './db';
+import type { SharedFile } from './sync';
 
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
 export type ImageData = { mediaType: ImageMediaType; bytes: Uint8Array };
@@ -22,12 +23,16 @@ export const sha256Hex = (bytes: Uint8Array) => createHash('sha256').update(byte
 
 /**
  * 一個 run 一份：讓 read_file 讀到的共用資料夾圖片能交給模型，又不讓圖片本身塞進經過 Vercel 的請求。
- * read_file 讀到圖片 → resolve 確認與 Storage 上傳版本逐位元組相同才簽網址（顧問可能在共用資料夾放同名檔案）；
+ * read_file 讀到圖片 → resolve 以相對共用資料夾的路徑查出檔案 id，確認與 Storage 上傳版本逐位元組相同才簽網址
+ * （顧問可能在共用資料夾放同名檔案）；
  * 送出模型請求前，image-rewrite 用 urlFor 把同一張圖的 inlineData 換成這個網址。
  */
 export type ImageRegistry = {
   sharedRoot: string;
-  resolve(name: string, bytes: Uint8Array): Promise<string | null>;
+  /** 同步後的共用檔案清單（run.ts 在同步後呼叫） */
+  useSharedFiles(files: SharedFile[]): void;
+  /** relPath 以 / 分隔、相對 sharedRoot */
+  resolve(relPath: string, bytes: Uint8Array): Promise<string | null>;
   urlFor(sha256: string): string | undefined;
   keep(toolCallId: string, image: ImageData): void;
   imageFor(toolCallId: string): ImageData | undefined;
@@ -36,14 +41,20 @@ export type ImageRegistry = {
 export function createImageRegistry(db: Db, projectId: string, sharedRoot: string): ImageRegistry {
   const urls = new Map<string, string>();
   const images = new Map<string, ImageData>();
+  let fileIds = new Map<string, string>();
   const bucket = db.storage.from(BUCKET);
   return {
     sharedRoot,
-    async resolve(name, bytes) {
+    useSharedFiles(files) {
+      fileIds = new Map(files.map((f) => [f.path, f.fileId]));
+    },
+    async resolve(relPath, bytes) {
       const hash = sha256Hex(bytes);
       const known = urls.get(hash);
       if (known) return known;
-      const objectPath = `${projectId}/${name}`;
+      const fileId = fileIds.get(relPath);
+      if (!fileId) return null;
+      const objectPath = `${projectId}/files/${fileId}`;
       const { data: blob, error } = await bucket.download(objectPath);
       if (error || !blob || sha256Hex(new Uint8Array(await blob.arrayBuffer())) !== hash) return null;
       const { data, error: signError } = await bucket.createSignedUrl(objectPath, SIGNED_URL_TTL_S);

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server';
 import {
-  runtimeDb, runtimeToken, seedConsultant, seedProject, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
+  runtimeDb, runtimeToken, seedConsultant, seedProject, seedSharedFile, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
   uploadSkillsZip, waitFor,
 } from './helpers';
 import { mockModel, textTurn, toolTurn } from './mock-model';
@@ -21,8 +21,7 @@ async function seed() {
   const consultantId = await seedConsultant(db, projectId, {
     template_id: templateId, skills_zip_path: zipPath, skills: [{ name: '審合約', description: '檢查風險', path: 'contract' }],
   });
-  const { error } = await db.storage.from('project-files').upload(`${projectId}/notes.txt`, Buffer.from('專案筆記'), { contentType: 'text/plain' });
-  if (error) throw error;
+  await seedSharedFile(db, projectId, '資料/notes.txt', '專案筆記');
   const roots = await tmpRoots();
   return { projectId, threadId, consultantId, creatorId, roots, config: testConfig(projectId, roots) };
 }
@@ -73,7 +72,7 @@ describe('以 runtime 帳號通行證執行', () => {
     expect(usage![0].creator_id).toBe(env.creatorId);
 
     await expect(stat(path.join(path.dirname(env.roots.agentsRoot), 'skills', env.consultantId, 'contract', 'SKILL.md'))).resolves.toBeTruthy();
-    expect(await readFile(path.join(env.roots.sharedRoot, 'notes.txt'), 'utf8')).toBe('專案筆記');
+    expect(await readFile(path.join(env.roots.sharedRoot, '資料', 'notes.txt'), 'utf8')).toBe('專案筆記');
   });
 
   it('別的專案的 runtime 通行證碰不到這串對話', async () => {

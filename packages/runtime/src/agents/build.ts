@@ -8,7 +8,7 @@ import type { Db } from '../db';
 import { modelErrorText } from '../errors';
 import { connectMcpServers } from '../mcp';
 import { withToolTimes } from '../tool-clock';
-import { agentDir, skillsDir } from '../sync';
+import { agentDir, skillsDir, type SharedFile } from '../sync';
 import { createSandbox, sandboxUserFor } from '../sandbox';
 import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
@@ -64,7 +64,7 @@ export type ConsultantContext = {
   model: LanguageModel;
   config: Pick<Config, 'PROJECT_ID' | 'AGENTS_ROOT' | 'SHARED_ROOT' | 'SANDBOX_USER'>;
   instance: AgentInstance;
-  sharedFiles: string[];
+  sharedFiles: SharedFile[];
   secrets: Record<string, Record<string, string>>;
   onStepEnd?: (step: StepLike) => Promise<void> | void;
   /** 過了這個時間就收尾（不准再用工具） */
@@ -192,7 +192,7 @@ export type ManagerContext = {
   config: Pick<Config, 'PROJECT_ID' | 'SHARED_ROOT' | 'SANDBOX_USER'>;
   manager: AgentInstance;
   consultants: AgentInstance[];
-  sharedFiles: string[];
+  sharedFiles: SharedFile[];
   runner: ConsultantRunner;
   record: RecordSpeech;
   onStepEnd?: (step: StepLike) => Promise<void> | void;
