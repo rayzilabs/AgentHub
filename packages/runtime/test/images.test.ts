@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createImageRegistry, detectImage } from '../src/images';
@@ -96,6 +96,19 @@ describe('read_file 讀圖片', () => {
     big.set(PNG);
     await writeFile(path.join(sharedRoot, 'big.png'), big);
     expect((await run(readFileTool(sharedRoot, local, images), path.join(sharedRoot, 'big.png'), 'c4')).content).toContain('無法檢視');
+  });
+
+  it('symlink 指向超過 20 MB 的圖片：依指向的檔案大小判斷，無法檢視', async () => {
+    const { sharedRoot, images } = await setup();
+    const big = new Uint8Array(20 * 1024 * 1024 + 1);
+    big.set(PNG);
+    await writeFile(path.join(sharedRoot, 'big.png'), big);
+    try {
+      await symlink(path.join(sharedRoot, 'big.png'), path.join(sharedRoot, 'link.png'));
+    } catch {
+      return; // 這個環境不能建 symlink（Windows 沒有權限）
+    }
+    expect((await run(readFileTool(sharedRoot, local, images), path.join(sharedRoot, 'link.png'), 'c4b')).content).toContain('無法檢視');
   });
 
   it('沒有提供 images 時，圖片也回無法檢視；文字檔照舊', async () => {

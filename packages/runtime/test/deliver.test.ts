@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db';
@@ -78,7 +78,27 @@ describe('deliver_file', () => {
     const e = await setup();
     await writeFile(path.join(e.dir, 'a.txt'), 'a');
     expect(await run(tool(e), { path: 'a.txt', name: 'a/b.txt' })).toEqual({ error: expect.stringContaining('檔名') });
+    expect(await run(tool(e), { path: 'a.txt', name: 'x'.repeat(101) })).toEqual({ error: expect.stringContaining('檔名') });
     expect(await run(tool(e), { path: 'a.txt', folder: 'a//b' })).toEqual({ error: expect.stringContaining('資料夾') });
+    expect(await run(tool(e), { path: 'a.txt', folder: 'ok/..' })).toEqual({ error: expect.stringContaining('資料夾') });
+    // 預設檔名（原檔名）超過 100 字也一樣
+    await writeFile(path.join(e.dir, `${'y'.repeat(101)}.txt`), 'a');
+    expect(await run(tool(e), { path: `${'y'.repeat(101)}.txt` })).toEqual({ error: expect.stringContaining('檔名') });
+    // 名稱不合法就不上傳，storage 不會留下殘留物件
+    expect(await storageCount(e)).toBe(0);
+  });
+
+  it('symlink 指向超過上限的檔案：依指向的檔案大小拒絕，不上傳', async () => {
+    const e = await setup();
+    await writeFile(path.join(e.dir, 'big.bin'), '12345678901');
+    try {
+      await symlink(path.join(e.dir, 'big.bin'), path.join(e.dir, 'link.bin'));
+    } catch {
+      return; // 這個環境不能建 symlink（Windows 沒有權限）
+    }
+    const out = await run(tool(e, { limits: { file: 10, run: 1000 } }), { path: 'link.bin' });
+    expect(out).toEqual({ error: '檔案超過 50 MB，無法交付' });
+    expect(await storageCount(e)).toBe(0);
   });
 
   it('超過單檔上限就拒絕，storage 沒有新物件', async () => {

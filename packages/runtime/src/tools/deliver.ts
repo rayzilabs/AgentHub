@@ -39,15 +39,23 @@ export function contentTypeOf(fileName: string): string {
 
 /** deliver_project_file 丟出的錯誤轉成給模型看的說明 */
 function friendlyError(message: string): string {
-  if (message.includes('invalid name')) return '檔名不合法：不可為空、超過 100 字、含 / \\ 或控制字元，也不可是 . 或 ..';
-  if (message.includes('invalid folder')) return '資料夾名稱不合法：每一層都要是合法名稱，用 / 分層，不可有空的層級';
+  if (message.includes('invalid name')) return NAME_ERROR;
+  if (message.includes('invalid folder')) return FOLDER_ERROR;
   if (message.includes('storage object missing')) return '檔案上傳後找不到，請再試一次';
   if (message.includes('not allowed')) return '沒有權限交付這個檔案';
   return `交付失敗：${message}`;
 }
 
-const sh = (sandbox: Sandbox, cwd: string, script: string, target: string) =>
-  runInSandbox(sandbox, ['bash', '-c', script, 'deliver_file', target], { cwd });
+const sh = (sandbox: Sandbox, cwd: string, script: string, target: string, ...args: string[]) =>
+  runInSandbox(sandbox, ['bash', '-c', script, 'deliver_file', target, ...args], { cwd });
+
+const NAME_ERROR = '檔名不合法：不可為空、超過 100 字、含 / \\ 或控制字元，也不可是 . 或 ..';
+const FOLDER_ERROR = '資料夾名稱不合法：每一層都要是合法名稱，用 / 分層，不可有空的層級';
+
+/** 與資料庫的 is_entry_name 相同規則；上傳前先擋，因為 runtime 刪不掉已上傳的物件 */
+function isEntryName(s: string): boolean {
+  return s.length >= 1 && [...s].length <= 100 && !/[\x00-\x1f\x7f/\\]/.test(s) && s !== '.' && s !== '..';
+}
 
 export function deliverFileTool(opts: {
   cwd: string;
@@ -71,19 +79,29 @@ export function deliverFileTool(opts: {
     }),
     execute: async ({ path: p, folder, name }): Promise<DeliveredFile | { error: string }> => {
       const target = path.resolve(opts.cwd, p);
+      const displayName = name?.trim() || path.basename(target);
+      const subfolder = (folder ?? '').replace(/^\/+|\/+$/g, '');
+      // 名稱不合法就不上傳：上傳後 runtime 沒有刪除權限，物件會永遠留著
+      if (!isEntryName(displayName)) return { error: NAME_ERROR };
+      if (subfolder && !subfolder.split('/').every(isEntryName)) return { error: FOLDER_ERROR };
+
       // 以沙盒帳號讀取：權限與 bash 相同，讀不到的檔案交付不出去
       if ((await sh(opts.sandbox, opts.cwd, 'test -f "$1"', target)).code !== 0) {
         return { error: `找不到檔案或不是一般檔案：${p}` };
       }
-      const size = Number((await sh(opts.sandbox, opts.cwd, 'stat -c %s -- "$1"', target)).stdout.trim());
-      if (!Number.isFinite(size)) return { error: `無法讀取檔案大小：${p}` };
+      // -L：symlink 要看指向的檔案大小
+      const stat = await sh(opts.sandbox, opts.cwd, 'stat -L -c %s -- "$1"', target);
+      const size = Number(stat.stdout.trim());
+      if (stat.code !== 0 || !stat.stdout.trim() || !Number.isFinite(size)) return { error: `無法讀取檔案大小：${p}` };
       if (size > limits.file) return { error: '檔案超過 50 MB，無法交付' };
       if (opts.budget.used + size > limits.run) return { error: '這次回覆交付的檔案合計超過 200 MB' };
-      const read = await sh(opts.sandbox, opts.cwd, 'base64 -w0 -- "$1"', target);
+      // 最多讀上限 + 1 個位元組：檔案在 stat 之後變大也不會把整個檔案讀進記憶體
+      const read = await sh(opts.sandbox, opts.cwd, 'head -c "$2" -- "$1" | base64 -w0', target, String(limits.file + 1));
       if (read.code !== 0) return { error: read.stderr.trim() || `無法讀取 ${p}` };
       const bytes = new Uint8Array(Buffer.from(read.stdout, 'base64'));
+      if (bytes.length > limits.file) return { error: '檔案超過 50 MB，無法交付' };
+      if (opts.budget.used + bytes.length > limits.run) return { error: '這次回覆交付的檔案合計超過 200 MB' };
 
-      const displayName = name?.trim() || path.basename(target);
       const fileId = randomUUID();
       try {
         const up = await opts.db.storage.from('project-files').upload(`${opts.projectId}/files/${fileId}`, bytes, {
@@ -93,7 +111,7 @@ export function deliverFileTool(opts: {
         // 登記失敗時不刪剛上傳的物件：runtime 沒有刪除權限
         const { data, error } = await opts.db.rpc('deliver_project_file', {
           p_file_id: fileId, p_instance_id: opts.instanceId,
-          p_subfolder: (folder ?? '').replace(/^\/+|\/+$/g, ''), p_name: displayName, p_run_id: opts.runId,
+          p_subfolder: subfolder, p_name: displayName, p_run_id: opts.runId,
         });
         if (error) return { error: friendlyError(error.message) };
         const row = (data as { id: string; name: string; folder: string; size: number | string }[])[0];

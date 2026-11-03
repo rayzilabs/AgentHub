@@ -33,11 +33,16 @@ async function readImage(sandbox: Sandbox, cwd: string, target: string, images: 
   const unviewable = { content: `這張圖不在共用資料夾（或與上傳的版本不同），無法檢視：${name}` };
   const sharedFile = images && sharedName(images, target);
   if (!images || !sharedFile) return unviewable;
-  const size = Number((await sh(sandbox, cwd, 'stat -c %s -- "$1"', target)).stdout.trim());
-  if (!(size > 0 && size <= IMAGE_MAX_BYTES)) return unviewable;
-  const full = await sh(sandbox, cwd, 'base64 -w0 -- "$1"', target);
+  // -L：symlink 要看指向的檔案大小；讀取最多 IMAGE_MAX_BYTES + 1，檔案變大也不會整個讀進記憶體
+  const stat = await sh(sandbox, cwd, 'stat -L -c %s -- "$1"', target);
+  const size = Number(stat.stdout.trim());
+  if (stat.code !== 0 || !(size > 0 && size <= IMAGE_MAX_BYTES)) return unviewable;
+  const full = await runInSandbox(
+    sandbox, ['bash', '-c', 'head -c "$2" -- "$1" | base64 -w0', 'read_file', target, String(IMAGE_MAX_BYTES + 1)], { cwd },
+  );
   if (full.code !== 0) return unviewable;
   const bytes = new Uint8Array(Buffer.from(full.stdout, 'base64'));
+  if (bytes.length > IMAGE_MAX_BYTES) return unviewable;
   if (!(await images.resolve(sharedFile, bytes))) return unviewable;
   images.keep(toolCallId, { mediaType, bytes });
   return { content: `圖片：${name}（${mediaType}，${bytes.length} bytes）` };
