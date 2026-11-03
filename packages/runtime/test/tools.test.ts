@@ -31,9 +31,10 @@ describe('runBash', () => {
     expect(r.output).toContain('boom');
   });
 
-  it('killedNote：只有不是我們砍的 SIGKILL 才說明可能是記憶體不足（沙盒沒有獨立上限，和整台環境共用 8 GB）', () => {
-    expect(killedNote('SIGKILL', false)).toContain('記憶體不足');
-    expect(killedNote('SIGKILL', false)).not.toContain('6 GB');
+  it('killedNote：只有不是我們砍的 SIGKILL 才說明可能是記憶體超過上限（所有顧問的指令合計 6 GB）', () => {
+    expect(killedNote('SIGKILL', false)).toContain('記憶體超過上限');
+    expect(killedNote('SIGKILL', false)).toContain('合計 6 GB');
+    expect(killedNote('SIGKILL', false)).not.toContain('8 GB');
     expect(killedNote('SIGKILL', true)).toBe('');
     expect(killedNote(null, false)).toBe('');
     expect(killedNote('SIGTERM', false)).toBe('');
