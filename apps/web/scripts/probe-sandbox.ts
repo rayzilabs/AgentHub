@@ -222,10 +222,15 @@ try {
   );
   // 不經過還原邏輯、直接跟著 symlink 寫：沙盒帳號本身就沒有顧問 A 目錄的寫入權限
   const linkDir = `${WORKSPACE}/shared/probe-link-a`;
-  await sh(sprite, `sudo -n ln -sfn ${dirA} ${linkDir}`);
+  const link = await sh(sprite, `sudo -n ln -sfn ${dirA} ${linkDir} && [ -L ${linkDir} ] && echo linked`);
   const through = await sh(sprite, asAgent(`echo MARK-EVIL > ${linkDir}/evil.txt`));
   const evil = await sh(sprite, `sudo -n test -e ${dirA}/evil.txt && echo leaked || echo not-in-a; sudo -n rm -f ${linkDir}`);
-  record('沙盒帳號跟著 /shared 裡的 symlink 也寫不進顧問 A 的目錄', through.code !== 0 && evil.out.includes('not-in-a'), `${through.out} | ${evil.out}`);
+  // symlink 沒建成時寫入也會失敗（找不到目錄），所以要先確認前置條件，且失敗原因必須是權限不足
+  record(
+    '沙盒帳號跟著 /shared 裡的 symlink 也寫不進顧問 A 的目錄',
+    link.out.includes('linked') && through.code !== 0 && through.out.includes('Permission denied') && evil.out.includes('not-in-a'),
+    `${link.out} | ${through.out} | ${evil.out}`,
+  );
   // 各語言：/.sprite/bin 的包裝腳本要寫 languages_env，佈建時已由 runtime 帳號補齊；沙盒帳號每個都要能用（2026-10-30 前全部失敗）
   for (const [tool, cmd, expect] of [
     ['python3', 'python3 --version', /Python 3\./],
