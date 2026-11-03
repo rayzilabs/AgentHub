@@ -3,7 +3,7 @@ import type { DelegationOutput, DiscussionState, ToolEvent, ToolTimes } from './
 
 export const TOOL_LABELS: Record<string, string> = {
   bash: '執行指令', read_file: '讀取檔案', write_file: '寫入檔案', skill: '載入 skill',
-  memory_write: '寫入記憶', memory_read: '讀取記憶', memory_delete: '刪除記憶',
+  memory_write: '寫入記憶', memory_read: '讀取記憶', memory_delete: '刪除記憶', deliver_file: '交付檔案',
 };
 
 /** 輪詢模式下超過這段時間沒有任何更新（含心跳），就提示可能卡住 */

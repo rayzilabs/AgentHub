@@ -10,9 +10,9 @@ import { useMediaQuery } from '@/components/ui/use-media-query';
 import { api } from '@/lib/client-api';
 import { consultantColor } from '@/lib/colors';
 import type { ProjectDetail } from '@/lib/services/projects';
+import { FileBrowser } from '@/components/files/file-browser';
 import { AgentRoster } from './agent-roster';
 import { Chat } from './chat';
-import { FilePanel } from './file-panel';
 import { MemoryPanel } from './memory-panel';
 import { ThreadTabs } from './thread-tabs';
 
@@ -94,7 +94,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
   const panels = (
     <div className="space-y-8">
       <AgentRoster agents={agents} colorOf={colorOf} />
-      <FilePanel projectId={project.id} />
+      <FileBrowser projectId={project.id} />
       <MemoryPanel projectId={project.id} refreshKey={memoryTick + threads.length} />
       <button onClick={remove} className="btn btn-sm -ml-3 text-seal hover:bg-seal/10">刪除專案</button>
     </div>
