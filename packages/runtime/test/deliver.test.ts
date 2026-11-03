@@ -1,4 +1,4 @@
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '../src/db';
@@ -86,6 +86,23 @@ describe('deliver_file', () => {
     expect(await run(tool(e), { path: `${'y'.repeat(101)}.txt` })).toEqual({ error: expect.stringContaining('檔名') });
     // 名稱不合法就不上傳，storage 不會留下殘留物件
     expect(await storageCount(e)).toBe(0);
+  });
+
+  it('test -f 通過但讀不到內容的檔案：拒絕，不上傳空檔', async () => {
+    const e = await setup();
+    let readable = false;
+    const file = path.join(e.dir, 'secret.bin');
+    await writeFile(file, 'data');
+    await chmod(file, 0o000);
+    try {
+      await readFile(file);
+      await chmod(file, 0o644);
+      readable = true; // 這個環境（Windows 或 root）chmod 擋不住讀取，無法製造讀取失敗
+    } catch { /* 預期讀不到 */ }
+    if (!readable) {
+      expect(await run(tool(e), { path: 'secret.bin' })).toHaveProperty('error');
+      expect(await storageCount(e)).toBe(0);
+    }
   });
 
   it('symlink 指向超過上限的檔案：依指向的檔案大小拒絕，不上傳', async () => {

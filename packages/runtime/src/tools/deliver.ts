@@ -96,7 +96,7 @@ export function deliverFileTool(opts: {
       if (size > limits.file) return { error: '檔案超過 50 MB，無法交付' };
       if (opts.budget.used + size > limits.run) return { error: '這次回覆交付的檔案合計超過 200 MB' };
       // 最多讀上限 + 1 個位元組：檔案在 stat 之後變大也不會把整個檔案讀進記憶體
-      const read = await sh(opts.sandbox, opts.cwd, 'head -c "$2" -- "$1" | base64 -w0', target, String(limits.file + 1));
+      const read = await sh(opts.sandbox, opts.cwd, 'set -o pipefail; head -c "$2" -- "$1" | base64 -w0', target, String(limits.file + 1));
       if (read.code !== 0) return { error: read.stderr.trim() || `無法讀取 ${p}` };
       const bytes = new Uint8Array(Buffer.from(read.stdout, 'base64'));
       if (bytes.length > limits.file) return { error: '檔案超過 50 MB，無法交付' };

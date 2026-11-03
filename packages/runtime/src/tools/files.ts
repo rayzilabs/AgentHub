@@ -38,7 +38,7 @@ async function readImage(sandbox: Sandbox, cwd: string, target: string, images: 
   const size = Number(stat.stdout.trim());
   if (stat.code !== 0 || !(size > 0 && size <= IMAGE_MAX_BYTES)) return unviewable;
   const full = await runInSandbox(
-    sandbox, ['bash', '-c', 'head -c "$2" -- "$1" | base64 -w0', 'read_file', target, String(IMAGE_MAX_BYTES + 1)], { cwd },
+    sandbox, ['bash', '-c', 'set -o pipefail; head -c "$2" -- "$1" | base64 -w0', 'read_file', target, String(IMAGE_MAX_BYTES + 1)], { cwd },
   );
   if (full.code !== 0) return unviewable;
   const bytes = new Uint8Array(Buffer.from(full.stdout, 'base64'));
