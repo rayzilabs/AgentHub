@@ -60,6 +60,7 @@ export function buildConsultantInstructions(p: ConsultantPromptInput): string {
     [
       '## 資料說明',
       '回答用到數字或資料時，註明資料來源與資料截至哪一天。用了工具以外的資料，或數字是你自己估計、假設出來的，要明講。',
+      '回覆裡的數字只能來自工具結果、你執行程式的輸出，或使用者提供的資料。表格裡沒有算出來的格子寫「未計算」（或拿掉那一欄），不要估計補齊；需要的話再執行程式算出來。',
     ].join('\n'),
     memorySection(p.memories),
   ];

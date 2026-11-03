@@ -73,6 +73,17 @@ describe('buildConsultantInstructions', () => {
     expect(text).toContain('假設');
   });
 
+  it('平台通用規則：數字只能來自工具結果、程式輸出或使用者提供的資料，沒算的寫「未計算」，不能估計補齊表格', () => {
+    // 2026-10-29 run c897a145：工具失敗改自己寫程式回測，程式沒算的 8 個基準指標（Sortino、VaR、Beta、Alpha）被編出來填滿表格
+    const text = buildConsultantInstructions({
+      instance: instance(), workDir: '/w', sharedRoot: '/shared',
+      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
+    });
+    expect(text).toContain('程式的輸出');
+    expect(text).toContain('未計算');
+    expect(text).toContain('補齊');
+  });
+
   it('沒有檔案、skill、記憶時顯示空狀態', () => {
     const text = buildConsultantInstructions({
       instance: instance(), workDir: '/w', sharedRoot: '/shared',
