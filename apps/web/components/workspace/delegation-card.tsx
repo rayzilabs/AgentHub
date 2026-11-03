@@ -1,3 +1,4 @@
+import { FileCards } from '@/components/files/file-card';
 import { Markdown } from '@/components/markdown';
 import { Avatar } from '@/components/ui/avatar';
 import type { DelegationOutput } from '@/lib/agent-output';
@@ -52,6 +53,7 @@ export function DelegationCard({ output, task, color, failedText, live }: {
               : <Markdown compact text={textOf(output.message)} />}
           </div>
         )}
+        {output?.files && <FileCards files={output.files} />}
       </div>
     </div>
   );

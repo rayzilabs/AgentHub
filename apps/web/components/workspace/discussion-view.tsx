@@ -1,3 +1,4 @@
+import { FileCards } from '@/components/files/file-card';
 import { Markdown } from '@/components/markdown';
 import { Seal } from '@/components/seal';
 import { Avatar } from '@/components/ui/avatar';
@@ -30,6 +31,7 @@ function SpeechBlock({ speech, color, live }: { speech: Speech; color: string; l
           </div>
         )
       )}
+      {speech.files && <FileCards files={speech.files} />}
       {speech.cutoff === 'stopped' && <p className="notice notice-error mt-3">{speech.error}</p>}
       {speech.cutoff === 'wrap-up' && <p className="notice notice-warn mt-3">時間到，已提前收尾</p>}
     </div>

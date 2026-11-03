@@ -4,7 +4,8 @@ import type { UIMessage } from 'ai';
 import { motion } from 'motion/react';
 import { Markdown } from '@/components/markdown';
 import { Avatar } from '@/components/ui/avatar';
-import type { DelegationOutput, DiscussionState } from '@/lib/agent-output';
+import { FileCards } from '@/components/files/file-card';
+import { filesInMessage, type DelegationOutput, type DeliveredFile, type DiscussionState } from '@/lib/agent-output';
 import { DelegationCard } from './delegation-card';
 import { DiscussionView } from './discussion-view';
 import { isRunningPart, isToolPart, settleStep, stepOf, toolNameOf, type ToolPartLike } from '@/lib/progress';
@@ -33,6 +34,7 @@ export function MessageView({ message, speaker, speakerColor, colorOf, animateIn
       </div>
     );
   }
+  const delivered = filesInMessage(message);
   return (
     <motion.div initial={animateIn ? { opacity: 0 } : false} animate={{ opacity: 1 }} transition={{ duration: 0.25, ease: 'easeOut' }}>
       <div className="mb-3 flex items-center gap-2.5">
@@ -61,8 +63,19 @@ export function MessageView({ message, speaker, speakerColor, colorOf, animateIn
           return <DiscussionView key={i} state={tool.output as DiscussionState | undefined} colorOf={colorOf} live={live}
             failedText={tool.state === 'output-error' ? tool.errorText ?? '主管沒能召集顧問' : undefined} />;
         }
+        if (name === 'deliver_file' && tool.state === 'output-available') {
+          // 失敗時輸出是 { error }，沒有 file_id，照一般工具步驟畫
+          const file = tool.output as DeliveredFile | undefined;
+          if (typeof file?.file_id === 'string') return <FileCards key={i} files={[file]} />;
+        }
         return <ul key={i} className="my-2"><ToolStep step={settleStep(stepOf(tool, message.metadata), !live)} now={now} /></ul>;
       })}
+      {delivered.length > 0 && (
+        <section className="mt-4" aria-label="這次交付的檔案">
+          <h3 className="text-sm font-medium text-muted">這次交付的檔案</h3>
+          <FileCards files={delivered} />
+        </section>
+      )}
     </motion.div>
   );
 }
