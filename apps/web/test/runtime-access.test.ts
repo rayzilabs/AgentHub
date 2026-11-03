@@ -73,3 +73,102 @@ describe('runtime 帳號的實際權限', () => {
     expect((await listProjectsRoute(req, {})).status).toBe(401);
   });
 });
+
+describe('雲端資料夾的 runtime 權限', () => {
+  type Client = ReturnType<typeof asToken>;
+
+  async function upload(ra: Client, projectId: string) {
+    const id = randomUUID();
+    const { error } = await ra.storage.from('project-files').upload(`${projectId}/files/${id}`, Buffer.from('週報'), { contentType: 'text/plain' });
+    expect(error).toBeNull();
+    return id;
+  }
+
+  const deliver = (ra: Client, fileId: string, instanceId: string, subfolder = '2026-W43') =>
+    ra.rpc('deliver_project_file', { p_file_id: fileId, p_instance_id: instanceId, p_subfolder: subfolder, p_name: '週報.docx', p_run_id: null });
+
+  it('runtime 只能上傳到自己專案的 files/ 底下', async () => {
+    const a = await seedProject('PROMPT A');
+    const b = await seedProject('PROMPT B');
+    const files = asToken(await runtimeAccessToken(db, a.project.id)).storage.from('project-files');
+
+    const path = `${a.project.id}/files/${randomUUID()}`;
+    expect((await files.upload(path, Buffer.from('1'))).error).toBeNull();
+    expect((await files.upload(`${b.project.id}/files/${randomUUID()}`, Buffer.from('1'))).error).not.toBeNull();
+    expect((await files.upload(`${a.project.id}/x.txt`, Buffer.from('1'))).error).not.toBeNull();
+    expect((await files.upload(path, Buffer.from('2'), { upsert: true })).error).not.toBeNull();
+    expect(await (await files.download(path)).data?.text()).toBe('1');
+  });
+
+  it('交付後資料表看得到、資料夾是顧問名稱', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+    const id = await upload(ra, a.project.id);
+
+    const { data, error } = await deliver(ra, id, a.instanceId);
+    expect(error).toBeNull();
+    expect(data[0]).toEqual({ id, name: '週報.docx', folder: 'x/2026-W43', size: Buffer.byteLength('週報') });
+
+    const { data: folders } = await ra.from('project_folders').select('name');
+    expect(folders?.map((f) => f.name)).toEqual(expect.arrayContaining(['x', '2026-W43']));
+    const { data: rows } = await ra.from('project_files').select('id, name, source');
+    expect(rows).toEqual([{ id, name: '週報.docx', source: 'agent' }]);
+  });
+
+  it('同時交付同名檔案都成功且加序號', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+    const ids = [await upload(ra, a.project.id), await upload(ra, a.project.id)];
+
+    const results = await Promise.all(ids.map((id) => deliver(ra, id, a.instanceId)));
+    for (const r of results) expect(r.error).toBeNull();
+    expect(results.map((r) => r.data[0].name).sort()).toEqual(['週報.docx', '週報 (2).docx'].sort());
+  });
+
+  it('顧問名稱不合法時淨化成安全的資料夾名', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+
+    await db.from('agent_instances').update({ name: '../a/b' }).eq('id', a.instanceId);
+    const first = await deliver(ra, await upload(ra, a.project.id), a.instanceId, '');
+    expect(first.error).toBeNull();
+    expect(first.data[0].folder).toBe('.._a_b');
+
+    await db.from('agent_instances').update({ name: '..' }).eq('id', a.instanceId);
+    const second = await deliver(ra, await upload(ra, a.project.id), a.instanceId, '');
+    expect(second.error).toBeNull();
+    expect(second.data[0].folder).toBe('顧問');
+
+    const { data: roots } = await ra.from('project_folders').select('name').is('parent_id', null);
+    expect(roots?.map((f) => f.name).sort()).toEqual(['.._a_b', '顧問'].sort());
+  });
+
+  it('不能替別的專案的顧問交付、不能直接寫資料表', async () => {
+    const a = await seedProject('PROMPT A');
+    const b = await seedProject('PROMPT B');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+    const id = await upload(ra, a.project.id);
+
+    expect((await deliver(ra, id, b.instanceId)).error).not.toBeNull();
+    const insert = await ra.from('project_files').insert({
+      id, project_id: a.project.id, folder_id: randomUUID(), name: '週報.docx', size: 1, content_type: 'text/plain', source: 'agent',
+    });
+    expect(insert.error?.code).toBe('42501');
+  });
+
+  it('子資料夾名稱不合法就拒絕', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+    const id = await upload(ra, a.project.id);
+
+    expect((await deliver(ra, id, a.instanceId, '../x')).error).not.toBeNull();
+  });
+
+  it('storage 物件不存在就拒絕', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+
+    const { error } = await deliver(ra, randomUUID(), a.instanceId);
+    expect(error?.message).toContain('storage object missing');
+  });
+});
