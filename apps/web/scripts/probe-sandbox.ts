@@ -184,6 +184,48 @@ try {
   const oldMgr = await sh(sprite, asUser('agent', `cat ${dirOld}/old.txt`));
   const oldOwner = await sh(sprite, asUser(userOf(idOld), `cat ${dirOld}/old.txt`));
   record('1-A 時期的目錄轉成顧問群組：主管讀不到、該顧問讀得到', conv.code === 0 && oldMgr.code !== 0 && oldOwner.out.trim() === 'old', `${conv.out} | ${oldMgr.out} | ${oldOwner.out}`);
+
+  // ---- 雲端資料夾同步到 /shared：寫入以沙盒帳號 agent 執行，資料夾被換成 symlink 也寫不進顧問的私人目錄 ----
+  // 與 packages/runtime/src/sync.ts 的 WRITE_SCRIPT 相同，改的時候兩邊一起改
+  const SYNC_WRITE_SCRIPT = [
+    'f=$1; shift',
+    'for d in "$@"; do',
+    '  if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then rm -f -- "$d" || exit 1; fi',
+    '  [ -d "$d" ] || mkdir -- "$d" || exit 1',
+    'done',
+    'rm -f -- "$f" && cat > "$f"',
+  ].join('\n');
+  // 照 runtime 的 runInSandbox：由 Node spawn、cwd 是 /shared、路徑當參數、內容從 stdin 送
+  const syncWrite = async (file: string, content: string) => {
+    const segs = file.split('/');
+    const dirs = segs.slice(1).map((_, i) => segs.slice(0, i + 1).join('/'));
+    const argv = ['-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, 'agent', 'bash', '-c', SYNC_WRITE_SCRIPT, 'sync', file, ...dirs];
+    const js = `const c=require('node:child_process').spawn('sudo',${JSON.stringify(argv)},{cwd:${JSON.stringify(`${WORKSPACE}/shared`)},env:{PATH:process.env.PATH,SANDBOX_PATH:process.env.PATH,HOME:'/home/agent'}});let o='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>o+=d);c.on('close',k=>console.log(o+'exit='+k));c.stdin.end(${JSON.stringify(content)});`;
+    return sh(sprite, `echo ${Buffer.from(js).toString('base64')} | base64 -d > /tmp/probe-sync.js && node /tmp/probe-sync.js; rm -f /tmp/probe-sync.js`);
+  };
+  const syncDir = `${WORKSPACE}/shared/我上傳的`;
+  const first = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-1');
+  // 顧問把同步下來的資料夾換成指向顧問 A 私人目錄的 symlink，下一次同步時 runtime 照樣寫入（上層不是真資料夾就重寫）
+  const swap = await sh(sprite, `sudo -n rm -rf '${syncDir}' && sudo -n ln -s ${dirA} '${syncDir}' && [ -L '${syncDir}' ] && echo swapped`);
+  const second = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-2');
+  const restored = await sh(sprite, [
+    `[ -L '${syncDir}' ] && echo still-link`,
+    `[ -d '${syncDir}' ] && [ ! -L '${syncDir}' ] && echo real-dir`,
+    `sudo -n cat '${syncDir}/brief.md'; echo`,
+    `sudo -n test -e ${dirA}/brief.md && echo leaked || echo not-in-a`,
+  ].join('; '));
+  record(
+    '同步遇到被換成 symlink 的資料夾：還原成真資料夾，沒有寫進顧問 A 的目錄',
+    first.out.includes('exit=0') && swap.out.includes('swapped') && second.out.includes('exit=0')
+      && restored.out.includes('real-dir') && !restored.out.includes('still-link') && restored.out.includes('MARK-SYNC-2') && restored.out.includes('not-in-a'),
+    `${first.out} | ${swap.out} | ${second.out} | ${restored.out}`,
+  );
+  // 不經過還原邏輯、直接跟著 symlink 寫：沙盒帳號本身就沒有顧問 A 目錄的寫入權限
+  const linkDir = `${WORKSPACE}/shared/probe-link-a`;
+  await sh(sprite, `sudo -n ln -sfn ${dirA} ${linkDir}`);
+  const through = await sh(sprite, asAgent(`echo MARK-EVIL > ${linkDir}/evil.txt`));
+  const evil = await sh(sprite, `sudo -n test -e ${dirA}/evil.txt && echo leaked || echo not-in-a; sudo -n rm -f ${linkDir}`);
+  record('沙盒帳號跟著 /shared 裡的 symlink 也寫不進顧問 A 的目錄', through.code !== 0 && evil.out.includes('not-in-a'), `${through.out} | ${evil.out}`);
   // 各語言：/.sprite/bin 的包裝腳本要寫 languages_env，佈建時已由 runtime 帳號補齊；沙盒帳號每個都要能用（2026-10-30 前全部失敗）
   for (const [tool, cmd, expect] of [
     ['python3', 'python3 --version', /Python 3\./],

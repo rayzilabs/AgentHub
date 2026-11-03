@@ -3,7 +3,7 @@
 這份是長期維護的文件：誰能碰到什麼、權限怎麼切。權限有任何變動都要更新這份。
 各子專案的實作細節在 `docs/superpowers/specs/`，這裡只記結論。
 
-- 最後更新：2026-10-13
+- 最後更新：2026-11-04
 - 狀態欄位：✅ 已上線、🚧 實作中、📝 已設計、⏳ 尚未設計
 
 ---
@@ -36,7 +36,7 @@
 | 顧問 A | ✅ | ✅ | ✅ | ✅ | ❌ | ❌（只拿到工具回傳的結果） |
 | 顧問 B | ❌ | ❌ | ✅（主管轉述、討論紀錄） | ✅ | ❌ | ❌ |
 | 主管 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| 租用者 | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| 租用者 | ❌ | ❌ | ✅ | 雲端資料夾裡的檔案（自己上傳的與顧問交付的）；顧問直接寫進 `/shared` 但沒交付的看不到 | ❌ | ❌ |
 | runtime | ✅ | ✅ | ✅ | ✅ | 只有自己專案的通行證 | ❌ |
 
 | 規則 | 狀態 |
@@ -47,6 +47,7 @@
 | 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進 Sprite；取消租用後立即無法呼叫 | ✅ 自己架（3a，2026-10-14）；平台代管（3b，2026-10-15）：代管 Sprite 上只有該 MCP 的程式與創作者金鑰 |
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
 | 單一顧問模式下，主管／顧問本身的原始工具輸入輸出仍會隨串流送到瀏覽器 | ⏳ 已知缺口 |
+| 雲端資料夾（2026-11-03）：使用者只看得到自己專案的檔案；顧問只能用 `deliver_file` 交付到自己專案、自己的資料夾底下，交付前以該顧問的沙盒帳號讀檔（讀不到就交不出去）；runtime 不能刪改使用者的檔案 | 🚧 2026-11-04 實作完成，待上線 |
 
 ## 4. runtime 的資料庫權限（子專案 1-C）
 
@@ -71,7 +72,11 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `hosted_mcp_secrets`／Vault | ❌ | ❌ | ❌ | ❌ | 創作者給代管 MCP 的金鑰；只透過 `set_hosted_mcp_secret`／`get_hosted_mcp_secrets`，只有 `service_role` 能執行（3b） |
 | `project_runtime_accounts` | ❌ | ❌ | ❌ | ❌ | runtime 帳號的密碼與通行證快取；只有 Vercel（`service_role`）讀得到 |
 | Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip |
-| Storage `project-files` | 列出、下載、簽 1 小時網址 | ❌ | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；上傳由網頁處理。簽名網址只給 `read_file` 確認過與上傳版本逐位元組相同的圖片，只送往 Vertex（模型依網址自己下載），不給顧問、不寫進資料庫（2026-10-30） |
+| `project_folders` | 只能讀 `id`、`project_id`、`parent_id`、`name`、`created_at` | ❌ | ❌ | ❌ | 自己專案；雲端資料夾的資料夾（2026-11-03） |
+| `project_files` | 只能讀 `id`、`project_id`、`folder_id`、`name`、`size`、`content_type`、`source`、`agent_instance_id`、`run_id`、`created_at`、`updated_at` | 只能透過 `deliver_project_file` | ❌ | ❌ | 自己專案；同步到 `/shared` 用。改名、搬移、刪除只有網頁（`service_role`）做得到 |
+| `deliver_project_file` | | | | | runtime 交付檔案的唯一途徑（`security definer`）：函式本身檢查通行證的專案、顧問屬於這個專案、run 屬於這個專案、storage 物件是這個 runtime 帳號自己上傳的（`owner_id`），只能登記到該顧問的資料夾（以顧問名稱命名，被改名或刪掉就重建）底下；檔名、資料夾名不合法就拒絕 |
+| `ensure_folder`、`register_project_file` | | | | | 只有 `service_role` 能執行（網頁上傳、舊檔搬移） |
+| Storage `project-files` | 列出、下載、簽 1 小時網址 | 只能新增到 `<自己專案 id>/files/` 底下 | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；使用者上傳由網頁處理。新增是給交付用的（`runtime_insert_project_files`），不能覆蓋或刪除；bucket 單檔上限 50 MB，runtime 另限單檔 50 MB、每次 run 合計 200 MB。簽名網址只給 `read_file` 確認過與上傳版本逐位元組相同的圖片，只送往 Vertex（模型依網址自己下載），不給顧問、不寫進資料庫（2026-10-30） |
 | Storage `runtime` | ❌ | ❌ | ❌ | ❌ | 安裝時由 Vercel 給一次性下載連結 |
 | Storage `mcp-bundles` | ❌ | ❌ | ❌ | ❌ | 創作者上傳的代管 MCP 套件；部署時由 Vercel 給代管 Sprite 一次性下載連結（3b） |
 | 模型（Vertex） | 透過 Vercel 代理呼叫 | | | | Sprite 不放 Vertex 金鑰；可設每專案用量上限 |
@@ -93,9 +98,13 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 /workspace/agents/<顧問id>/.agenthub-venv/  2775 agent-<id12>:agent-<id12>  依 skill 的 requirements.txt 建的 Python 環境（顧問自己建、自己能改）
 /workspace/skills/           0711 sprite:workspace  只有 runtime 能建立項目
 /workspace/skills/<顧問id>/  2750 sprite:agent-<id12>  同步下來的 skills；該顧問只能讀（不能建立或改名項目）
-/workspace/shared/           2770 sprite:workspace  所有顧問與主管共用的交接區
+/workspace/shared/           2770 sprite:workspace  所有顧問與主管共用的交接區；雲端資料夾整棵同步到這裡
 /var/lib/agenthub/tmp/<帳號>/ 700 該帳號            沙盒裡掛成 /tmp（每個帳號一份）
+/home/sprite/agenthub/shared-sync.json  sprite      雲端資料夾的同步紀錄（設定 SYNC_STATE_PATH），顧問改不到
 ```
+
+- 雲端資料夾（2026-11-03）：storage 物件在 `project-files/<專案>/files/<檔案 id>`，資料夾與檔名記在 `project_folders`、`project_files`，改名、搬移只改資料表。預設資料夾「我上傳的」，每位顧問交付到以自己名稱命名的資料夾。每次 run 前 runtime 依資料表把整棵樹同步到 `/workspace/shared`（例：`/workspace/shared/ETF 資金流顧問/2026-W43/週報.docx`），只刪以前同步下來的檔案，顧問直接寫進 `/shared` 的不受影響。`/shared` 所有顧問都能寫，顧問可以把資料夾換成 symlink，所以 `/shared` 裡的建立、寫入、刪除一律以 `SANDBOX_USER`（`agent`）執行，runtime 自己只做 `lstat` 這類唯讀檢查；寫入前把被換成 symlink 或不是資料夾的上層刪掉重建，上層被換成 symlink 時不刪檔。同步紀錄不放在 `/shared`。名稱超過 255 bytes 的略過，單一檔案下載或寫入失敗只略過那一個。
+- 顧問交付（2026-11-03）：`deliver_file` 以該顧問自己的沙盒帳號讀檔（`stat -L` 檢查大小、`head -c` 限制讀取量、`pipefail`），symlink 指向它讀不到的檔案就交不出去；檔名與資料夾名在上傳前先檢查（runtime 刪不掉已上傳的物件），上傳後呼叫 `deliver_project_file` 登記。主管沒有這個工具。
 
 - 以 `agent` 執行時，環境變數清空，只留 `PATH`、`HOME`、`LANG`、`TZ`（加上 stdio MCP 自己的金鑰，經由環境變數而不是指令參數）。
 - 執行路徑：`sudo unshare --mount` → 沙盒腳本 `/usr/local/bin/agenthub-sandbox` 在獨立的掛載命名空間裡用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `agent`。Sprite 內部 API 能建立以 runtime 帳號（有 sudo）執行的服務，而它在唯讀掛載上、改不了權限，所以只能在命名空間裡蓋掉。
@@ -108,7 +117,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
   - 2026-11-03 修正：根目錄裡只有 Sprite 的 `tini`、`tail` 與 exec 開的 shell（服務各自在 `svc.<名稱>` 子群組）。沙盒腳本在啟用記憶體控制器前，先把根目錄的程序搬到 `init` 子群組，之後 exec 開的程序也落在 `init`，根目錄保持空的。Sprite 重啟後 cgroup 恢復原狀，所以每個沙盒指令都檢查一次。實測：exec、服務重啟、建立服務都照常；沙盒程式吃到 6 GiB 時核心只砍它（`memory.events` 的 `oom_kill` 加 1），runtime 與 Sprite 照常回應。`probe-sandbox.ts` 驗收這兩項。搬移時剛好有新程序進根目錄會讓那次設定失敗（照常執行、不在群組裡），下一個指令會再試。
 - runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。平台的請求要帶 Fly 驗證（`authorization`，Fly 驗證後拿掉）。限制：runtime 被砍時沙盒裡若還有指令在跑，Sprite 要等它們結束才重啟 runtime，期間判斷不了（2026-10-31 實測）。
 
-**驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。
+**驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。2026-11-04 加上雲端資料夾同步：把 `/shared` 裡的資料夾換成指向顧問私人目錄的 symlink 後照 runtime 的方式同步，必須還原成真的資料夾、沒有寫進顧問目錄；以 `agent` 直接跟著 symlink 寫也必須失敗（尚未在 Sprite 上跑）。
 
 ## 5b. 平台代管 MCP 的 Sprite（子專案 3b）
 
@@ -149,3 +158,8 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - 平台代管 MCP：`mcp-bundles` 尚未設檔案大小上限（大小在開始部署時檢查）。閘道對 `tools/call` 不重送（先以不帶通行證的 HEAD 叫醒 Sprite），失敗版本與孤兒套件由 Vercel 每日排程清理（需設定 `CRON_SECRET`）。
 - 2026-10-13 之前，agent 讀得到每台 Sprite `.env` 裡的平台金鑰且可 sudo 成 root；A 上線後已封住，但金鑰仍存在 `.env`（只有 runtime 讀得到），C 上線後才會移除。
 - 子專案 1 上線前，平台金鑰已存在每台 Sprite 的 `.env`；全部重新佈建後應輪換 Supabase secret key 與 Vertex 金鑰。
+- 雲端資料夾（2026-11-03）的已知限制：
+  - 交付失敗時（例如登記被拒），runtime 刪不掉剛上傳的物件（沒有 delete 權限），會留下沒有資料表紀錄的物件，刪專案時才清掉。
+  - 同步的權限分離（`/shared` 寫入改由 `agent` 執行）與交付時「讀不到的檔案交不出去」只有在 Linux／Sprite 上才驗得到，本機測試涵蓋不到；Sprite 上的驗收在 `probe-sandbox.ts`。
+  - `agent` 帳號仍可能被 symlink 騙去寫進它自己的家目錄或主管的私人 `/tmp`；這些都是 `agent` 本來就能寫的地方，目前沒有可利用的目標。
+  - 舊制檔案（`project-files/<專案>/<檔名>`）以 `apps/web/scripts/migrate-project-files.ts` 搬進「我上傳的」後，Sprite 的 `/shared` 第一層仍留著舊檔案的副本與舊的 `/shared/.sync.json`，不會自動刪除。
