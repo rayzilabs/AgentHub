@@ -1,10 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
+import { describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
 import {
   createProject, deleteOwnProject, getOwnProject, getProjectDetail, hireAgent, listProjects, setSpriteState,
 } from '@/lib/services/projects';
+import { completeUpload, createUploadUrl } from '@/lib/services/files';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
+
+vi.mock('@/lib/sprites', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/sprites')>()),
+  destroyProjectSprite: async () => {},
+}));
+
+const { DELETE: deleteProjectRoute } = await import('@/app/api/projects/[id]/route');
 
 const db = testDb();
 
@@ -77,5 +86,29 @@ describe('projects service', () => {
     await expectStatus(hireAgent(db, owner.id, p.id, draft.id, {}), 404, '這個 agent 尚未上架');
     await expectStatus(hireAgent(db, other.id, p.id, withMcp, { law: { LAW_KEY: 'k' } }), 404, '找不到這個專案');
     expect((await getProjectDetail(db, owner.id, p.id)).agents).toEqual([]);
+  });
+
+  it('刪除專案時刪掉 storage 裡的檔案', async () => {
+    const owner = await seedUser(db);
+    const p = await createProject(db, owner.id, 'p');
+    const bucket = db.storage.from('project-files');
+    const { fileId, signedUrl } = await createUploadUrl(db, owner.id, p.id);
+    await fetch(signedUrl, { method: 'PUT', body: new Blob(['new']), headers: { 'content-type': 'text/plain' } });
+    await completeUpload(db, owner.id, p.id, { fileId, folderId: null, name: 'new.txt' });
+    const old = await bucket.upload(`${p.id}/old.txt`, new Blob(['old']), { contentType: 'text/plain' });
+    expect(old.error).toBeNull();
+    expect((await bucket.list(`${p.id}/files`)).data).toHaveLength(1);
+
+    const client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, { auth: { persistSession: false } });
+    const { data: session, error } = await client.auth.signInWithPassword(owner);
+    if (error) throw error;
+    const res = await deleteProjectRoute(
+      new Request('https://p.test/api', { method: 'DELETE', headers: { authorization: `Bearer ${session.session!.access_token}` } }),
+      { params: Promise.resolve({ id: p.id }) },
+    );
+    expect(res.status).toBe(200);
+
+    expect((await bucket.list(`${p.id}/files`)).data).toEqual([]);
+    expect((await bucket.list(p.id)).data).toEqual([]);
   });
 });

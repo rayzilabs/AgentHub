@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FileButton } from '@/components/file-button';
 import { api } from '@/lib/client-api';
 
-type FileItem = { name: string; size: number; updated_at: string | null };
+type FileItem = { id: string; name: string; size: number };
 
 const formatSize = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
@@ -14,8 +14,8 @@ export function FilePanel({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => api<FileItem[]>(`/api/projects/${projectId}/files`)
-    .then((list) => { setFiles(list); setError(null); })
+  const load = useCallback(() => api<{ files: FileItem[] }>(`/api/projects/${projectId}/files`)
+    .then((tree) => { setFiles(tree.files); setError(null); })
     .catch((e) => setError(e.message)), [projectId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -23,11 +23,10 @@ export function FilePanel({ projectId }: { projectId: string }) {
     setBusy(true);
     setError(null);
     try {
-      const { signedUrl } = await api<{ signedUrl: string }>(`/api/projects/${projectId}/files/upload-url`, {
-        method: 'POST', body: JSON.stringify({ filename: file.name }),
-      });
+      const { fileId, signedUrl } = await api<{ fileId: string; signedUrl: string }>(`/api/projects/${projectId}/files/upload-url`, { method: 'POST' });
       const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'content-type': file.type || 'application/octet-stream', 'x-upsert': 'true' } });
       if (!res.ok) throw new Error(`上傳失敗（${res.status}）`);
+      await api(`/api/projects/${projectId}/files`, { method: 'POST', body: JSON.stringify({ fileId, folderId: null, name: file.name }) });
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -42,7 +41,7 @@ export function FilePanel({ projectId }: { projectId: string }) {
       <div className="panel p-4">
         <ul className="divide-y divide-line/70 text-sm">
           {files?.map((f) => (
-            <li key={f.name} className="flex items-baseline justify-between gap-2 py-2 first:pt-0">
+            <li key={f.id} className="flex items-baseline justify-between gap-2 py-2 first:pt-0">
               <span className="truncate" title={f.name}>{f.name}</span>
               <span className="shrink-0 text-muted">{formatSize(f.size)}</span>
             </li>
