@@ -209,11 +209,13 @@ try {
   const spawnJs = `const c=require('node:child_process').spawn('sudo',['-n','-E','--','unshare','--mount','--propagation','private','--','${SANDBOX_WRAPPER}','agent','bash','-c',${JSON.stringify(install)}],{cwd:'/',env:{PATH:process.env.PATH,SANDBOX_PATH:process.env.PATH,HOME:'/home/agent'}});let o='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>o+=d);c.on('close',()=>console.log(o));c.stdin.end('six\\n');`;
   const venv = await sh(sprite, `echo ${Buffer.from(spawnJs).toString('base64')} | base64 -d > /tmp/probe-venv.js && node /tmp/probe-venv.js; rm -f /tmp/probe-venv.js`);
   record('沙盒帳號能建虛擬環境、安裝套件，並同時用到預裝的 numpy', venv.out.includes('venv-ok'), venv.out);
-  // 記憶體上限：Sprite 的 cgroup 根目錄有程序，核心不准啟用記憶體控制器（EBUSY），沙盒腳本設不起來就照常執行。
-  // 這裡只確認沙盒腳本沒有因此失敗；上限是否生效如實印出（2026-10-31 實測：沒有生效）
-  const cg = await sh(sprite, asAgent('cat /proc/self/cgroup'));
-  record('cgroup 設不起來時沙盒腳本仍正常執行', cg.code === 0 && !cg.out.includes('agenthub-sandbox:'), cg.out);
-  console.log(`記憶體上限${cg.out.includes('0::/agenthub-sandbox') ? '有' : '沒有'}生效：${cg.out}`);
+  // 記憶體上限：沙盒腳本把 cgroup 根目錄的程序搬到 init 子群組，再替沙盒開 6 GiB 的群組
+  const cg = await sh(sprite, asAgent('cat /proc/self/cgroup /sys/fs/cgroup/agenthub-sandbox/memory.max'));
+  record('沙盒程序在記憶體上限 6 GiB 的 cgroup 裡', cg.code === 0 && cg.out.includes('0::/agenthub-sandbox') && cg.out.includes('6442450944'), cg.out);
+  // 超過上限時核心只砍沙盒的程式；沒有群組時整個 Sprite 會停住再全部重啟（2026-11-03 實測）
+  const oom = await sh(sprite, asAgent('cd /tmp && python3 -c "b = [bytearray(100 * 1024 * 1024) for _ in range(1000)]"'));
+  const after = await sh(sprite, 'echo alive; grep oom_kill /sys/fs/cgroup/agenthub-sandbox/memory.events');
+  record('吃光記憶體的沙盒程式被砍，Sprite 照常回應', oom.code !== 0 && after.out.startsWith('alive') && /oom_kill [1-9]/.test(after.out), `${oom.out.slice(-200)} / ${after.out}`);
 } finally {
   await destroyProjectSprite(name).catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
 }

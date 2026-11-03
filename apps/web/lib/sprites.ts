@@ -30,12 +30,11 @@ export const SANDBOX_WRAPPER_SCRIPT = [
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /tmp',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /var/tmp',
   '/usr/bin/mount --bind "/var/lib/agenthub/tmp/$user" /dev/shm',
-  // 盡量讓所有沙盒程序共用一個記憶體上限 6 GiB 的 cgroup（Sprite 8 GB、沒有 swap）：超過時核心只砍群組裡的程序。
-  // Sprite 的 cgroup 根目錄本身有程序，核心不准在那層啟用記憶體控制器（EBUSY）；設不起來就照常執行，不加入群組
+  // 所有沙盒程序共用一個記憶體上限 6 GiB 的 cgroup：超過時核心只砍群組裡的程序。沒有這個群組時，吃光記憶體會讓整個 Sprite 停住再全部重啟。
+  // 根目錄有程序時核心不准在那層啟用記憶體控制器（EBUSY），先把它們（Sprite 的 init、exec 開的 shell）搬到 init 子群組；
+  // Sprite 重啟後 cgroup 會恢復原狀，所以每次都檢查。設不起來就照常執行，不加入群組
   'cg=/sys/fs/cgroup/agenthub-sandbox',
-  '{ /usr/bin/mkdir -p "$cg" && { /usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || echo +memory > /sys/fs/cgroup/cgroup.subtree_control; } && { [ "$(/usr/bin/cat "$cg/memory.max")" = 6442450944 ] || echo 6442450944 > "$cg/memory.max"; } && echo $$ > "$cg/cgroup.procs"; } 2>/dev/null || true',
-  // 核心挑單一程序砍時先砍沙盒的（子程序會繼承）。實測整台記憶體吃光時是整個 Sprite 一起重啟，這行擋不住（見 docs/security-model.md）
-  '{ echo 1000 > /proc/self/oom_score_adj; } 2>/dev/null || true',
+  '{ /usr/bin/mkdir -p "$cg" && { /usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control || { /usr/bin/mkdir -p /sys/fs/cgroup/init && for p in $(/usr/bin/cat /sys/fs/cgroup/cgroup.procs); do echo "$p" > /sys/fs/cgroup/init/cgroup.procs; done; echo +memory > /sys/fs/cgroup/cgroup.subtree_control; }; } && { [ "$(/usr/bin/cat "$cg/memory.max")" = 6442450944 ] || echo 6442450944 > "$cg/memory.max"; } && echo $$ > "$cg/cgroup.procs"; } 2>/dev/null || true',
   'exec /usr/bin/setpriv --reuid="$user" --regid="$user" --init-groups --inh-caps=-all -- \\',
   '  /usr/bin/env HOME="/home/$user" PATH="${SANDBOX_PATH:-/usr/local/bin:/usr/bin:/bin}" /bin/sh -c \'umask 002; exec "$@"\' sandbox "$@"',
   '',

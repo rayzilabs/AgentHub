@@ -247,11 +247,14 @@ describe('sandboxSetupScript', () => {
     }
   });
 
-  it('沙盒程序的 OOM 優先順序設成最高：記憶體吃光時核心先砍顧問的程式，不砍 runtime；設不起來照常執行', () => {
-    const line = SANDBOX_WRAPPER_SCRIPT.split('\n').find((l) => l.includes('oom_score_adj'));
-    expect(line).toBe('{ echo 1000 > /proc/self/oom_score_adj; } 2>/dev/null || true');
-    // 降權前設定（root 才能設，之後的子程序都會繼承）
-    expect(SANDBOX_WRAPPER_SCRIPT.indexOf('oom_score_adj')).toBeLessThan(SANDBOX_WRAPPER_SCRIPT.indexOf('exec /usr/bin/setpriv'));
+  it('開記憶體控制器前，先把 cgroup 根目錄的程序搬到 init 子群組（根目錄有程序時核心回 EBUSY）', () => {
+    const line = SANDBOX_WRAPPER_SCRIPT.split('\n').find((l) => l.includes('+memory'));
+    expect(line).toContain('/usr/bin/mkdir -p /sys/fs/cgroup/init && for p in $(/usr/bin/cat /sys/fs/cgroup/cgroup.procs); do echo "$p" > /sys/fs/cgroup/init/cgroup.procs; done; echo +memory > /sys/fs/cgroup/cgroup.subtree_control;');
+    expect(line!.indexOf('/sys/fs/cgroup/init/cgroup.procs')).toBeLessThan(line!.indexOf('echo +memory'));
+    // 已經開了就不再搬
+    expect(line).toContain('/usr/bin/grep -qw memory /sys/fs/cgroup/cgroup.subtree_control ||');
+    // 實測吃光整台記憶體時是整個 Sprite 一起重啟，oom_score_adj 沒有作用
+    expect(SANDBOX_WRAPPER_SCRIPT).not.toContain('oom_score_adj');
   });
 
   it('安裝 runtime 的看守腳本（只有 root 能改）', () => {
