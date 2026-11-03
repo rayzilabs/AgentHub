@@ -86,7 +86,7 @@ export async function uploadSkillsZip(db: Db, files: Record<string, string>): Pr
   return objectPath;
 }
 
-export type Roots = { agentsRoot: string; sharedRoot: string; sock: string };
+export type Roots = { agentsRoot: string; sharedRoot: string; sock: string; syncState: string };
 
 export async function tmpRoots(): Promise<Roots> {
   const base = await mkdtemp(path.join(os.tmpdir(), 'agenthub-'));
@@ -94,6 +94,7 @@ export async function tmpRoots(): Promise<Roots> {
     agentsRoot: path.join(base, 'agents'),
     sharedRoot: path.join(base, 'shared'),
     sock: path.join(base, 'missing.sock'),
+    syncState: path.join(base, 'runtime', 'shared-sync.json'),
   };
 }
 
@@ -106,6 +107,7 @@ export function testConfig(projectId: string, roots: Roots): Config {
     AGENTS_ROOT: roots.agentsRoot,
     SHARED_ROOT: roots.sharedRoot,
     SPRITE_API_SOCK: roots.sock,
+    SYNC_STATE_PATH: roots.syncState,
     MODEL_ID: 'mock',
     PORT: 0,
   };

@@ -1,3 +1,4 @@
+import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -107,6 +108,14 @@ describe('createSandbox（本機模式）', () => {
   it('stdin 會傳進去', async () => {
     const r = await runInSandbox(createSandbox(), ['bash', '-c', 'cat'], { cwd: os.tmpdir(), input: '你好' });
     expect(r.stdout).toBe('你好');
+  });
+
+  it('stdin 可以傳二進位內容，逐位元組不變', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'agenthub-'));
+    const bytes = new Uint8Array(256).map((_, i) => i);
+    const r = await runInSandbox(createSandbox(), ['bash', '-c', 'cat > "$1"', 'test', 'out.bin'], { cwd: dir, input: bytes });
+    expect(r.code).toBe(0);
+    expect(Buffer.from(await readFile(path.join(dir, 'out.bin'))).equals(Buffer.from(bytes))).toBe(true);
   });
 
   it('command：本機模式不改寫指令，環境變數一樣清空', () => {

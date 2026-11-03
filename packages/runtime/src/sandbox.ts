@@ -84,11 +84,11 @@ export function createSandbox(user?: string, opts: { pathPrefix?: string } = {})
   };
 }
 
-/** 執行到結束並收集輸出；給檔案工具這類短指令用（bash 工具有自己的逾時與截斷） */
+/** 執行到結束並收集輸出；給檔案工具這類短指令用（bash 工具有自己的逾時與截斷）。input 可以是二進位內容 */
 export function runInSandbox(
   sandbox: Sandbox,
   argv: string[],
-  opts: { cwd: string; input?: string },
+  opts: { cwd: string; input?: string | Uint8Array },
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = sandbox.spawn(argv, { cwd: opts.cwd });

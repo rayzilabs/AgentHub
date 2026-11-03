@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import { z } from 'zod';
 
 const EnvSchema = z.object({
@@ -7,6 +9,8 @@ const EnvSchema = z.object({
   SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
   AGENTS_ROOT: z.string().default('/agents'),
   SHARED_ROOT: z.string().default('/shared'),
+  /** 共用資料夾的同步紀錄：放在只有 runtime 帳號能讀寫的地方（Sprite 上是 /home/sprite/agenthub，700），顧問改不到 */
+  SYNC_STATE_PATH: z.string().default(path.join(os.homedir(), 'agenthub', 'shared-sync.json')),
   SPRITE_API_SOCK: z.string().default('/.sprite/api.sock'),
   MODEL_ID: z.string().default('gemini-3.6-flash'),
   PORT: z.coerce.number().int().default(8080),

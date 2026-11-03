@@ -1,12 +1,12 @@
-import { lstat, mkdir, open, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
 import type { Db } from './db';
-import { SyncError } from './errors';
+import { errorText, SyncError } from './errors';
+import { runInSandbox, type Sandbox } from './sandbox';
 import type { AgentInstance } from './types';
 
 const SKILLS_MARKER = '.zip-path';
-const SHARED_STATE = '.sync.json';
 
 export function agentDir(agentsRoot: string, instanceId: string): string {
   return path.join(agentsRoot, instanceId);
@@ -53,22 +53,24 @@ export async function syncSkills(
   await writeFile(path.join(dir, SKILLS_MARKER), instance.skills_zip_path);
 }
 
-/** 路徑的每一段都只能是單純的名稱：同步紀錄放在 agent 可寫的資料夾，內容不可信，不能讓它指到資料夾以外 */
+/** 路徑的每一段都只能是單純的名稱，且不超過 Linux 單一名稱的 255 bytes（中文一字 3 bytes，資料庫的 100 字可能超過） */
 function isPlainName(name: string): boolean {
-  return name !== '' && name !== '.' && name !== '..' && !/[/\\\u0000-\u001f\u007f]/.test(name);
+  return name !== '' && name !== '.' && name !== '..' && !/[/\\\u0000-\u001f\u007f]/.test(name) && Buffer.byteLength(name) <= 255;
 }
 
-const isPlainPath = (p: string) => p.split('/').every(isPlainName);
+/** Linux 整條路徑的上限 */
+const PATH_MAX_BYTES = 4095;
 
 /** 同步到 sharedRoot 底下的一個雲端檔案；path 以 / 分隔、相對 sharedRoot */
 export type SharedFile = { path: string; fileId: string };
 
-/** 讀不到或損毀的同步紀錄都當成空的，等於重新下載全部檔案 */
+/** 讀不到、不是一般檔案或損毀的同步紀錄都當成空的，等於重新下載全部檔案 */
 async function readSyncState(statePath: string): Promise<Record<string, string>> {
   try {
+    if (!(await lstat(statePath)).isFile()) return {};
     const state: unknown = JSON.parse(await readFile(statePath, 'utf8'));
     if (!state || typeof state !== 'object' || Array.isArray(state)) return {};
-    return Object.fromEntries(Object.entries(state).filter(([p, id]) => typeof id === 'string' && isPlainPath(p)));
+    return Object.fromEntries(Object.entries(state).filter(([p, id]) => typeof id === 'string' && p.split('/').every(isPlainName)));
   } catch {
     return {};
   }
@@ -111,18 +113,15 @@ async function listSharedFiles(db: Db, projectId: string): Promise<SharedFile[]>
   for (const file of files) {
     const dirs = folderPath(file.folder_id);
     const segs = dirs ? [...dirs, file.name] : [];
-    // 每一段各自檢查（先接起來再拆會放過含 / 的名稱）；根目錄只有資料夾，與同步紀錄檔同名的資料夾會蓋掉紀錄檔
-    if (segs.length < 2 || !segs.every(isPlainName) || segs[0] === SHARED_STATE) {
+    // 每一段各自檢查（先接起來再拆會放過含 / 的名稱）
+    if (segs.length < 2 || !segs.every(isPlainName)) {
       console.warn(`[sync] 略過名稱不合法的專案檔案 ${file.id}`);
       continue;
     }
     listed.push({ path: segs.join('/'), fileId: file.id });
   }
   // 同一層有同名的檔案與資料夾時，本機只能放一個：保留資料夾，否則每次同步都會互相蓋掉
-  const dirPaths = new Set(listed.flatMap((f) => {
-    const segs = f.path.split('/');
-    return segs.slice(1).map((_, i) => segs.slice(0, i + 1).join('/'));
-  }));
+  const dirPaths = new Set(listed.flatMap((f) => ancestors(f.path)));
   return listed
     .filter((f) => {
       if (!dirPaths.has(f.path)) return true;
@@ -132,100 +131,94 @@ async function listSharedFiles(db: Db, projectId: string): Promise<SharedFile[]>
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
-/** 從 root 往下逐層確認都是真的資料夾（lstat：symlink 不算） */
-async function isRealDirChain(root: string, dirs: string[]): Promise<boolean> {
-  let dir = root;
-  for (const name of dirs) {
-    dir = path.join(dir, name);
-    if (!(await lstat(dir).catch(() => null))?.isDirectory()) return false;
+/** 'a/b/c.txt' → ['a', 'a/b'] */
+function ancestors(p: string): string[] {
+  const segs = p.split('/');
+  return segs.slice(1).map((_, i) => segs.slice(0, i + 1).join('/'));
+}
+
+/** 從 root 往下逐層確認都是真的資料夾（lstat：symlink 不算）；只讀不改 */
+async function isRealDirChain(root: string, p: string): Promise<boolean> {
+  for (const dir of ancestors(p)) {
+    if (!(await lstat(path.join(root, ...dir.split('/'))).catch(() => null))?.isDirectory()) return false;
   }
   return true;
 }
 
-/** 從 root 往下逐層建立資料夾；agent 換成 symlink 或檔案的就刪掉重建，不跟著 symlink 寫到別處 */
-async function ensureRealDirs(root: string, dirs: string[]): Promise<void> {
-  let dir = root;
-  for (const name of dirs) {
-    dir = path.join(dir, name);
-    const st = await lstat(dir).catch(() => null);
-    if (st?.isDirectory()) continue;
-    if (st) await rm(dir, { force: true });
-    await mkdir(dir);
-  }
+// /shared 裡的建立、寫入、刪除一律以沙盒帳號執行（runtime 自己只做 lstat 這類唯讀檢查）：
+// 共用資料夾所有顧問都能寫，顧問可以把資料夾換成 symlink；以沙盒帳號執行時，跟著 symlink 走到的地方也只是顧問本來就碰得到的。
+// 路徑一律以參數傳入（相對 sharedRoot、已檢查過每一段），不接進腳本；檔案內容從 stdin 傳入。
+
+// $1 是檔案，其後是由上往下的每一層資料夾：被換成 symlink 或不是資料夾就刪掉重建
+const WRITE_SCRIPT = [
+  'f=$1; shift',
+  'for d in "$@"; do',
+  '  if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then rm -f -- "$d" || exit 1; fi',
+  '  [ -d "$d" ] || mkdir -- "$d" || exit 1',
+  'done',
+  // agent 可能建立了同名唯讀檔案，先刪再寫
+  'rm -f -- "$f" && cat > "$f"',
+].join('\n');
+
+// $1 是檔案，其後是由下往上的每一層資料夾：變空的就刪，遇到非空（顧問自己放的東西）就停
+const DELETE_SCRIPT = [
+  'rm -f -- "$1" 2>/dev/null; shift',
+  'for d in "$@"; do rmdir -- "$d" 2>/dev/null || exit 0; done',
+].join('\n');
+
+async function inShared(sandbox: Sandbox, sharedRoot: string, script: string, args: string[], input?: Uint8Array): Promise<void> {
+  const r = await runInSandbox(sandbox, ['bash', '-c', script, 'sync', ...args], { cwd: sharedRoot, input });
+  if (r.code !== 0) throw new Error(r.stderr.trim() || `結束碼 ${r.code}`);
 }
+
+export type SharedSyncIo = {
+  /** 寫入與刪除用的沙盒帳號（Sprite 上是 config.SANDBOX_USER） */
+  sandbox: Sandbox;
+  /** 同步紀錄 { [path]: fileId }，放在顧問改不到的地方（config.SYNC_STATE_PATH） */
+  statePath: string;
+};
 
 /**
- * 在 root 底下建立新檔案寫入內容。agent 可能建立了同名檔案（擁有者是 agent，runtime 不能改寫但可以刪），先刪再建；
- * wx（O_CREAT|O_EXCL）在目標被換成 symlink 時直接失敗，不會跟著寫。
+ * 把雲端資料夾整棵同步到 sharedRoot（storage 物件在 <專案>/files/<檔案id>），回傳同步好的檔案。
+ * 讀不到清單才算同步失敗；單一檔案下載或寫入失敗只略過那一個，不讓整個 run 失敗。
  */
-async function writeNewFile(root: string, segs: string[], content: Uint8Array | string): Promise<void> {
-  const dirs = segs.slice(0, -1);
-  const target = path.join(root, ...segs);
-  await ensureRealDirs(root, dirs);
-  await rm(target, { force: true });
-  const fh = await open(target, 'wx');
-  try {
-    // 上層資料夾若在檢查之後才被換成 symlink，檔案會建到別處：寫入前確認上層仍是真的資料夾，且開到的就是這個位置的檔案
-    const opened = await fh.stat({ bigint: true });
-    const here = (await isRealDirChain(root, dirs)) ? await lstat(target, { bigint: true }).catch(() => null) : null;
-    if (!here || here.ino !== opened.ino || here.dev !== opened.dev) {
-      throw new SyncError(`共用資料夾在同步途中被換掉，停止寫入 ${segs.join('/')}`);
-    }
-    await fh.writeFile(content);
-  } finally {
-    await fh.close();
-  }
-}
-
-/** 由下往上刪掉變空的資料夾；遇到非空（顧問自己放的東西）或不是資料夾就停 */
-async function removeEmptyDirs(root: string, dirs: string[]): Promise<void> {
-  for (let i = dirs.length; i > 0; i--) {
-    try {
-      await rmdir(path.join(root, ...dirs.slice(0, i)));
-    } catch {
-      return;
-    }
-  }
-}
-
-/**
- * 把雲端資料夾整棵同步到 sharedRoot（storage 物件在 <專案>/files/<檔案id>）。
- * sharedRoot 所有顧問都能寫：顧問自己放的東西不刪，寫入時不跟著 symlink 走。
- */
-export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: string): Promise<SharedFile[]> {
+export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: string, io: SharedSyncIo): Promise<SharedFile[]> {
   await mkdir(sharedRoot, { recursive: true });
   const bucket = db.storage.from('project-files');
   const files = await listSharedFiles(db, projectId);
   const wanted = new Set(files.map((f) => f.path));
-
-  const statePath = path.join(sharedRoot, SHARED_STATE);
-  const previous = await readSyncState(statePath);
+  const previous = await readSyncState(io.statePath);
 
   // 先刪掉不在清單裡的，資料夾與檔案互換名稱時才不會卡住
   for (const p of Object.keys(previous)) {
     if (wanted.has(p)) continue;
-    const segs = p.split('/');
-    const dirs = segs.slice(0, -1);
-    // 上層被換成 symlink 就不碰，免得刪到共用資料夾以外的檔案
-    if (!(await isRealDirChain(sharedRoot, dirs))) continue;
-    await rm(path.join(sharedRoot, ...segs), { force: true }).catch(() => undefined);
-    await removeEmptyDirs(sharedRoot, dirs);
+    // 上層被換成 symlink 就不碰
+    if (!(await isRealDirChain(sharedRoot, p))) continue;
+    await inShared(io.sandbox, sharedRoot, DELETE_SCRIPT, [p, ...ancestors(p).reverse()])
+      .catch((e) => console.warn(`[sync] 無法刪除 ${p}：${errorText(e)}`));
   }
 
   const next: Record<string, string> = {};
+  const synced: SharedFile[] = [];
   for (const f of files) {
-    const segs = f.path.split('/');
-    const unchanged = previous[f.path] === f.fileId
-      && (await isRealDirChain(sharedRoot, segs.slice(0, -1)))
-      && (await lstat(path.join(sharedRoot, ...segs)).catch(() => null))?.isFile();
-    if (!unchanged) {
-      const { data: blob, error } = await bucket.download(`${projectId}/files/${f.fileId}`);
-      if (error || !blob) throw new SyncError(`無法下載專案檔案 ${f.path}：${error?.message ?? '空檔案'}`);
-      await writeNewFile(sharedRoot, segs, new Uint8Array(await blob.arrayBuffer()));
+    try {
+      const local = path.join(sharedRoot, ...f.path.split('/'));
+      if (Buffer.byteLength(local) > PATH_MAX_BYTES) throw new SyncError('路徑太長');
+      const unchanged = previous[f.path] === f.fileId
+        && (await isRealDirChain(sharedRoot, f.path))
+        && (await lstat(local).catch(() => null))?.isFile();
+      if (!unchanged) {
+        const { data: blob, error } = await bucket.download(`${projectId}/files/${f.fileId}`);
+        if (error || !blob) throw new SyncError(`無法下載：${error?.message ?? '空檔案'}`);
+        await inShared(io.sandbox, sharedRoot, WRITE_SCRIPT, [f.path, ...ancestors(f.path)], new Uint8Array(await blob.arrayBuffer()));
+      }
+      next[f.path] = f.fileId;
+      synced.push(f);
+    } catch (e) {
+      console.warn(`[sync] 略過專案檔案 ${f.path}：${errorText(e)}`);
     }
-    next[f.path] = f.fileId;
   }
-  // agent 可能把紀錄檔換成 symlink；先刪再建，才不會跟著寫到別的檔案
-  await writeNewFile(sharedRoot, [SHARED_STATE], JSON.stringify(next));
-  return files;
+  await mkdir(path.dirname(io.statePath), { recursive: true, mode: 0o700 });
+  await writeFile(io.statePath, JSON.stringify(next));
+  return synced;
 }

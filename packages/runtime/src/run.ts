@@ -72,7 +72,10 @@ async function prepareRootAgent(
 
   // 每位顧問一個沙盒帳號；建立失敗就不執行（不在沒有隔離的狀態下替顧問跑指令）
   await ensureConsultantSandboxes(config.SANDBOX_USER, config.AGENTS_ROOT, consultants.map((c) => c.id));
-  const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT);
+  // /shared 的寫入與刪除以主管的沙盒帳號執行，不用 runtime 帳號（見 sync.ts）
+  const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT, {
+    sandbox: createSandbox(config.SANDBOX_USER), statePath: config.SYNC_STATE_PATH,
+  });
   images.useSharedFiles(sharedFiles);
   for (const i of consultants) await syncSkills(db, config.AGENTS_ROOT, i);
   // 顧問的 requirements.txt：以顧問自己的帳號在工作目錄建虛擬環境（裝過的不重裝）；各顧問同時裝，最多等一份的時間

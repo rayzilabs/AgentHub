@@ -3,9 +3,13 @@ import { chmod, lstat, mkdir, readdir, readFile, rm, stat, symlink, writeFile } 
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import type { Db } from '../src/db';
 import { SyncError } from '../src/errors';
+import { createSandbox } from '../src/sandbox';
 import { agentDir, skillsDir, syncSharedFiles, syncSkills } from '../src/sync';
-import { runtimeDb, runtimeToken, seedProject, seedSharedFile, seedUser, testDb, tmpRoots, uploadSkillsZip } from './helpers';
+import {
+  type Roots, runtimeDb, runtimeToken, seedProject, seedSharedFile, seedUser, testDb, tmpRoots, uploadSkillsZip,
+} from './helpers';
 
 const db = testDb();
 const exists = (p: string) => stat(p).then(() => true, () => false);
@@ -89,180 +93,220 @@ describe('syncSharedFiles', () => {
   const W43 = 'ETF 資金流顧問/2026-W43/週報.docx';
   const local = (sharedRoot: string, p: string) => path.join(sharedRoot, ...p.split('/'));
   const newProject = async () => seedProject(db, await seedUser(db));
+  const sandbox = createSandbox();
+  const sync = (d: Db, projectId: string, roots: Roots) =>
+    syncSharedFiles(d, projectId, roots.sharedRoot, { sandbox, statePath: roots.syncState });
+  const must = ({ error }: { error: unknown }) => {
+    if (error) throw error;
+  };
 
-  it('依資料夾結構同步，中文路徑可用（以 runtime 帳號的權限）', async () => {
+  it('依資料夾結構同步，中文路徑可用（以 runtime 帳號的權限）；同步紀錄不放在共用資料夾', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     const fileId = await seedSharedFile(db, projectId, W43, '週報內容');
     const rdb = runtimeDb(await runtimeToken(db, projectId));
-    expect(await syncSharedFiles(rdb, projectId, sharedRoot)).toEqual([{ path: W43, fileId }]);
-    expect(await readFile(local(sharedRoot, W43), 'utf8')).toBe('週報內容');
+    expect(await sync(rdb, projectId, roots)).toEqual([{ path: W43, fileId }]);
+    expect(await readFile(local(roots.sharedRoot, W43), 'utf8')).toBe('週報內容');
+    expect(await readdir(roots.sharedRoot)).toEqual(['ETF 資金流顧問']);
+    expect(JSON.parse(await readFile(roots.syncState, 'utf8'))).toEqual({ [W43]: fileId });
   });
 
   it('改名後舊路徑消失、新路徑出現，空資料夾被清掉', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     const fileId = await seedSharedFile(db, projectId, W43, '週報內容');
-    await syncSharedFiles(db, projectId, sharedRoot);
+    await sync(db, projectId, roots);
 
-    const { data: parent } = await db.from('project_folders').select('id').eq('project_id', projectId).eq('name', 'ETF 資金流顧問').single();
-    const { data: w44, error } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: parent!.id, p_name: '2026-W44' });
+    const { data: parent, error } = await db.from('project_folders').select('id').eq('project_id', projectId).eq('name', 'ETF 資金流顧問').single();
     if (error) throw error;
-    await db.from('project_files').update({ name: '週報-定稿.docx', folder_id: w44 }).eq('id', fileId);
+    const { data: w44, error: folderError } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: parent.id, p_name: '2026-W44' });
+    if (folderError) throw folderError;
+    must(await db.from('project_files').update({ name: '週報-定稿.docx', folder_id: w44 }).eq('id', fileId));
 
     const moved = 'ETF 資金流顧問/2026-W44/週報-定稿.docx';
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: moved, fileId }]);
-    expect(await exists(local(sharedRoot, W43))).toBe(false);
-    expect(await exists(path.join(sharedRoot, 'ETF 資金流顧問', '2026-W43'))).toBe(false);
-    expect(await readFile(local(sharedRoot, moved), 'utf8')).toBe('週報內容');
+    expect(await sync(db, projectId, roots)).toEqual([{ path: moved, fileId }]);
+    expect(await exists(local(roots.sharedRoot, W43))).toBe(false);
+    expect(await exists(path.join(roots.sharedRoot, 'ETF 資金流顧問', '2026-W43'))).toBe(false);
+    expect(await readFile(local(roots.sharedRoot, moved), 'utf8')).toBe('週報內容');
   });
 
   it('顧問自己放在 /shared 的檔案不受影響；裝著顧問檔案的資料夾不會被清掉', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     const fileId = await seedSharedFile(db, projectId, W43, '週報內容');
-    await mkdir(sharedRoot, { recursive: true });
-    await writeFile(path.join(sharedRoot, 'notes.txt'), '顧問筆記');
-    await syncSharedFiles(db, projectId, sharedRoot);
-    const mine = path.join(sharedRoot, 'ETF 資金流顧問', '2026-W43', '我的草稿.md');
+    await mkdir(roots.sharedRoot, { recursive: true });
+    await writeFile(path.join(roots.sharedRoot, 'notes.txt'), '顧問筆記');
+    await sync(db, projectId, roots);
+    const mine = path.join(roots.sharedRoot, 'ETF 資金流顧問', '2026-W43', '我的草稿.md');
     await writeFile(mine, '草稿');
 
-    await db.from('project_files').delete().eq('id', fileId);
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([]);
-    expect(await exists(local(sharedRoot, W43))).toBe(false);
+    must(await db.from('project_files').delete().eq('id', fileId));
+    expect(await sync(db, projectId, roots)).toEqual([]);
+    expect(await exists(local(roots.sharedRoot, W43))).toBe(false);
     expect(await readFile(mine, 'utf8')).toBe('草稿');
-    expect(await readFile(path.join(sharedRoot, 'notes.txt'), 'utf8')).toBe('顧問筆記');
+    expect(await readFile(path.join(roots.sharedRoot, 'notes.txt'), 'utf8')).toBe('顧問筆記');
   });
 
   it('資料夾被換成 symlink 時不跟著寫', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     await seedSharedFile(db, projectId, W43, '週報內容');
-    await syncSharedFiles(db, projectId, sharedRoot);
+    await sync(db, projectId, roots);
 
     const outside = (await tmpRoots()).sharedRoot;
     await mkdir(outside, { recursive: true });
-    const dir = path.join(sharedRoot, 'ETF 資金流顧問');
+    const dir = path.join(roots.sharedRoot, 'ETF 資金流顧問');
     await rm(dir, { recursive: true });
     await symlink(outside, dir);
 
-    await syncSharedFiles(db, projectId, sharedRoot);
+    await sync(db, projectId, roots);
     expect(await readdir(outside)).toEqual([]);
     expect((await lstat(dir)).isDirectory()).toBe(true);
-    expect(await readFile(local(sharedRoot, W43), 'utf8')).toBe('週報內容');
+    expect(await readFile(local(roots.sharedRoot, W43), 'utf8')).toBe('週報內容');
+  });
+
+  it('資料夾被換成 symlink 後雲端檔案被刪：不會刪到 symlink 指向的檔案', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const fileId = await seedSharedFile(db, projectId, '資料/secret.txt', '雲端版本');
+    await sync(db, projectId, roots);
+
+    const outside = (await tmpRoots()).sharedRoot;
+    await mkdir(outside, { recursive: true });
+    await writeFile(path.join(outside, 'secret.txt'), 'keep');
+    await rm(path.join(roots.sharedRoot, '資料'), { recursive: true });
+    await symlink(outside, path.join(roots.sharedRoot, '資料'));
+    must(await db.from('project_files').delete().eq('id', fileId));
+
+    expect(await sync(db, projectId, roots)).toEqual([]);
+    expect(await readFile(path.join(outside, 'secret.txt'), 'utf8')).toBe('keep');
   });
 
   it('fileId 沒變就不重新下載', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     await seedSharedFile(db, projectId, W43, '週報內容');
-    await syncSharedFiles(db, projectId, sharedRoot);
-    await writeFile(local(sharedRoot, W43), '本機改過');
-    await syncSharedFiles(db, projectId, sharedRoot);
-    expect(await readFile(local(sharedRoot, W43), 'utf8')).toBe('本機改過');
+    await sync(db, projectId, roots);
+    await writeFile(local(roots.sharedRoot, W43), '本機改過');
+    await sync(db, projectId, roots);
+    expect(await readFile(local(roots.sharedRoot, W43), 'utf8')).toBe('本機改過');
+  });
+
+  it('同一路徑換成新的檔案（刪掉再上傳同名檔）時重新下載', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a1 = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    await sync(db, projectId, roots);
+    must(await db.from('project_files').delete().eq('id', a1));
+    const a2 = await seedSharedFile(db, projectId, '資料/a.txt', 'A2');
+
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a2 }]);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A2');
+  });
+
+  it('二進位內容逐位元組相同', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const bytes = new Uint8Array(256).map((_, i) => i);
+    await seedSharedFile(db, projectId, '資料/all.bin', bytes);
+    await sync(db, projectId, roots);
+    expect(Buffer.from(await readFile(path.join(roots.sharedRoot, '資料', 'all.bin'))).equals(Buffer.from(bytes))).toBe(true);
   });
 
   it('同步紀錄被竄改成含路徑的檔名：不會刪到共用資料夾以外的檔案', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
-    await mkdir(sharedRoot, { recursive: true });
-    const outside = path.join(sharedRoot, '..', 'outside.txt');
+    const roots = await tmpRoots();
+    await mkdir(roots.sharedRoot, { recursive: true });
+    const outside = path.join(roots.sharedRoot, '..', 'outside.txt');
     await writeFile(outside, 'keep');
-    await writeFile(path.join(sharedRoot, '.sync.json'), JSON.stringify({ '../outside.txt': 'x', 'a/../../outside.txt': 'x' }));
-    await syncSharedFiles(db, projectId, sharedRoot);
+    await mkdir(path.dirname(roots.syncState), { recursive: true });
+    await writeFile(roots.syncState, JSON.stringify({ '../outside.txt': 'x', 'a/../../outside.txt': 'x' }));
+    await sync(db, projectId, roots);
     expect(await readFile(outside, 'utf8')).toBe('keep');
-  });
-
-  it('同步紀錄指到被換成 symlink 的資料夾：不會刪到共用資料夾以外的檔案', async () => {
-    const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
-    const outside = (await tmpRoots()).sharedRoot;
-    await mkdir(outside, { recursive: true });
-    await writeFile(path.join(outside, 'secret.txt'), 'keep');
-    await mkdir(sharedRoot, { recursive: true });
-    await symlink(outside, path.join(sharedRoot, 'evil'));
-    await writeFile(path.join(sharedRoot, '.sync.json'), JSON.stringify({ 'evil/secret.txt': 'x' }));
-    await syncSharedFiles(db, projectId, sharedRoot);
-    expect(await readFile(path.join(outside, 'secret.txt'), 'utf8')).toBe('keep');
-  });
-
-  it('同步紀錄被換成 symlink：不會跟著寫到別的檔案', async () => {
-    const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
-    await mkdir(sharedRoot, { recursive: true });
-    const outside = path.join(sharedRoot, '..', 'target.txt');
-    await writeFile(outside, 'keep');
-    await symlink(outside, path.join(sharedRoot, '.sync.json'));
-    await syncSharedFiles(db, projectId, sharedRoot);
-    expect(await readFile(outside, 'utf8')).toBe('keep');
-    expect((await lstat(path.join(sharedRoot, '.sync.json'))).isSymbolicLink()).toBe(false);
   });
 
   it('專案檔案同步時，目標檔若是唯讀（agent 建立的同名檔）也能覆蓋', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     await seedSharedFile(db, projectId, '資料/a.txt', 'new');
-    await mkdir(path.join(sharedRoot, '資料'), { recursive: true });
-    await writeFile(path.join(sharedRoot, '資料', 'a.txt'), 'old');
-    await chmod(path.join(sharedRoot, '資料', 'a.txt'), 0o444);
-    await syncSharedFiles(db, projectId, sharedRoot);
-    expect(await readFile(path.join(sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('new');
+    await mkdir(path.join(roots.sharedRoot, '資料'), { recursive: true });
+    await writeFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'old');
+    await chmod(path.join(roots.sharedRoot, '資料', 'a.txt'), 0o444);
+    await sync(db, projectId, roots);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('new');
   });
 
   it('新增、刪除都會反映到本機', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
 
     const b = await seedSharedFile(db, projectId, '資料/b.txt', 'B1');
-    await db.from('project_files').delete().eq('id', a);
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: '資料/b.txt', fileId: b }]);
-    expect(await exists(path.join(sharedRoot, '資料', 'a.txt'))).toBe(false);
-    expect(await readFile(path.join(sharedRoot, '資料', 'b.txt'), 'utf8')).toBe('B1');
+    must(await db.from('project_files').delete().eq('id', a));
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/b.txt', fileId: b }]);
+    expect(await exists(path.join(roots.sharedRoot, '資料', 'a.txt'))).toBe(false);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'b.txt'), 'utf8')).toBe('B1');
   });
 
   it('同步紀錄檔損毀時當作沒有紀錄，重新下載全部檔案', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
-    await syncSharedFiles(db, projectId, sharedRoot);
-    await writeFile(path.join(sharedRoot, '資料', 'a.txt'), '本機被改掉');
-    await writeFile(path.join(sharedRoot, '.sync.json'), '{壞掉的 json');
+    await sync(db, projectId, roots);
+    await writeFile(path.join(roots.sharedRoot, '資料', 'a.txt'), '本機被改掉');
+    await writeFile(roots.syncState, '{壞掉的 json');
 
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: '資料/a.txt', fileId: a }]);
-    expect(await readFile(path.join(sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A1');
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A1');
+  });
+
+  it('單一檔案同步失敗只略過那一個，其他照常、之後的同步也不會失敗', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    const b = await seedSharedFile(db, projectId, '資料/b.txt', 'B1');
+    const missing = await seedSharedFile(db, projectId, '資料/c.txt', 'C1');
+    must(await db.storage.from('project-files').remove([`${projectId}/files/${missing}`]));
+    // 顧問在檔案的位置放了一個非空的資料夾
+    await mkdir(path.join(roots.sharedRoot, '資料', 'a.txt'), { recursive: true });
+    await writeFile(path.join(roots.sharedRoot, '資料', 'a.txt', 'x'), 'x');
+
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/b.txt', fileId: b }]);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'b.txt'), 'utf8')).toBe('B1');
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/b.txt', fileId: b }]);
+  });
+
+  it('名稱超過 255 bytes（中文 100 字以內也可能超過）的檔案略過，不讓同步失敗', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const long = `${'週'.repeat(90)}.txt`;
+    expect(long.length).toBeLessThanOrEqual(100);
+    await seedSharedFile(db, projectId, `資料/${long}`, 'x');
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    expect(await sync(db, projectId, roots)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect(await exists(path.join(roots.sharedRoot, '資料', long))).toBe(false);
   });
 
   it('舊制放在專案根目錄的物件不再同步', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     await db.storage.from('project-files').upload(`${projectId}/legacy.txt`, 'old', { contentType: 'text/plain' });
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([]);
-    expect(await exists(path.join(sharedRoot, 'legacy.txt'))).toBe(false);
+    expect(await sync(db, projectId, roots)).toEqual([]);
+    expect(await exists(path.join(roots.sharedRoot, 'legacy.txt'))).toBe(false);
   });
 
   it('同一層有同名的檔案與資料夾時略過該檔案，重複同步也不出錯', async () => {
     const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
+    const roots = await tmpRoots();
     await seedSharedFile(db, projectId, 'A/b', '檔案');
     const c = await seedSharedFile(db, projectId, 'A/b/c.txt', '資料夾裡的檔案');
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: 'A/b/c.txt', fileId: c }]);
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: 'A/b/c.txt', fileId: c }]);
-    expect(await readFile(path.join(sharedRoot, 'A', 'b', 'c.txt'), 'utf8')).toBe('資料夾裡的檔案');
-  });
-
-  it('與同步紀錄檔同名的資料夾略過，不蓋掉紀錄檔', async () => {
-    const projectId = await newProject();
-    const { sharedRoot } = await tmpRoots();
-    await seedSharedFile(db, projectId, '.sync.json/x.txt', 'x');
-    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
-    expect(await syncSharedFiles(db, projectId, sharedRoot)).toEqual([{ path: '資料/a.txt', fileId: a }]);
-    expect((await lstat(path.join(sharedRoot, '.sync.json'))).isFile()).toBe(true);
+    expect(await sync(db, projectId, roots)).toEqual([{ path: 'A/b/c.txt', fileId: c }]);
+    expect(await sync(db, projectId, roots)).toEqual([{ path: 'A/b/c.txt', fileId: c }]);
+    expect(await readFile(path.join(roots.sharedRoot, 'A', 'b', 'c.txt'), 'utf8')).toBe('資料夾裡的檔案');
   });
 
   it('專案沒有檔案時回傳空陣列', async () => {
-    const { sharedRoot } = await tmpRoots();
-    expect(await syncSharedFiles(db, await newProject(), sharedRoot)).toEqual([]);
+    expect(await sync(db, await newProject(), await tmpRoots())).toEqual([]);
   });
 });
