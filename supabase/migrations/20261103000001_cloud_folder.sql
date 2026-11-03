@@ -169,6 +169,16 @@ begin
     raise exception 'invalid name';
   end if;
 
+  -- 只能登記這個 runtime 帳號自己上傳的物件；網站上傳（service role）或別人的物件一律當作不存在
+  if not exists (
+    select 1 from storage.objects o
+     where o.bucket_id = 'project-files'
+       and o.name = v_project::text || '/files/' || p_file_id::text
+       and o.owner_id = auth.uid()::text
+  ) then
+    raise exception 'storage object missing';
+  end if;
+
   v_path := public.safe_entry_name(v_instance_name);
   v_folder := public.ensure_folder(v_project, null, v_path);
   if coalesce(p_subfolder, '') <> '' then

@@ -171,4 +171,15 @@ describe('雲端資料夾的 runtime 權限', () => {
     const { error } = await deliver(ra, randomUUID(), a.instanceId);
     expect(error?.message).toContain('storage object missing');
   });
+
+  it('不能把不是自己上傳的物件登記成交付', async () => {
+    const a = await seedProject('PROMPT A');
+    const ra = asToken(await runtimeAccessToken(db, a.project.id));
+    const id = randomUUID();
+    expect((await db.storage.from('project-files').upload(`${a.project.id}/files/${id}`, Buffer.from('使用者的檔案'))).error).toBeNull();
+
+    const { error } = await deliver(ra, id, a.instanceId);
+    expect(error?.message).toContain('storage object missing');
+    expect((await db.from('project_files').select('id').eq('id', id)).data).toEqual([]);
+  });
 });
