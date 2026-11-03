@@ -5,7 +5,7 @@ import { ConsultantStoppedError, errorText } from '../errors';
 import { TIME_UP } from '../run-clock';
 import { DISCUSSION_SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
-import { textOf, toolEvents, type ToolEvent } from '../ui-stream';
+import { deliveredFiles, textOf, toolEvents, type DeliveredFile, type ToolEvent } from '../ui-stream';
 
 export const MAX_ROUNDS = 3;
 export const TIME_UP_DISCUSSION = '時間不足，提前結束討論';
@@ -22,6 +22,8 @@ export type Speech = {
   stance?: Stance;
   /** 顧問用過的工具摘要；完整訊息只交給 record，不放進快照 */
   tools?: ToolEvent[];
+  /** 顧問發言期間交付的檔案，前端顯示下載按鈕 */
+  files?: DeliveredFile[];
   error?: string;
   /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
   cutoff?: 'wrap-up' | 'stopped';
@@ -114,9 +116,12 @@ async function* speakConcurrently(
         message = m;
         const text = textOf(m);
         const tools = toolEvents(m);
-        if (text === speech.text && JSON.stringify(tools) === JSON.stringify(speech.tools)) continue;
+        const files = deliveredFiles(m);
+        if (text === speech.text && JSON.stringify(tools) === JSON.stringify(speech.tools)
+          && JSON.stringify(files) === JSON.stringify(speech.files ?? [])) continue;
         speech.text = text;
         speech.tools = tools;
+        if (files.length) speech.files = files;
         feed.mark();
       }
       speech.status = 'done';

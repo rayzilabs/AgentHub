@@ -61,6 +61,18 @@ export function toolEvents(m: UIMessage): ToolEvent[] {
   return toolParts(m).map((p) => eventOf(p, times));
 }
 
+/** 顧問用 deliver_file 交付的檔案（web 端 lib/agent-output.ts 有一份相同的型別）；folder 是從根目錄起的路徑 */
+export type DeliveredFile = { file_id: string; name: string; folder: string; size: number };
+
+export function deliveredFiles(m: UIMessage): DeliveredFile[] {
+  return toolParts(m).flatMap((p) => {
+    if (p.type !== 'tool-deliver_file' || p.state !== 'output-available') return [];
+    const o = p.output as Partial<DeliveredFile> | undefined;
+    if (!o || typeof o.file_id !== 'string') return [];
+    return [{ file_id: o.file_id, name: String(o.name), folder: String(o.folder), size: Number(o.size) }];
+  });
+}
+
 const clip = (v: unknown): string => truncate(typeof v === 'string' ? v : JSON.stringify(v), RECORD_TEXT_MAX);
 
 export function toolRecords(m: UIMessage): ToolRecord[] {

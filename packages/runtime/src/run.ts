@@ -2,6 +2,7 @@ import { createUIMessageStreamResponse, generateId, type LanguageModel, type UIM
 import { activeRuns } from './active-runs';
 import { createImageRegistry, type ImageRegistry } from './images';
 import { buildConsultant, buildManager, type BuiltAgent, type PlatformGateway } from './agents/build';
+import type { DeliveryBudget } from './tools/deliver';
 import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
 import type { Db } from './db';
@@ -89,11 +90,13 @@ async function prepareRootAgent(
     })];
   })));
   const secrets = await loadSecrets(db, config.PROJECT_ID);
+  // 一個 run 一份：所有顧問交付的檔案合計不超過上限
+  const deliveries: DeliveryBudget = { used: 0 };
 
   if (consultants.length === 1) {
     const root = consultants[0];
     const built = await buildConsultant({
-      db, model, config, instance: root, sharedFiles, images,
+      db, model, config, instance: root, sharedFiles, images, runId, deliveries,
       secrets: groupSecrets(secrets, root.id),
       onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: root }),
       wrapUpAt: clock.soloWrapUpAt,
@@ -120,7 +123,7 @@ async function prepareRootAgent(
   const built = await buildManager({
     db, model, config, manager, consultants, sharedFiles, record, clock, images,
     runner: createConsultantRunner({
-      db, model, config, runId, sharedFiles, secrets, images, envs,
+      db, model, config, runId, sharedFiles, secrets, images, envs, deliveries,
       wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt, gateway,
     }),
     onStepEnd: usageRecorder({ db, projectId: config.PROJECT_ID, runId, instance: manager }),

@@ -37,6 +37,30 @@ const withTool = (text: string, state: string): UIMessage => ({
 } as unknown as UIMessage);
 
 describe('assign_task', () => {
+  it('顧問交付的檔案出現在派工輸出的 files', async () => {
+    const file = { file_id: 'f1', name: '週報.docx', folder: '法務顧問/2026-W43', size: 12 };
+    const run: ConsultantRunner = async function* () {
+      yield {
+        id: 'm', role: 'assistant',
+        parts: [
+          { type: 'tool-deliver_file', toolCallId: 'd1', state: 'output-available', input: { path: 'a.docx' }, output: file },
+          { type: 'tool-deliver_file', toolCallId: 'd2', state: 'output-available', input: { path: 'b.docx' }, output: { error: '失敗' } },
+          { type: 'text', text: '已交付' },
+        ],
+      } as unknown as UIMessage;
+    };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0 });
+    const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+    expect(outputs.at(-1)!.files).toEqual([file]);
+  });
+
+  it('顧問沒有交付檔案時輸出不帶 files', async () => {
+    const run: ConsultantRunner = async function* () { yield msg('完成'); };
+    const t = assignTaskTool({ consultants: [legal], run, record: async () => {}, intervalMs: 0 });
+    const outputs = await drain(t.execute!({ consultant_id: 'c-legal', task: 'x' }, opts) as AsyncIterable<DelegationOutput>);
+    expect(outputs.at(-1)).not.toHaveProperty('files');
+  });
+
   it('串流顧問快照，完成後記錄發言，交給主管的是最後的文字', async () => {
     const run: ConsultantRunner = async function* () {
       yield msg('初步');

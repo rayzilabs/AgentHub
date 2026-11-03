@@ -6,6 +6,7 @@ import { ConsultantStoppedError } from './errors';
 import type { ImageRegistry } from './images';
 import type { EnvResult } from './requirements';
 import type { SharedFile } from './sync';
+import type { DeliveryBudget } from './tools/deliver';
 import { groupSecrets } from './project-store';
 import type { AgentInstance, SecretRow } from './types';
 import { readSnapshots, textOf } from './ui-stream';
@@ -28,6 +29,8 @@ export type ConsultantRunnerDeps = {
   stopAt?: number;
   gateway?: PlatformGateway;
   images?: ImageRegistry;
+  /** 這個 run 所有顧問共用的交付額度 */
+  deliveries?: DeliveryBudget;
   /** 各顧問的套件環境，以 instance id 查 */
   envs?: Map<string, EnvResult>;
 };
@@ -47,6 +50,8 @@ export function createConsultantRunner(deps: ConsultantRunnerDeps): ConsultantRu
       wrapUpAt: deps.wrapUpAt,
       gateway: deps.gateway,
       images: deps.images,
+      runId: deps.runId,
+      deliveries: deps.deliveries,
       env: deps.envs?.get(instance.id),
     });
     try {

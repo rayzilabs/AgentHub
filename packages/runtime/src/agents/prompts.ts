@@ -59,6 +59,7 @@ export function buildConsultantInstructions(p: ConsultantPromptInput): string {
       `- 你的工作目錄：${p.workDir}。bash 指令和相對路徑都以這裡為基準。`,
       `- 專案共用檔案放在 ${p.sharedRoot}，所有 agent 都能讀寫。`,
       '- 工具回傳 download_url 時，用 bash 以 curl 下載到工作目錄再處理，不要把大量資料貼進回覆。',
+      '- 做出要給使用者的檔案（報告、圖表、表格）時，用 deliver_file 交付，使用者才拿得到；只寫進工作目錄或共用資料夾的檔案，使用者看不到。',
     ].join('\n'),
     filesSection(p.sharedRoot, p.sharedFiles),
     ['## 你的 skills', skills].join('\n'),

@@ -5,7 +5,7 @@ import { ConsultantStoppedError, errorText } from '../errors';
 import { TIME_UP } from '../run-clock';
 import { SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
-import { textOf, textOnly, toolEvents, type ToolEvent } from '../ui-stream';
+import { deliveredFiles, textOf, textOnly, toolEvents, type DeliveredFile, type ToolEvent } from '../ui-stream';
 
 export type DelegationOutput = {
   consultant_id: string;
@@ -16,6 +16,8 @@ export type DelegationOutput = {
   tools?: ToolEvent[];
   /** 顧問串流裡的提醒（data-warning：套件安裝失敗、MCP 無法使用），textOnly 會濾掉，另外帶給前端 */
   warnings?: string[];
+  /** 顧問用 deliver_file 交付的檔案，前端顯示下載按鈕 */
+  files?: DeliveredFile[];
   error?: string;
   /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
   cutoff?: 'wrap-up' | 'stopped';
@@ -29,11 +31,15 @@ export function stoppedSummary(o: DelegationOutput): string {
   return `${o.name} 逾時，只完成部分工作。已完成的步驟：${steps.length ? steps.join('；') : '無'}。已寫出的內容：${textOf(o.message) || '無'}`;
 }
 
-type DelegationView = { message: UIMessage; tools: ToolEvent[]; warnings?: string[] };
+type DelegationView = { message: UIMessage; tools: ToolEvent[]; warnings?: string[]; files?: DeliveredFile[] };
 
 function viewOf(m: UIMessage): DelegationView {
   const warnings = m.parts.filter((p) => p.type === 'data-warning').map((p) => (p as { data: { text: string } }).data.text);
-  return { message: textOnly(m), tools: toolEvents(m), ...(warnings.length ? { warnings } : {}) };
+  const files = deliveredFiles(m);
+  return {
+    message: textOnly(m), tools: toolEvents(m),
+    ...(warnings.length ? { warnings } : {}), ...(files.length ? { files } : {}),
+  };
 }
 
 /** 顧問快照轉成前端看得到的內容，內容沒變就略過 */

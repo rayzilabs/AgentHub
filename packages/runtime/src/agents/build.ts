@@ -12,6 +12,7 @@ import { agentDir, skillsDir, type SharedFile } from '../sync';
 import { createSandbox, sandboxUserFor } from '../sandbox';
 import { bashTool } from '../tools/bash';
 import { readFileTool, writeFileTool } from '../tools/files';
+import { deliverFileTool, type DeliveryBudget } from '../tools/deliver';
 import { loadMemoryIndex, memoryTools } from '../tools/memory';
 import { skillTool } from '../tools/skill';
 import type { ImageRegistry } from '../images';
@@ -75,6 +76,9 @@ export type ConsultantContext = {
   images?: ImageRegistry;
   /** 顧問自己的套件環境（見 requirements.ts） */
   env?: EnvResult;
+  /** deliver_file 登記交付檔案所屬的 run，以及這個 run 所有顧問共用的交付額度；兩者都有才提供 deliver_file */
+  runId?: string;
+  deliveries?: DeliveryBudget;
 };
 
 export type PlatformGateway = { baseUrl: string; token: string };
@@ -162,6 +166,12 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       ...memoryTools(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id),
       ...mcp.tools,
     };
+    if (ctx.runId && ctx.deliveries) {
+      tools.deliver_file = deliverFileTool({
+        cwd: workDir, sandbox, db: ctx.db, projectId: ctx.config.PROJECT_ID,
+        instanceId: ctx.instance.id, runId: ctx.runId, budget: ctx.deliveries,
+      });
+    }
     if (ctx.instance.skills.length > 0) {
       tools.skill = skillTool({
         skills: ctx.instance.skills, skillsDir: skillsDir(ctx.config.AGENTS_ROOT, ctx.instance.id), sandbox,
