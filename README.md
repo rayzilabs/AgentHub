@@ -11,6 +11,8 @@ Production：https://agenthub-kappa-pink.vercel.app
 - **上架顧問**：創作者填寫名稱、介紹、system prompt，上傳 skill zip，設定需要的 MCP 工具後發布到市集。市集只公開介紹，不會露出 system prompt、skill 檔與 MCP 連線設定。
 - **一鍵啟用**：啟用時只複製 system prompt、skills 和 MCP 設定；執行環境與記憶都是專案自己的。MCP 需要金鑰時由使用者填寫。
 - **單一顧問**：直接對話，回覆即時串流。顧問可以讀寫專案檔案（包括看懂上傳到專案的圖片）、執行指令，會把你說過的事實、偏好與指示分類記下，並自己更新或刪除過時的記憶（記憶只屬於這個專案）。
+- **雲端資料夾**：專案側欄是這個專案的資料夾，導覽列的「我的雲端」集中列出所有專案。可以上傳、下載、改名、搬移、刪除檔案，也能自己開資料夾；使用者上傳的放在「我上傳的」，每位顧問交付的放在以顧問名稱命名的資料夾。資料夾裡的檔案所有顧問都讀得到（同步到 Sprite 的 `/workspace/shared`，保持同樣的結構）。
+- **交付檔案**：顧問做好報告、圖表、表格後用 `deliver_file` 工具交付，檔案會出現在雲端資料夾，該則回覆也直接有下載按鈕（多顧問時派工卡片與討論發言各自顯示，主管的最終回覆底下列出這次交付的所有檔案）。改名或搬移後舊回覆的按鈕照樣能下載，刪除後顯示「檔案已刪除」。
 - **資料說明**：顧問回答用到數字時，會註明資料來源與資料截至哪一天；用了工具以外的資料或自己的假設會明講。
 - **多顧問**：加入第二位顧問時自動建立主管。主管可以：
   - **派工**：把工作交給某位顧問，畫面上即時顯示交辦內容、每一步工具（一句說明＋經過時間）與完成狀態。
@@ -30,17 +32,18 @@ Production：https://agenthub-kappa-pink.vercel.app
                                        └─ agent runtime（Hono + Vercel AI SDK）
                                             ├─ 模型：Vercel 代理 /api/runtime/model ──▶ Google Vertex AI（Gemini）
                                             ├─ 資料庫：以專案專用 runtime 帳號直連 Supabase
-                                            ├─ 工具：bash、檔案、記憶、MCP
+                                            ├─ 工具：bash、檔案、交付檔案、記憶、MCP
                                             └─ 主管工具：派工、召開討論
 
 Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP 名稱> ──▶ 創作者自己架的 MCP server
                                                                       └─▶ 平台代管的 MCP（每個版本一台 Sprite）
 ```
 
-- 瀏覽器只呼叫 Vercel 的 `/api/*`；唯一例外是上傳檔案時直接 PUT 到 Storage 的簽名網址。Supabase 的資料表全部開啟 RLS：Vercel 用 secret key 存取；runtime 用專案專用帳號的通行證，policy 只放行自己專案需要的欄位與動作。
+- 瀏覽器只呼叫 Vercel 的 `/api/*`；例外是上傳檔案時直接 PUT 到 Storage 的簽名網址，以及下載時拿到的 60 秒簽名連結。檔案一律存在 `project-files/<專案id>/files/<檔案id>`，資料夾與檔名記在 `project_folders`、`project_files`，改名、搬移只改資料表。Supabase 的資料表全部開啟 RLS：Vercel 用 secret key 存取；runtime 用專案專用帳號的通行證，policy 只放行自己專案需要的欄位與動作。
 - 建立專案時，Vercel 會建立一台 Sprite、從 Storage 下載 `runtime/main.js` 並註冊成服務。Sprite 閒置會休眠，收到請求時自動喚醒。
 - runtime 把對話串流同時送回瀏覽器和寫進資料庫，瀏覽器斷線不會遺失結果；串流中斷時前端改成輪詢。
 - agent 代為執行的指令與 stdio MCP 都在沙盒帳號裡跑，每位顧問一個帳號，拿不到平台金鑰，也讀不到其他顧問的檔案。權限規則見 [安全模型](docs/security-model.md)。
+- 每次 run 開始前，runtime 依資料表把雲端資料夾同步到 `/workspace/shared`；寫入與刪除以沙盒帳號執行，同步紀錄放在顧問碰不到的 `~/agenthub/shared-sync.json`。顧問交付時，runtime 以該顧問的帳號讀檔，只能新增到自己專案的 `files/` 底下，再呼叫 `deliver_project_file` 登記到該顧問的資料夾。
 - 創作者自己架的 MCP 一律經過平台閘道：Vercel 轉送對話時附上 20 分鐘的專案通行證，閘道驗證後改簽 5 分鐘的創作者通行證轉送，並記錄每次工具呼叫的用量。創作者的網址不會進 Sprite。
 - 不會架 server 的創作者可以上傳 MCP 套件給平台代管：每個版本部署到一台專用 Sprite，程式以沒有 sudo 的帳號在沙盒裡跑，機器上只有這個 MCP 的程式與創作者自己的金鑰。租用時鎖定當時最新的已發布版本，發布新版本不影響既有專案。
 
@@ -154,6 +157,15 @@ cd apps/web && pnpm exec tsx scripts/redeploy-runtime.ts  # 更新所有已就�
 
 新建立的專案會自動用最新的 `runtime/main.js`。
 
+上線前可以先只上傳帶版本號的檔案，在臨時 Sprite 上驗收沙盒隔離與共用資料夾同步，結束時會刪掉那台 Sprite：
+
+```bash
+pnpm -F @agenthub/runtime publish-runtime --versioned-only  # 只上傳 runtime/main-<commit>.js，不影響新專案
+cd apps/web && pnpm exec tsx scripts/probe-sandbox.ts main-<commit>.js
+```
+
+舊制專案檔案（放在 `project-files/<專案id>/` 第一層）用 `pnpm exec tsx scripts/migrate-project-files.ts` 搬進雲端資料夾的「我上傳的」，可以重複執行。網站部署、搬移、redeploy 要接著做完，順序見[雲端資料夾實作計畫](docs/superpowers/plans/2026-11-03-cloud-folder.md)的 Task 9。
+
 ### 資料庫
 
 新增 migration 放在 `supabase/migrations/`，用 `pnpm db:push` 套用。
@@ -226,6 +238,7 @@ description: 用 5P 架構評估中小企業授信案件
 - **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。
 - **顧問的指令合計最多 6 GB 記憶體**：所有顧問（含主管）的指令共用一個 6 GiB 的 cgroup，超過時核心砍掉其中的程式，顧問會收到「記憶體超過上限」的提示；runtime 與 agent 環境不受影響。
 - **runtime 重啟會清掉顧問的程序**：agent 環境的程序不論怎麼結束，都先砍掉所有沙盒帳號的程序再重啟（不然 Sprite 要等那些程序結束才重啟），顧問留在背景執行的程式也會一起結束。
+- **雲端資料夾**：單檔最大 50 MB、每次回覆交付合計最多 200 MB；檔名與資料夾名 1～100 字，超過 255 bytes 的中文長檔名不會同步到 Sprite。同步每次最多 5 分鐘，沒同步完的檔案下次 run 再補。沒有資源回收筒，刪了就沒了。
 - **顧問套件第一次對話較慢**：skill 有 `requirements.txt` 時，第一次對話前要先安裝（各顧問同時裝，最多 180 秒）。
 
 ## 文件
@@ -234,5 +247,6 @@ description: 用 5P 架構評估中小企業授信案件
 - [執行進度與時間預算規格](docs/superpowers/specs/2026-10-13-run-progress-and-time-budget-design.md)
 - [安全模型](docs/security-model.md)、[遠端 MCP 規格](docs/superpowers/specs/2026-10-14-remote-mcp-design.md)、[創作者：接上遠端 MCP](docs/creator/remote-mcp.md)
 - [平台代管 MCP 規格](docs/superpowers/specs/2026-10-15-hosted-mcp-3b-design.md)、[創作者：交給平台代管](docs/creator/hosted-mcp.md)
+- [雲端資料夾與顧問交付檔案規格](docs/superpowers/specs/2026-11-03-cloud-folder-design.md)、[實作計畫](docs/superpowers/plans/2026-11-03-cloud-folder.md)
 - 實作計畫：[基礎與 runtime](docs/superpowers/plans/2026-10-02-agenthub-plan1-foundation-runtime.md)、[多顧問](docs/superpowers/plans/2026-10-02-agenthub-plan2-multi-agent.md)、[網站](docs/superpowers/plans/2026-10-02-agenthub-plan3-web.md)、[Demo 與端對端](docs/superpowers/plans/2026-10-02-agenthub-plan4-demo-e2e.md)
 - [Production 驗證紀錄](docs/superpowers/reports/2026-10-02-production-e2e.md)
