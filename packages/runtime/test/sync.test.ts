@@ -350,6 +350,18 @@ describe('syncSharedFiles', () => {
     expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A1');
   });
 
+  it('總時間用完時略過剩下要寫入的檔案（留在紀錄），下次同步補上', async () => {
+    const projectId = await newProject();
+    const roots = await tmpRoots();
+    const a = await seedSharedFile(db, projectId, '資料/a.txt', 'A1');
+    const io = { sandbox, statePath: roots.syncState };
+    expect(await syncSharedFiles(db, projectId, roots.sharedRoot, { ...io, budgetMs: 0 })).toEqual([]);
+    expect(await exists(path.join(roots.sharedRoot, '資料', 'a.txt'))).toBe(false);
+    expect(await state(roots)).toEqual({ '資料/a.txt': '' });
+    expect(await syncSharedFiles(db, projectId, roots.sharedRoot, io)).toEqual([{ path: '資料/a.txt', fileId: a }]);
+    expect(await readFile(path.join(roots.sharedRoot, '資料', 'a.txt'), 'utf8')).toBe('A1');
+  });
+
   it('刪除失敗的路徑保留在同步紀錄，下次同步再刪', async () => {
     const projectId = await newProject();
     const roots = await tmpRoots();

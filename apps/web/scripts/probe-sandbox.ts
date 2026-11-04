@@ -195,7 +195,7 @@ try {
     'done',
     't=$(mktemp -- "${f%/*}/.agenthub-sync.XXXXXXXXXX") || exit 1',
     'trap \'rm -f -- "$t"; exit 1\' TERM',
-    'chmod -- "$(printf %o $((0666 & ~$(umask))))" "$t" && cat > "$t" && mv -fT -- "$t" "$f" || { rm -f -- "$t"; exit 1; }',
+    '[ -f "$t" ] && [ ! -L "$t" ] && chmod -- "$(printf %o $((0666 & ~$(umask))))" "$t" && cat > "$t" && mv -fT -- "$t" "$f" || { rm -f -- "$t"; exit 1; }',
   ].join('\n');
   // 照 runtime 的 runInSandbox：由 Node spawn、cwd 是 /shared、路徑當參數、內容從 stdin 送
   const syncWrite = async (file: string, content: string) => {

@@ -162,8 +162,9 @@ const WRITE_SCRIPT = [
   'done',
   't=$(mktemp -- "${f%/*}/.agenthub-sync.XXXXXXXXXX") || exit 1',
   'trap \'rm -f -- "$t"; exit 1\' TERM',
-  // mktemp 建立的是 600；改成跟直接建立檔案一樣（沙盒的 umask 002 → 664），其他顧問才讀得到
-  'chmod -- "$(printf %o $((0666 & ~$(umask))))" "$t" && cat > "$t" && mv -fT -- "$t" "$f" || { rm -f -- "$t"; exit 1; }',
+  // mktemp 建立的是 600；改成跟直接建立檔案一樣（沙盒的 umask 002 → 664），其他顧問才讀得到。
+  // chmod 會跟著 symlink 走，先確認暫存檔沒被換掉（縮小顧問搶時間的空檔）
+  '[ -f "$t" ] && [ ! -L "$t" ] && chmod -- "$(printf %o $((0666 & ~$(umask))))" "$t" && cat > "$t" && mv -fT -- "$t" "$f" || { rm -f -- "$t"; exit 1; }',
 ].join('\n');
 
 // $1 是檔案，其後是由下往上的每一層資料夾：變空的就刪，遇到非空（顧問自己放的東西）就停。
@@ -174,14 +175,19 @@ const DELETE_SCRIPT = [
   'for d in "$@"; do rmdir -- "$d" 2>/dev/null || exit 0; done',
 ].join('\n');
 
-/** 單一指令的時間上限（秒）：顧問能讓寫入卡住（例如換上 FIFO），不能讓整個 run 停在準備階段 */
+/** 單一指令的時間上限（秒）：顧問能讓寫入卡住（例如換上 FIFO） */
 const SHARED_TIMEOUT_SECONDS = 120;
+/** 一次同步的總時間上限：用完就略過剩下要寫入或刪除的檔案（留在紀錄裡下次再試），準備階段不會拖過這麼久 */
+export const SYNC_BUDGET_MS = 5 * 60_000;
 
-async function inShared(sandbox: Sandbox, sharedRoot: string, script: string, args: string[], input?: Uint8Array): Promise<void> {
+async function inShared(sandbox: Sandbox, sharedRoot: string, script: string, args: string[], deadline: number, input?: Uint8Array): Promise<void> {
+  const left = Math.ceil((deadline - Date.now()) / 1000);
+  if (left <= 0) throw new Error('同步超過總時間上限，下次再試');
+  const seconds = Math.min(SHARED_TIMEOUT_SECONDS, left);
   // timeout 在沙盒帳號裡執行，砍得掉自己的子行程；-k：送 TERM 後 5 秒還沒結束就 KILL
-  const argv = ['timeout', '-k', '5', String(SHARED_TIMEOUT_SECONDS), 'bash', '-c', script, 'sync', ...args];
+  const argv = ['timeout', '-k', '5', String(seconds), 'bash', '-c', script, 'sync', ...args];
   const r = await runInSandbox(sandbox, argv, { cwd: sharedRoot, input });
-  if (r.code === 124 || r.code === 137) throw new Error(`超過 ${SHARED_TIMEOUT_SECONDS} 秒`);
+  if (r.code === 124 || r.code === 137) throw new Error(`超過 ${seconds} 秒`);
   if (r.code !== 0) throw new Error(r.stderr.trim() || `結束碼 ${r.code}`);
 }
 
@@ -217,19 +223,19 @@ async function readLegacyNames(file: string): Promise<string[] | null> {
  * 只刪紀錄裡列出、且現在是一般檔案的第一層項目；symlink 與資料夾不碰。刪除一樣以沙盒帳號執行
  * （/shared 是 2770、沒有 sticky bit，任何顧問本來就能刪第一層的項目）。有刪不掉的就保留紀錄，下次再試
  */
-async function cleanLegacyShared(sandbox: Sandbox, sharedRoot: string): Promise<void> {
+async function cleanLegacyShared(sandbox: Sandbox, sharedRoot: string, deadline: number): Promise<void> {
   const names = await readLegacyNames(path.join(sharedRoot, LEGACY_STATE));
   if (names === null) return;
   let ok = true;
   for (const name of names) {
     if (!(await lstat(path.join(sharedRoot, name)).catch(() => null))?.isFile()) continue;
-    await inShared(sandbox, sharedRoot, DELETE_SCRIPT, [name]).catch((e) => {
+    await inShared(sandbox, sharedRoot, DELETE_SCRIPT, [name], deadline).catch((e) => {
       ok = false;
       console.warn(`[sync] 無法刪除舊制檔案 ${name}：${errorText(e)}`);
     });
   }
   if (!ok) return;
-  await inShared(sandbox, sharedRoot, DELETE_SCRIPT, [LEGACY_STATE])
+  await inShared(sandbox, sharedRoot, DELETE_SCRIPT, [LEGACY_STATE], deadline)
     .catch((e) => console.warn(`[sync] 無法刪除舊制同步紀錄：${errorText(e)}`));
 }
 
@@ -238,6 +244,8 @@ export type SharedSyncIo = {
   sandbox: Sandbox;
   /** 同步紀錄 { [path]: fileId }，放在顧問改不到的地方（config.SYNC_STATE_PATH） */
   statePath: string;
+  /** 總時間上限，預設 SYNC_BUDGET_MS（測試用來縮短） */
+  budgetMs?: number;
 };
 
 /**
@@ -250,7 +258,8 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
   const files = await listSharedFiles(db, projectId);
   const wanted = new Set(files.map((f) => f.path));
   const previous = await readSyncState(io.statePath);
-  await cleanLegacyShared(io.sandbox, sharedRoot);
+  const deadline = Date.now() + (io.budgetMs ?? SYNC_BUDGET_MS);
+  await cleanLegacyShared(io.sandbox, sharedRoot, deadline);
 
   // 沒處理好的路徑留在紀錄裡，下次再試：刪不掉的保留原本的 fileId；寫不進去的記成 ''
   // （'' 不會等於任何 fileId，下次一定重寫；之後雲端刪掉它，本機留著的舊副本也會被清掉）
@@ -262,7 +271,7 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
     if (wanted.has(p)) continue;
     // 上層被換成 symlink 就不碰
     if (!(await isRealDirChain(sharedRoot, p))) continue;
-    await inShared(io.sandbox, sharedRoot, DELETE_SCRIPT, [p, ...ancestors(p).reverse()]).catch((e) => {
+    await inShared(io.sandbox, sharedRoot, DELETE_SCRIPT, [p, ...ancestors(p).reverse()], deadline).catch((e) => {
       next[p] = previous[p];
       console.warn(`[sync] 無法刪除 ${p}：${errorText(e)}`);
     });
@@ -278,7 +287,7 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
       if (!unchanged) {
         const { data: blob, error } = await bucket.download(`${projectId}/files/${f.fileId}`);
         if (error || !blob) throw new SyncError(`無法下載：${error?.message ?? '空檔案'}`);
-        await inShared(io.sandbox, sharedRoot, WRITE_SCRIPT, [f.path, ...ancestors(f.path)], new Uint8Array(await blob.arrayBuffer()));
+        await inShared(io.sandbox, sharedRoot, WRITE_SCRIPT, [f.path, ...ancestors(f.path)], deadline, new Uint8Array(await blob.arrayBuffer()));
       }
       next[f.path] = f.fileId;
       synced.push(f);
