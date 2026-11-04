@@ -209,7 +209,8 @@ try {
   const first = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-1');
   // 先寫暫存檔（mktemp 建立的是 600）再改名：權限要改回跟直接建立的一樣，其他顧問才讀得到
   const perm = await sh(sprite, `stat -c '%U:%G %a' '${syncDir}/brief.md'; ls -A '${syncDir}'`);
-  const permB = await sh(sprite, asUser(B, `cat '${syncDir}/brief.md'`));
+  // 內容沒有結尾換行，不補 echo 的話 .bashrc 警告會接在同一行，被 clean 整行濾掉
+  const permB = await sh(sprite, asUser(B, `cat '${syncDir}/brief.md'; echo`));
   record(
     '同步寫入的檔案是 agent:workspace 664、不留暫存檔，其他顧問讀得到',
     perm.out.includes('agent:workspace 664') && !perm.out.includes('.agenthub-sync.') && permB.out.includes('MARK-SYNC-1'),
