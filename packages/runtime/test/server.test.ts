@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { activeRuns } from '../src/active-runs';
 import { createApp } from '../src/server';
 import { skillsDir } from '../src/sync';
@@ -150,10 +150,137 @@ describe('排隊訊息進入步驟', () => {
   });
 });
 
+describe('排隊訊息接續下一輪', () => {
+  const queuedTexts = async (threadId: string) =>
+    (await db.from('queued_messages').select('text').eq('thread_id', threadId).order('created_at')).data!.map((r) => r.text);
+  const queueApp = (env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, fetchImpl: typeof fetch, stopGraceMs?: number) =>
+    createApp({ openDb: () => db, modelFor: () => model, config: env.config, fetchImpl, stopGraceMs });
+  const fakeFetch = () => vi.fn<typeof fetch>(async () => new Response(null, { status: 200 }));
+
+  it('沒有 text：取走全部排隊訊息，以空行合併成這輪的使用者訊息', async () => {
+    const env = await seedEnv();
+    await db.from('queued_messages').insert([
+      { thread_id: env.threadId, text: '第一則', created_at: '2026-11-05T10:00:00Z' },
+      { thread_id: env.threadId, text: '第二則', created_at: '2026-11-05T10:00:01Z' },
+    ]).throwOnError();
+    const model = mockModel(textTurn('收到'));
+    const res = await post(app(env, model), { thread_id: env.threadId });
+    expect(res.status).toBe(200);
+    await res.text();
+    await waitForRunDone(db, env.threadId);
+
+    const msgs = await messagesOf(env.threadId);
+    expect(msgs.map((m) => m.kind)).toEqual(['user', 'final']);
+    expect(msgs[0].content).toBe('第一則\n\n第二則');
+    expect(msgs[0].ui_message.parts).toEqual([{ type: 'text', text: '第一則\n\n第二則' }]);
+    expect(promptText(model, 0)).toContain('第一則\\n\\n第二則');
+    expect(await queuedTexts(env.threadId)).toEqual([]);
+  });
+
+  it('沒有 text 也沒有排隊：回 204，run 為 succeeded，不插入訊息', async () => {
+    const env = await seedEnv();
+    const model = mockModel(textTurn('不該出現'));
+    const res = await post(app(env, model), { thread_id: env.threadId });
+
+    expect(res.status).toBe(204);
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'succeeded', error: null });
+    expect(await messagesOf(env.threadId)).toEqual([]);
+    expect(model.doStreamCalls).toHaveLength(0);
+  });
+
+  it('已有 run 在跑：回 409，排隊訊息保留', async () => {
+    const env = await seedEnv();
+    const model = hangingModel();
+    const a = app(env, model, 1_000);
+    const first = await post(a, { thread_id: env.threadId, text: '問題' });
+    await waitFor(async () => (model.doStreamCalls.length > 0 ? true : undefined));
+    await queueMessage(env.threadId, '補充');
+
+    const second = await post(a, { thread_id: env.threadId });
+    expect(second.status).toBe(409);
+    expect(await queuedTexts(env.threadId)).toEqual(['補充']);
+    await first.text();
+    await waitForRunDone(db, env.threadId);
+  });
+
+  it('正常結束且有排隊：呼叫 continue，帶專案通行證', async () => {
+    const env = await seedEnv();
+    const fetchImpl = fakeFetch();
+    const model = steppedModel([textTurn('完成')], { 0: () => queueMessage(env.threadId, '來不及讀到') });
+    const res = await post(queueApp(env, model, fetchImpl), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'succeeded' });
+    await waitFor(async () => (fetchImpl.mock.calls.length > 0 ? true : undefined));
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${env.config.PLATFORM_URL}/api/runtime/threads/${env.threadId}/continue`);
+    expect(init).toMatchObject({ method: 'POST', headers: { authorization: 'Bearer pt' } });
+    expect(await queuedTexts(env.threadId)).toEqual(['來不及讀到']);
+  });
+
+  it('正常結束且沒有排隊：不呼叫 continue', async () => {
+    const env = await seedEnv();
+    const fetchImpl = fakeFetch();
+    const a = queueApp(env, mockModel(textTurn('完成')), fetchImpl);
+    await (await post(a, { thread_id: env.threadId, text: '問題' })).text();
+    await waitForRunDone(db, env.threadId);
+    await waitFor(async () => (activeRuns.size === 0 ? true : undefined));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('使用者停止：不呼叫 continue，排隊訊息保留', async () => {
+    const env = await seedEnv();
+    const fetchImpl = fakeFetch();
+    const model = hangingModel();
+    const a = queueApp(env, model, fetchImpl, 50);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    const runId = await runIdOf(env.threadId);
+    await waitFor(async () => (model.doStreamCalls.length > 0 ? true : undefined));
+    await queueMessage(env.threadId, '補充');
+    await stopRun(a, runId);
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled' });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await queuedTexts(env.threadId)).toEqual(['補充']);
+  });
+
+  it('失敗結束：不呼叫 continue，排隊訊息保留', async () => {
+    const env = await seedEnv();
+    const fetchImpl = fakeFetch();
+    const model = steppedModel([], {
+      0: async () => {
+        await queueMessage(env.threadId, '補充');
+        throw new Error('模型掛了');
+      },
+    });
+    await (await post(queueApp(env, model, fetchImpl), { thread_id: env.threadId, text: '問題' })).text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'failed' });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await queuedTexts(env.threadId)).toEqual(['補充']);
+  });
+
+  it('continue 呼叫失敗只記 log，run 仍是 succeeded', async () => {
+    const env = await seedEnv();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchImpl = vi.fn<typeof fetch>(async () => { throw new Error('連不上平台'); });
+    const model = steppedModel([textTurn('完成')], { 0: () => queueMessage(env.threadId, '補充') });
+    await (await post(queueApp(env, model, fetchImpl), { thread_id: env.threadId, text: '問題' })).text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'succeeded' });
+    await waitFor(async () => (log.mock.calls.some((c) => String(c[0]).includes('無法接續')) ? true : undefined));
+    log.mockRestore();
+  });
+});
+
 describe('POST /runs/:id/stop', () => {
   const finalOf = async (threadId: string) => (await messagesOf(threadId)).find((m) => m.kind === 'final');
   const graceApp = (env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, stopGraceMs: number) =>
-    createApp({ openDb: () => db, modelFor: () => model, config: env.config, stopGraceMs });
+    createApp({ openDb: () => db, modelFor: () => model, config: env.config, stopGraceMs, progressIntervalMs: 10 });
   const INTERRUPTED = { type: 'data-interrupted', data: {} };
 
   it('停止執行中的 run：status=cancelled、error 為 null、保留已產生文字、有 data-interrupted', async () => {

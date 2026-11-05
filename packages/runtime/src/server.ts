@@ -4,7 +4,8 @@ import { activeRuns } from './active-runs';
 import { errorText, NotFoundError, RunConflictError } from './errors';
 import { startRun, type RunDeps } from './run';
 
-const ChatBody = z.object({ thread_id: z.uuid(), text: z.string().min(1) });
+// 沒有 text 代表平台要接續排隊訊息
+const ChatBody = z.object({ thread_id: z.uuid(), text: z.string().min(1).optional() });
 
 export function createApp(deps: RunDeps) {
   const app = new Hono();

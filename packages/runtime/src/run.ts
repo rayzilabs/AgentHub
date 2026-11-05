@@ -15,8 +15,8 @@ import { createRunClock, type RunClock } from './run-clock';
 import { consultantRequirements, ensureConsultantEnv, type EnvResult } from './requirements';
 import { createSandbox, ensureConsultantSandboxes, runInSandbox, sandboxUserFor } from './sandbox';
 import {
-  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, insertMessage, loadHistory, touchMessage, updateMessage,
-  type RunResult,
+  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, hasQueued, insertMessage, loadHistory, takeQueued,
+  touchMessage, updateMessage, type RunResult,
 } from './run-store';
 import { agentDir, skillsDir, syncSharedFiles, syncSkills } from './sync';
 import { consumeToEnd, hasContent, interruptedMessage, textOf, toolRecords } from './ui-stream';
@@ -38,6 +38,8 @@ export type RunDeps = {
   runTimeoutMs?: number;
   progressIntervalMs?: number;
   stopGraceMs?: number;
+  /** 測試用：取代呼叫平台的 fetch */
+  fetchImpl?: typeof fetch;
 };
 
 type ActiveDeps = Omit<RunDeps, 'openDb' | 'modelFor'> & { db: Db; model: LanguageModel; images: ImageRegistry };
@@ -171,9 +173,27 @@ function stoppable<T>(source: ReadableStream<T>): { stream: ReadableStream<T>; s
   return { stream, stop };
 }
 
+/**
+ * 這輪結束時還有排隊訊息，請平台開下一輪：這裡的通行證撐不完下一輪，要由平台重新簽發。
+ * 失敗只記 log，訊息留在排隊區，下次打開對話時回到輸入框。
+ */
+async function continueQueued(deps: ActiveDeps, threadId: string, platformToken: string | undefined): Promise<void> {
+  try {
+    if (!platformToken || !(await hasQueued(deps.db, threadId))) return;
+    const res = await (deps.fetchImpl ?? fetch)(`${deps.config.PLATFORM_URL}/api/runtime/threads/${threadId}/continue`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformToken}` },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error('[run] 無法接續排隊訊息', errorText(e));
+  }
+}
+
+/** 沒有 text 代表平台要接續排隊訊息，這輪的使用者訊息由 run 建立之後才取走（撞到 409 時訊息要留著） */
 export async function startRun(
   runDeps: RunDeps,
-  req: { threadId: string; text: string; platformToken?: string; dbToken: string },
+  req: { threadId: string; text?: string; platformToken?: string; dbToken: string },
 ): Promise<Response> {
   const { openDb, modelFor, ...rest } = runDeps;
   const { config } = rest;
@@ -232,9 +252,14 @@ export async function startRun(
   let finalId: string;
   try {
     const history = await loadHistory(db, req.threadId);
+    const text = req.text ?? (await takeQueued(db, req.threadId)).map((m) => m.text).join('\n\n');
+    if (!text) {
+      await finish({ status: 'succeeded' });
+      return new Response(null, { status: 204 });
+    }
     await insertMessage(db, {
-      thread_id: req.threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: req.text,
-      ui_message: { id: generateId(), role: 'user', parts: [{ type: 'text', text: req.text }] },
+      thread_id: req.threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: text,
+      ui_message: { id: generateId(), role: 'user', parts: [{ type: 'text', text }] },
     });
     // 專案通行證只放在記憶體裡傳給 MCP 連線，不寫進沙盒看得到的地方
     const gateway = config.PLATFORM_URL && req.platformToken ? { baseUrl: config.PLATFORM_URL, token: req.platformToken } : undefined;
@@ -255,7 +280,7 @@ export async function startRun(
       thread_id: req.threadId, run_id: runId, speaker_instance_id: rootId, kind: 'final', content: '',
     });
     uiStream = await root.streamUI({
-      messages: [...history, { role: 'user', content: req.text }],
+      messages: [...history, { role: 'user', content: text }],
       abortSignal: abort.signal,
     });
   } catch (e) {
@@ -325,6 +350,7 @@ export async function startRun(
       await progress.stop();
       await finish(result);
     }
+    if (result.status === 'succeeded') await continueQueued(deps, req.threadId, req.platformToken);
   })().catch((e) => console.error('[run] persist crashed', errorText(e)));
 
   return createUIMessageStreamResponse({ stream: forClient });
