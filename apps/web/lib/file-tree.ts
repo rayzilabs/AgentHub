@@ -54,5 +54,3 @@ export function ancestorFolderIds(folders: FolderRow[], id: string): string[] {
   return ids;
 }
 
-/** 選取的資料夾可能已在別處被刪掉，重新載入後用這個檢查 */
-export const isValidSelection = (folders: FolderRow[], id: string | null): boolean => id === null || folders.some((f) => f.id === id);

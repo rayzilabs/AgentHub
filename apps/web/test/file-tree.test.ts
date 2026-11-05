@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ancestorFolderIds, buildTree, descendantFolderIds, folderPath, formatSize, isValidSelection } from '@/lib/file-tree';
+import { ancestorFolderIds, buildTree, descendantFolderIds, folderPath, formatSize } from '@/lib/file-tree';
 import type { FileRow, FolderRow, ProjectTree } from '@/lib/services/files';
 
 const folder = (id: string, name: string, parent_id: string | null = null): FolderRow => ({ id, name, parent_id });
@@ -47,11 +47,5 @@ describe('file-tree', () => {
   it('ancestorFolderIds 含自己與所有祖先', () => {
     expect(ancestorFolderIds(tree.folders, 'w43a')).toEqual(['w43a', 'w43', 'etf']);
     expect(ancestorFolderIds(tree.folders, 'nope')).toEqual([]);
-  });
-
-  it('isValidSelection 選取的資料夾不存在時為 false', () => {
-    expect(isValidSelection(tree.folders, null)).toBe(true);
-    expect(isValidSelection(tree.folders, 'w43')).toBe(true);
-    expect(isValidSelection(tree.folders, 'deleted')).toBe(false);
   });
 });
