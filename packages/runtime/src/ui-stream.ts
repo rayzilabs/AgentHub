@@ -88,9 +88,9 @@ export function toolRecords(m: UIMessage): ToolRecord[] {
   });
 }
 
-/** 有沒有任何值得存下來的內容（文字或工具紀錄）；算不算有回覆要看 textOf */
+/** 有沒有任何值得存下來的內容（文字、工具紀錄、已取走的插話）；算不算有回覆要看 textOf */
 export function hasContent(m: UIMessage | undefined): m is UIMessage {
-  return !!m && m.parts.some((p) => p.type === 'text' || p.type === 'dynamic-tool' || p.type.startsWith('tool-'));
+  return !!m && m.parts.some((p) => p.type === 'text' || p.type === 'data-interjection' || p.type === 'dynamic-tool' || p.type.startsWith('tool-'));
 }
 
 /** 補上「已由你中斷」的標記；還沒有任何內容時新建一則訊息，畫面才有地方顯示 */

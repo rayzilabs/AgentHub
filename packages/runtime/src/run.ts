@@ -214,8 +214,10 @@ export async function startRun(
   });
   let flushProgress = () => {};
   const requestStop = () => {
-    if (stopped || finished) return;
+    if (stopped) return;
     stopped = true;
+    // 已經在收尾：這輪不用中止了，但結束後不能接續排隊訊息
+    if (finished) return;
     abort.abort(USER_STOP);
     flushProgress();
     graceTimer = setTimeout(endGrace, deps.stopGraceMs ?? STOP_GRACE_MS);
@@ -350,7 +352,7 @@ export async function startRun(
       await progress.stop();
       await finish(result);
     }
-    if (result.status === 'succeeded') await continueQueued(deps, req.threadId, req.platformToken);
+    if (result.status === 'succeeded' && !stopped) await continueQueued(deps, req.threadId, req.platformToken);
   })().catch((e) => console.error('[run] persist crashed', errorText(e)));
 
   return createUIMessageStreamResponse({ stream: forClient });

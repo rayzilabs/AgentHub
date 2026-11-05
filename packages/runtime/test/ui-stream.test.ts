@@ -58,6 +58,9 @@ describe('ui-stream', () => {
     expect(hasContent(m)).toBe(true);
     expect(hasContent({ id: 'y', role: 'assistant', parts: [] } as UIMessage)).toBe(false);
     expect(hasContent(undefined)).toBe(false);
+    // 已取走的排隊訊息只存在 final 裡，刪掉 final 這則訊息就從畫面消失了
+    expect(hasContent({ id: 'y', role: 'assistant', parts: [{ type: 'data-interjection', id: 'q', data: { id: 'q', text: '補充' } }] } as UIMessage)).toBe(true);
+    expect(hasContent({ id: 'y', role: 'assistant', parts: [{ type: 'data-warning', data: { text: '提醒' } }] } as UIMessage)).toBe(false);
   });
 
   it('toolEvents 帶出 description 與 metadata 裡的時間', () => {

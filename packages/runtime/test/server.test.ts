@@ -128,6 +128,17 @@ describe('排隊訊息進入步驟', () => {
     expect(msgs.find((m) => m.kind === 'interjection')).toMatchObject({ content: '也看第 7 條' });
   });
 
+  it('第一步模型就失敗：已取走的排隊訊息留在 final，不會從畫面消失', async () => {
+    const env = await seedEnv();
+    await queueMessage(env.threadId, '也看第 7 條');
+    const res = await post(app(env, failingModel('配額用完')), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'failed' });
+
+    const final = (await messagesOf(env.threadId)).find((m) => m.kind === 'final');
+    expect(final.ui_message.parts).toMatchObject([{ type: 'data-interjection', data: { text: '也看第 7 條' } }]);
+  });
+
   it('多顧問：顧問看不到排隊訊息，主管下一步才看到', async () => {
     const env = await seedEnv({ name: '法務顧問' });
     await seedConsultant(db, env.projectId, { name: '工程顧問' });
@@ -242,6 +253,35 @@ describe('排隊訊息接續下一輪', () => {
     await res.text();
 
     expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled' });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await queuedTexts(env.threadId)).toEqual(['補充']);
+  });
+
+  it('收尾時才按停止：這輪仍算完成，但不接續排隊訊息', async () => {
+    const env = await seedEnv();
+    const fetchImpl = fakeFetch();
+    let armed = false;
+    // finishRun 是模型呼叫之後第一次碰 runs：這時按停止，串流已經結束，只剩收尾
+    const stoppingDb = new Proxy(db, {
+      get(target, key) {
+        if (key !== 'from') return Reflect.get(target, key);
+        return (table: string) => {
+          if (armed && table === 'runs') for (const stop of activeRuns.values()) stop();
+          return target.from(table);
+        };
+      },
+    });
+    const model = steppedModel([textTurn('完成')], {
+      0: async () => {
+        await queueMessage(env.threadId, '補充');
+        armed = true;
+      },
+    });
+    const a = createApp({ openDb: () => stoppingDb, modelFor: () => model, config: env.config, fetchImpl });
+    await (await post(a, { thread_id: env.threadId, text: '問題' })).text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'succeeded' });
     await new Promise((r) => setTimeout(r, 300));
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(await queuedTexts(env.threadId)).toEqual(['補充']);
