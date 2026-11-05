@@ -15,6 +15,11 @@ import { createThread } from '@/lib/services/threads';
 import type { forwardChat } from '@/lib/sprites';
 import { seedUser, testDb } from './helpers';
 
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: (fn: () => unknown) => { void fn(); },
+}));
+
 const db = testDb();
 const SECRET = 'test-runtime-secret-at-least-32-characters';
 
@@ -32,6 +37,8 @@ async function startRun(threadId: string): Promise<string> {
   const { data } = await db.from('runs').insert({ thread_id: threadId }).select('id').single().throwOnError();
   return data!.id;
 }
+
+const finishedRun = (threadId: string, status: string) => db.from('runs').insert({ thread_id: threadId, status }).throwOnError();
 
 const queuedTexts = async (threadId: string) =>
   (await db.from('queued_messages').select('text').eq('thread_id', threadId).order('created_at')).data!.map((r) => r.text);
@@ -113,8 +120,9 @@ describe('stopThreadRun', () => {
 });
 
 describe('addQueued', () => {
-  it('沒有 running run 時觸發 forward，不帶 text', async () => {
+  it('上一輪正常完成時觸發 forward，不帶 text', async () => {
     const { owner, project, thread } = await setup();
+    await finishedRun(thread.id, 'succeeded');
     const forward = fakeForward();
     const view = await addQueued(db, owner.id, thread.id, '補充', { forward });
 
@@ -143,8 +151,38 @@ describe('addQueued', () => {
     expect(await queuedTexts(thread.id)).toEqual(['補充']);
   });
 
+  it.each(['cancelled', 'failed'])('上一輪是 %s 時不自動開下一輪，訊息留給畫面放回輸入框', async (status) => {
+    const { owner, thread } = await setup();
+    await finishedRun(thread.id, status);
+    const forward = fakeForward();
+    await addQueued(db, owner.id, thread.id, '補充', { forward });
+    expect(forward).not.toHaveBeenCalled();
+    expect(await queuedTexts(thread.id)).toEqual(['補充']);
+  });
+
+  it('還沒有任何 run 時不觸發 forward', async () => {
+    const { owner, thread } = await setup();
+    const forward = fakeForward();
+    await addQueued(db, owner.id, thread.id, '補充', { forward });
+    expect(forward).not.toHaveBeenCalled();
+  });
+
+  it('defer：先回應，接續交給背景執行', async () => {
+    const { owner, thread } = await setup();
+    await finishedRun(thread.id, 'succeeded');
+    const forward = fakeForward();
+    let job: (() => Promise<void>) | undefined;
+    const view = await addQueued(db, owner.id, thread.id, '補充', { forward, defer: (fn) => { job = fn; } });
+
+    expect(view.text).toBe('補充');
+    expect(forward).not.toHaveBeenCalled();
+    await job!();
+    expect(forward).toHaveBeenCalledOnce();
+  });
+
   it('接續失敗不影響排隊結果，訊息留著', async () => {
     const { owner, thread } = await setup();
+    await finishedRun(thread.id, 'succeeded');
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const view = await addQueued(db, owner.id, thread.id, '補充', { forward: vi.fn<typeof forwardChat>(async () => { throw new HttpError(502, '連不上'); }) });
     expect(view.text).toBe('補充');

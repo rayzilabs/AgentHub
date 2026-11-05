@@ -5,7 +5,7 @@ import { DefaultChatTransport, type UIMessage } from 'ai';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { currentActivity, formatElapsed, isStalled } from '@/lib/progress';
-import { afterRun, readIds, restoredInput } from '@/lib/queue';
+import { afterRun, chatInFlight, readIds, reclaimQueued, restoredInput } from '@/lib/queue';
 import type { QueuedView, ThreadMessages } from '@/lib/services/threads';
 import { textOf } from '@/lib/text';
 import { MessageView } from './message-view';
@@ -63,11 +63,13 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   const queuedRef = useRef<QueuedView[]>([]);
   useEffect(() => { queuedRef.current = queued; }, [queued]);
 
-  const restoreQueued = useCallback((items: QueuedView[]) => {
-    setInput((current) => restoredInput(current, items));
+  // 使用者按了停止：輪詢期間要繼續要求（下一輪可能才剛開），也不再等伺服器開下一輪
+  const stopWanted = useRef(false);
+
+  const restoreQueued = useCallback(async (items: QueuedView[]) => {
     setQueued([]);
-    // 409 是已被 agent 讀走；其他失敗頂多下次打開對話再放回一次，都不必打擾使用者
-    for (const { id } of items) void api(`/api/threads/${threadId}/queue/${id}`, { method: 'DELETE' }).catch(() => undefined);
+    const kept = await reclaimQueued(items, (id) => api(`/api/threads/${threadId}/queue/${id}`, { method: 'DELETE' }));
+    if (alive.current && kept.length > 0) setInput((current) => restoredInput(current, kept));
   }, [threadId]);
 
   const { messages, sendMessage, setMessages, status } = useChat({
@@ -97,7 +99,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         setInput(draft.current);
         setNotice(serverMessage);
         // 這輪沒有開始，等著被它讀走的排隊訊息也放回輸入框
-        restoreQueued(queuedRef.current);
+        void restoreQueued(queuedRef.current);
         return;
       }
       // 連線中斷：如果回覆已開始（出現助理訊息），改用輪詢取回；否則檢查伺服器上的狀態
@@ -119,6 +121,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     setWaiting(true);
     let failures = 0;
     let queueDeadline: number | null = null;
+    let reclaimed = false;
     try {
       while (alive.current) {
         let data: ThreadMessages;
@@ -139,7 +142,13 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         setQueued(data.queued);
         if (!data.running) {
           const local = localMessages.current;
-          const next = afterRun(data);
+          const next = afterRun(data, stopWanted.current);
+          // 停止時先收回排隊訊息再看一次：有訊息已被讀走（409），代表下一輪已經開始，要接著停它
+          if (next === 'restore' && stopWanted.current && !reclaimed) {
+            reclaimed = true;
+            await restoreQueued(data.queued);
+            continue;
+          }
           if (next === 'wait') {
             queueDeadline ??= Date.now() + QUEUE_WAIT_MS;
             if (Date.now() < queueDeadline) {
@@ -163,10 +172,12 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
             setNotice(data.error ? `這次回覆沒有完成：${data.error}` : next === 'wait' ? '排隊訊息沒有送出，已放回輸入框' : null);
             settled.current?.();
           }
-          if (next !== 'none') restoreQueued(data.queued);
+          if (next !== 'none' && !reclaimed) void restoreQueued(data.queued);
           return;
         }
         queueDeadline = null;
+        // 重複要求無害；失敗就下一次輪詢再試
+        if (stopWanted.current) void api(`/api/threads/${threadId}/stop`, { method: 'POST' }).catch(() => undefined);
         if (data.startedAt) setStartedAt(Date.parse(data.startedAt));
         setUpdatedAt(data.updatedAt);
         // runtime 每 5 秒把進度存進 final：伺服器上已經有這次的回覆就直接顯示；
@@ -199,7 +210,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           return;
         }
         if (data.error) setNotice(`上一次回覆沒有完成：${data.error}`);
-        if (next === 'restore') restoreQueued(data.queued);
+        if (next === 'restore') void restoreQueued(data.queued);
       })
       .catch((e) => { if (alive.current) setNotice((e as Error).message); });
     return () => { alive.current = false; };
@@ -238,7 +249,11 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   const reply = messages.at(-1)?.role === 'assistant' ? messages.at(-1) : undefined;
   // 串流連線還在就表示 runtime 活著；只有輪詢時才用更新時間判斷是否卡住
   const stalled = waiting && isStalled(updatedAt, now);
-  useEffect(() => { if (!busy) setStopping(false); }, [busy]);
+  useEffect(() => {
+    if (busy) return;
+    stopWanted.current = false;
+    setStopping(false);
+  }, [busy]);
 
   async function enqueue(text: string) {
     setInput('');
@@ -248,13 +263,17 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         method: 'POST',
         body: JSON.stringify({ text, chatPending: status === 'submitted' }),
       });
-      if (!alive.current || readIds(localMessages.current).has(item.id)) return;
+      if (!alive.current) return;
       // 上一則在這個請求途中被拒絕：那時 onError 還看不到這則，這裡補放回輸入框；這輪沒開始，不會有人讀它
       if (statusRef.current === 'error' && !polling.current) {
-        restoreQueued([item]);
+        void restoreQueued([item]);
         return;
       }
-      setQueued((prev) => (prev.some((q) => q.id === item.id) ? prev : [...prev, item]));
+      if (!readIds(localMessages.current).has(item.id)) {
+        setQueued((prev) => (prev.some((q) => q.id === item.id) ? prev : [...prev, item]));
+      }
+      // 請求途中這輪已經結束：onFinish 沒看到這則，改由輪詢接手（等下一輪或放回輸入框）
+      if (!chatInFlight(statusRef.current)) void pollUntilDone();
     } catch (e) {
       if (!alive.current) return;
       setInput((current) => restoredInput(current, [{ id: '', text }]));
@@ -283,6 +302,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   async function stopRun() {
     if (stopping) return;
     setStopping(true);
+    stopWanted.current = true;
     try {
       const askStop = () => api(`/api/threads/${threadId}/stop`, { method: 'POST' });
       await askStop();
@@ -295,6 +315,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
       await pollUntilDone();
     } catch (e) {
       if (!alive.current) return;
+      stopWanted.current = false;
       setStopping(false);
       setNotice((e as Error).message);
     }

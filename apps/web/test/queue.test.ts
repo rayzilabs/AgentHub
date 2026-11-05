@@ -1,8 +1,33 @@
 import type { UIMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { afterRun, readIds, restoredInput } from '@/lib/queue';
+import { afterRun, ALREADY_READ, chatInFlight, readIds, reclaimQueued, restoredInput } from '@/lib/queue';
 
 const item = { id: 'q1', text: '補充' };
+
+describe('chatInFlight', () => {
+  it('只有串流進行中才不需要另外看伺服器', () => {
+    expect(chatInFlight('submitted')).toBe(true);
+    expect(chatInFlight('streaming')).toBe(true);
+    expect(chatInFlight('ready')).toBe(false);
+    expect(chatInFlight('error')).toBe(false);
+  });
+});
+
+describe('reclaimQueued', () => {
+  const a = { id: 'a', text: '第一則' };
+  const b = { id: 'b', text: '第二則' };
+  const c = { id: 'c', text: '第三則' };
+
+  it('刪成功的才放回；已被讀取的不放回，否則會同時出現在回覆和輸入框', async () => {
+    const del = async (id: string) => { if (id === 'b') throw new Error(ALREADY_READ); };
+    expect(await reclaimQueued([a, b, c], del)).toEqual([a, c]);
+  });
+
+  it('其他失敗照放回：訊息不能因為網路問題消失', async () => {
+    const del = async () => { throw new Error('網路連線中斷，請稍後再試'); };
+    expect(await reclaimQueued([a], del)).toEqual([a]);
+  });
+});
 
 describe('afterRun', () => {
   it('沒有排隊 → none', () => {
@@ -13,6 +38,11 @@ describe('afterRun', () => {
   it('還在跑 → wait；正常完成 → wait，伺服器會自己開下一輪', () => {
     expect(afterRun({ running: true, runStatus: 'running', queued: [item] })).toBe('wait');
     expect(afterRun({ running: false, runStatus: 'succeeded', queued: [item] })).toBe('wait');
+  });
+
+  it('使用者要停止時，正常完成也不等下一輪；還在跑的要先等它停', () => {
+    expect(afterRun({ running: false, runStatus: 'succeeded', queued: [item] }, true)).toBe('restore');
+    expect(afterRun({ running: true, runStatus: 'running', queued: [item] }, true)).toBe('wait');
   });
 
   it('失敗、中斷或還沒有任何 run → restore', () => {

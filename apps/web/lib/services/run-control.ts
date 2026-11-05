@@ -1,14 +1,13 @@
 import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import { signProjectToken } from '@/lib/platform-tokens';
+import { ALREADY_READ } from '@/lib/queue';
 import { askStop, markRunInterrupted } from '@/lib/run-liveness';
 import { runtimeAccessToken } from '@/lib/runtime-session';
 import { forwardChat } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 import type { ProjectRow } from './projects';
 import { getOwnThread, type QueuedView } from './threads';
-
-const ALREADY_READ = '這則訊息已被讀取';
 
 async function runningRunId(db: Db, threadId: string): Promise<string | null> {
   const { data, error } = await db.from('runs').select('id').eq('thread_id', threadId).eq('status', 'running').maybeSingle();
@@ -51,18 +50,36 @@ export async function startQueuedRun(
   if (!res.ok && res.status !== 409) throw new HttpError(502, `無法開始下一輪（HTTP ${res.status}）`);
 }
 
-/** chatPending：瀏覽器的上一則訊息還在送出，run 可能還沒建立。這時不能開新的一輪，否則上一則會被 409 退回；那一輪第一步就會讀到排隊訊息 */
+/**
+ * chatPending：瀏覽器的上一則訊息還在送出，run 可能還沒建立。這時不能開新的一輪，否則上一則會被 409 退回；那一輪第一步就會讀到排隊訊息。
+ * defer：接續要等 runtime 做完準備才有回應，路由用 after() 放到背景，訊息不會卡在畫面上哪裡都看不到。
+ */
 export async function addQueued(
   db: Db, userId: string, threadId: string, text: string,
-  { forward = forwardChat, chatPending = false }: { forward?: typeof forwardChat; chatPending?: boolean } = {},
+  { forward = forwardChat, chatPending = false, defer = (job) => job() }: {
+    forward?: typeof forwardChat;
+    chatPending?: boolean;
+    defer?: (job: () => Promise<void>) => unknown;
+  } = {},
 ): Promise<QueuedView> {
   const { project } = await getOwnThread(db, userId, threadId);
   const { data, error } = await db.from('queued_messages').insert({ thread_id: threadId, text }).select('id, text').single();
   if (error) throw error;
   if (chatPending) return data;
+
   // runtime 先寫狀態再查排隊，這裡先寫排隊再查狀態，所以兩邊至少一方看得到。
-  // 訊息已經存好，接續失敗時留在排隊區，畫面會把它放回輸入框，不算這次送出失敗
-  await startQueuedRun(db, project, threadId, forward).catch((e) => console.error('[queue] 無法開始下一輪', e));
+  // 只有上一輪正常完成才接續：停止或失敗後不自動再花額度，由畫面把訊息放回輸入框
+  await defer(async () => {
+    try {
+      const { data: latest, error: runError } = await db.from('runs').select('status').eq('thread_id', threadId)
+        .order('started_at', { ascending: false }).limit(1).maybeSingle();
+      if (runError) throw runError;
+      if (latest?.status === 'succeeded') await startQueuedRun(db, project, threadId, forward);
+    } catch (e) {
+      // 訊息已經存好，不算這次送出失敗；留在排隊區，畫面等不到下一輪就會放回輸入框
+      console.error('[queue] 無法開始下一輪', e);
+    }
+  });
   return data;
 }
 
