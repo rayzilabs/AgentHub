@@ -21,6 +21,9 @@ insert into public.runs (id, thread_id, status) values
   ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000e1', 'succeeded');
 insert into public.messages (id, thread_id, run_id, kind, content) values
   ('00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-0000000000e1', '00000000-0000-0000-0000-0000000000f1', 'final', 'done');
+insert into public.queued_messages (id, thread_id, text) values
+  ('00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-0000000000e1', '我的排隊'),
+  ('00000000-0000-0000-0000-000000000032', '00000000-0000-0000-0000-0000000000e2', '別人的排隊');
 insert into storage.objects (bucket_id, name) values
   ('skills', 'a1/x.zip'), ('skills', 'a1/y.zip'),
   ('project-files', '00000000-0000-0000-0000-0000000000b1/a.txt'),
@@ -75,6 +78,26 @@ update public.messages set content = 'hacked' where id = '00000000-0000-0000-000
 delete from public.messages where id = '00000000-0000-0000-0000-000000000011';
 do $$ begin
   assert (select content from public.messages where id = '00000000-0000-0000-0000-000000000011') = 'done', '已結束的回覆不能被改或刪';
+end $$;
+-- 排隊訊息：只看得到、取得走自己專案的；新增與編輯由網站處理
+do $$ begin
+  assert (select count(*) from public.queued_messages) = 1, 'runtime 只看得到自己專案的排隊訊息';
+  assert (select count(*) from public.messages where speaker_instance_id is null) = 1, 'runtime 讀得到發言者（中斷後組上下文要標明顧問）';
+  begin
+    insert into public.queued_messages (thread_id, text) values ('00000000-0000-0000-0000-0000000000e1', '偷塞');
+    assert false, 'runtime 不能新增排隊訊息';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.queued_messages set text = '偷改';
+    assert false, 'runtime 不能編輯排隊訊息';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+delete from public.queued_messages where id = '00000000-0000-0000-0000-000000000032';
+delete from public.queued_messages where id = '00000000-0000-0000-0000-000000000031';
+do $$ begin
+  assert (select count(*) from public.queued_messages) = 0, 'runtime 取得走自己專案的排隊訊息';
 end $$;
 -- 記憶：自己專案可改內容、說明、類型，可刪；別的專案的被規則過濾掉（影響 0 列）
 update public.memories set content = '新', description = '新說明', type = 'feedback' where name = 'm';
@@ -148,6 +171,7 @@ end $$;
 -- 回到 postgres 檢查：別的專案的記憶沒被 runtime 動到，一般使用者也改不到、刪不到
 set local role postgres;
 do $$ begin
+  assert (select text from public.queued_messages where id = '00000000-0000-0000-0000-000000000032') = '別人的排隊', 'runtime 取不走別的專案的排隊訊息';
   assert (select content from public.memories where id = '00000000-0000-0000-0000-000000000022') = '別人的記憶', 'runtime 改不到、刪不到別的專案的記憶';
   assert (select content from public.memories where id = '00000000-0000-0000-0000-000000000021') = '新', '一般使用者不能直接改或刪記憶';
 end $$;

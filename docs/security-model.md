@@ -63,7 +63,8 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `instance_secrets`／Vault | 只能透過 `get_project_secrets` | ❌ | ❌ | ❌ | 函式本身檢查只能取自己專案 |
 | `threads` | ✅ | ❌ | ❌ | ❌ | 自己專案 |
 | `runs` | ✅ | ✅ | 只能改 `status`、`error`、`finished_at` | ❌ | 自己專案的對話 |
-| `messages` | 只能讀 `id`、`thread_id`、`run_id`、`kind`、`content`、`created_at` | ✅ | 只能改還在執行中的 run 的 `final` 的 `content`、`ui_message`、`tool_events`、`updated_at` | 只能刪還在執行中的 run 的空白 `final` | 已結束的歷史訊息不能改、不能刪 |
+| `queued_messages` | ✅ | ❌ | ❌ | ✅ | 自己專案的對話。新增與編輯由網站處理，runtime 只能取走（`delete ... returning`）；一列只會被一方取走 |
+| `messages` | 只能讀 `id`、`thread_id`、`run_id`、`speaker_instance_id`、`kind`、`content`、`created_at` | ✅ | 只能改還在執行中的 run 的 `final` 的 `content`、`ui_message`、`tool_events`、`updated_at` | 只能刪還在執行中的 run 的空白 `final` | 已結束的歷史訊息不能改、不能刪 |
 | `memories` | ✅ | ✅ | 只能改 `content`、`description`、`type`（`updated_at` 由資料庫觸發器維護） | ✅ | 自己專案。顧問之間的私有記憶隔離由 runtime 的程式負責（同一專案的顧問共用一個 runtime 帳號）；使用者也能在網頁上修改與刪除 |
 | `usage_events` | ❌ | ✅ | ❌ | ❌ | 只能新增；計費帳本不能被竄改或偷看 |
 | `remote_mcp_targets` | ❌ | ❌ | ❌ | ❌ | 創作者 MCP 的網址／代管版本；只有閘道（`service_role`）讀得到（子專案 3） |
@@ -116,6 +117,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
   - 2026-11-03 臨時 Sprite 實測：沙盒程式以約 0.5 GB/秒吃光記憶體（開始時可用約 7.3 GB）後，核心沒有砍單一程序，整個 Sprite 約 2.5 分鐘沒有回應，接著所有程序一起被重啟（pid 重新編號、核心開機時間連續，不是 VM 重開；另一次等了約 11 分鐘）。推測外層的記憶體群組是整組一起砍，所以沙盒腳本設的 `oom_score_adj=1000` 在這種情況下沒有作用。命名空間根目錄的 `cgroup.controllers` 有 `memory`、`memory.max` 是 `max`。
   - 2026-11-03 修正：根目錄裡只有 Sprite 的 `tini`、`tail` 與 exec 開的 shell（服務各自在 `svc.<名稱>` 子群組）。沙盒腳本在啟用記憶體控制器前，先把根目錄的程序搬到 `init` 子群組，之後 exec 開的程序也落在 `init`，根目錄保持空的。Sprite 重啟後 cgroup 恢復原狀，所以每個沙盒指令都檢查一次。實測：exec、服務重啟、建立服務都照常；沙盒程式吃到 6 GiB 時核心只砍它（`memory.events` 的 `oom_kill` 加 1），runtime 與 Sprite 照常回應。`probe-sandbox.ts` 驗收這兩項。搬移時剛好有新程序進根目錄會讓那次設定失敗（照常執行、不在群組裡），下一個指令會再試。
 - runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。平台的請求要帶 Fly 驗證（`authorization`，Fly 驗證後拿掉）。限制：runtime 被砍時沙盒裡若還有指令在跑，Sprite 要等它們結束才重啟 runtime，期間判斷不了（2026-10-31 實測）。
+- runtime 的 `POST /runs/:id/stop`（2026-11-05）：使用者按停止時平台呼叫，驗證方式與 `GET /runs/:id` 相同，查得到才中止，回答 `{ stopped }`。
 
 **驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。2026-11-04 加上雲端資料夾同步：把 `/shared` 裡的資料夾換成指向顧問私人目錄的 symlink 後照 runtime 的方式同步，必須還原成真的資料夾、沒有寫進顧問目錄；以 `agent` 直接跟著 symlink 寫也必須失敗（尚未在 Sprite 上跑）。
 
