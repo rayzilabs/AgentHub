@@ -83,4 +83,37 @@ describe('以 runtime 帳號通行證執行', () => {
     const res = await post(app, env.threadId, otherToken);
     expect(res.status).toBe(404);
   });
+
+  it('runtime 帳號只能讀取和刪除自己專案的排隊訊息', async () => {
+    const a = await seed();
+    const b = await seed();
+    const { data: rows } = await db
+      .from('queued_messages')
+      .insert([{ thread_id: a.threadId, text: 'A 的訊息' }, { thread_id: b.threadId, text: 'B 的訊息' }])
+      .select('id, thread_id')
+      .throwOnError();
+    const idOf = (threadId: string) => rows!.find((r) => r.thread_id === threadId)!.id;
+    const client = runtimeDb(await runtimeToken(db, a.projectId));
+
+    const { data: visible } = await client.from('queued_messages').select('id, thread_id, text, created_at').throwOnError();
+    expect(visible!.map((r) => r.text)).toEqual(['A 的訊息']);
+
+    const { data: deletedOther } = await client.from('queued_messages').delete().eq('id', idOf(b.threadId)).select('id');
+    expect(deletedOther).toEqual([]);
+    const { data: stillThere } = await db.from('queued_messages').select('id').eq('id', idOf(b.threadId));
+    expect(stillThere).toHaveLength(1);
+
+    const { error: insertError } = await client.from('queued_messages').insert({ thread_id: a.threadId, text: '偷塞' });
+    expect(insertError).not.toBeNull();
+
+    const { data: deletedOwn } = await client.from('queued_messages').delete().eq('id', idOf(a.threadId)).select('id').throwOnError();
+    expect(deletedOwn).toHaveLength(1);
+  });
+
+  it('runtime 帳號讀得到訊息的 speaker_instance_id', async () => {
+    const env = await seed();
+    const client = runtimeDb(await runtimeToken(db, env.projectId));
+    const { error } = await client.from('messages').select('speaker_instance_id').eq('thread_id', env.threadId);
+    expect(error).toBeNull();
+  });
 });

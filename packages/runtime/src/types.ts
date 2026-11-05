@@ -26,4 +26,4 @@ export type AgentInstance = {
 
 export type SecretRow = { instance_id: string; mcp_name: string; key: string; value: string };
 
-export type MessageKind = 'user' | 'final' | 'delegation' | 'discussion';
+export type MessageKind = 'user' | 'final' | 'delegation' | 'discussion' | 'interjection';
