@@ -1,7 +1,7 @@
 import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
-import { ConsultantStoppedError, errorText } from '../errors';
+import { ConsultantStoppedError, errorText, isUserStop } from '../errors';
 import { TIME_UP } from '../run-clock';
 import { SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
@@ -19,16 +19,22 @@ export type DelegationOutput = {
   /** 顧問用 deliver_file 交付的檔案，前端顯示下載按鈕 */
   files?: DeliveredFile[];
   error?: string;
-  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
-  cutoff?: 'wrap-up' | 'stopped';
+  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止。interrupted = 使用者按了停止，不算錯誤 */
+  cutoff?: 'wrap-up' | 'stopped' | 'interrupted';
 };
 
 export const STOPPED_ERROR = '逾時，只交回部分結果';
+export const INTERRUPTED_REASON = '被使用者中斷';
 
-/** 顧問被強制停止時交給主管的內容：已完成的步驟與已寫出的文字 */
+/** 顧問沒做完時留下的內容：已完成的步驟與已寫出的文字 */
+export function partialSummary(name: string, tools: ToolEvent[], text: string, reason: string): string {
+  const steps = tools.filter((t) => t.state === 'output-available').map((t) => t.description ?? t.tool);
+  return `${name} ${reason}，只完成部分工作。已完成的步驟：${steps.length ? steps.join('；') : '無'}。已寫出的內容：${text || '無'}`;
+}
+
+/** 顧問被強制停止時交給主管的內容 */
 export function stoppedSummary(o: DelegationOutput): string {
-  const steps = (o.tools ?? []).filter((t) => t.state === 'output-available').map((t) => t.description ?? t.tool);
-  return `${o.name} 逾時，只完成部分工作。已完成的步驟：${steps.length ? steps.join('；') : '無'}。已寫出的內容：${textOf(o.message) || '無'}`;
+  return partialSummary(o.name, o.tools ?? [], textOf(o.message), '逾時');
 }
 
 type DelegationView = { message: UIMessage; tools: ToolEvent[]; warnings?: string[]; files?: DeliveredFile[] };
@@ -86,10 +92,10 @@ export function assignTaskTool(opts: {
       let last: UIMessage | undefined;
       const lastView = () => (last ? viewOf(last) : { tools: [] });
       // 顧問只要產生過內容，不論成功或失敗都記錄下來，事後查得到它做了哪些步驟
-      const save = async () => {
+      const save = async (summary?: string) => {
         if (!last) return;
         try {
-          await opts.record(instance, last, null);
+          await opts.record(instance, last, null, summary);
         } catch (e) {
           console.error(`記錄 ${instance.name} 的派工發言失敗：${errorText(e)}`);
         }
@@ -100,6 +106,12 @@ export function assignTaskTool(opts: {
           yield { ...base, status: 'working', ...view };
         }
       } catch (e) {
+        if (isUserStop(abortSignal)) {
+          const view = lastView();
+          await save(partialSummary(instance.name, view.tools, textOf(last), INTERRUPTED_REASON));
+          yield { ...base, status: 'failed', cutoff: 'interrupted', ...view };
+          return;
+        }
         await save();
         if (e instanceof ConsultantStoppedError) {
           yield { ...base, status: 'failed', cutoff: 'stopped', ...lastView(), error: STOPPED_ERROR };

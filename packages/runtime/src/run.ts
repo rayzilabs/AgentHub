@@ -112,14 +112,14 @@ async function prepareRootAgent(
   const manager = instances.find((i) => i.role === 'manager');
   if (!manager) throw new Error('找不到主管');
 
-  const record: RecordSpeech = async (instance, message, round) => {
+  const record: RecordSpeech = async (instance, message, round, summary) => {
     await insertMessage(db, {
       thread_id: threadId,
       run_id: runId,
       speaker_instance_id: instance.id,
       kind: round === null ? 'delegation' : 'discussion',
       round,
-      content: textOf(message),
+      content: summary ?? textOf(message),
       tool_events: toolRecords(message),
     });
   };

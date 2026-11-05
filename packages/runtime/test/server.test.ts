@@ -84,11 +84,13 @@ describe('GET /runs/:id', () => {
   });
 });
 
+const stopRun = (a: ReturnType<typeof createApp>, runId: string, headers: Record<string, string> = { 'x-agenthub-db-token': 'db-token' }) =>
+  a.request(`/runs/${runId}/stop`, { method: 'POST', headers });
+
+const runIdOf = (threadId: string) =>
+  waitFor(async () => (await db.from('runs').select('id').eq('thread_id', threadId).maybeSingle()).data?.id as string | undefined);
+
 describe('POST /runs/:id/stop', () => {
-  const stopRun = (a: ReturnType<typeof createApp>, runId: string, headers: Record<string, string> = { 'x-agenthub-db-token': 'db-token' }) =>
-    a.request(`/runs/${runId}/stop`, { method: 'POST', headers });
-  const runIdOf = (threadId: string) =>
-    waitFor(async () => (await db.from('runs').select('id').eq('thread_id', threadId).maybeSingle()).data?.id as string | undefined);
   const finalOf = async (threadId: string) => (await messagesOf(threadId)).find((m) => m.kind === 'final');
   const graceApp = (env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, stopGraceMs: number) =>
     createApp({ openDb: () => db, modelFor: () => model, config: env.config, stopGraceMs });
@@ -475,6 +477,40 @@ describe('POST /chat：多顧問', () => {
       return data && data.length >= 4 ? data : undefined;
     });
     expect(new Set(usageRows.map((r) => r.instance_id))).toEqual(new Set([env.managerId, env.legalId]));
+  });
+
+  it('主管等顧問時停止：delegation 列留下進度，下一輪 prompt 看得到', async () => {
+    const env = await seedTeam();
+    const model = mockModel(
+      toolTurn('assign_task', { consultant_id: env.legalId, task: '審查合約第 5 條' }),
+      toolTurn('write_file', { path: 'review.md', content: '第 5 條草稿' }, 'call-c1'),
+      textTurn('法務寫到一半的意見'.repeat(30), 100),
+      textTurn('接手的回覆'),
+    );
+    const a = app(env, model);
+    const res = await post(a, { thread_id: env.threadId, text: '幫我看合約' });
+    const runId = await runIdOf(env.threadId);
+    await waitFor(async () => (model.doStreamCalls.length === 3 ? true : undefined));
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(await (await stopRun(a, runId)).json()).toEqual({ stopped: true });
+    await res.text();
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled', error: null });
+
+    const msgs = await messagesOf(env.threadId);
+    const delegation = msgs.find((m) => m.kind === 'delegation');
+    expect(delegation.speaker_instance_id).toBe(env.legalId);
+    expect(delegation.content).toContain('法務顧問 被使用者中斷，只完成部分工作。已完成的步驟：write_file。已寫出的內容：法務');
+    expect(delegation.tool_events).toMatchObject([{ tool: 'write_file', tool_call_id: 'call-c1' }]);
+    expect(model.doStreamCalls).toHaveLength(3);
+
+    const next = await post(a, { thread_id: env.threadId, text: '繼續' });
+    expect(await next.text()).toContain('接手的回覆');
+    const prompt = promptText(model, 3);
+    expect(prompt).toContain('這一輪被使用者中斷');
+    expect(prompt).toContain('【法務顧問】');
+    expect(prompt).toContain('已完成的步驟：write_file');
+    expect(prompt).not.toContain('第 5 條草稿');
   });
 
   it('時間預算：顧問逾時被停下，主管不能再用工具、改用已有結果彙整，run 成功', async () => {

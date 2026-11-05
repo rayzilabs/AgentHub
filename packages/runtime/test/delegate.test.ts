@@ -4,7 +4,7 @@ import type { ConsultantRunner, RecordSpeech } from '../src/consultant';
 import { assignTaskTool, type DelegationOutput } from '../src/tools/delegate';
 import type { AgentInstance } from '../src/types';
 import { textOf } from '../src/ui-stream';
-import { ConsultantStoppedError } from '../src/errors';
+import { ConsultantStoppedError, USER_STOP } from '../src/errors';
 import { TIME_UP } from '../src/run-clock';
 
 const opts = { toolCallId: 't', messages: [] } as never;
@@ -220,6 +220,47 @@ describe('assign_task', () => {
     expect(outputs.map((o) => [o.status, o.message?.parts.map((p) => (p as { text: string }).text).join('')])).toEqual([
       ['working', 'A'], ['working', 'AB'], ['done', 'AB'],
     ]);
+  });
+
+  describe('中止', () => {
+    const working = {
+      id: 'm', role: 'assistant',
+      parts: [
+        { type: 'tool-bash', toolCallId: 'c1', state: 'output-available', input: { description: '計算評等' }, output: {} },
+        { type: 'text', text: '初步結果' },
+      ],
+    } as unknown as UIMessage;
+    const abortedRun = (abort: () => void): ConsultantRunner => async function* () {
+      yield working;
+      abort();
+      throw new Error('run 已中止');
+    };
+
+    it('使用者中斷：cutoff=interrupted、沒有 error，record 收到含已完成步驟的摘要', async () => {
+      const stop = new AbortController();
+      const record = vi.fn<RecordSpeech>(async () => {});
+      const t = assignTaskTool({ consultants: [legal], run: abortedRun(() => stop.abort(USER_STOP)), record, intervalMs: 0 });
+      const execute = t.execute!({ consultant_id: 'c-legal', task: 'x' }, { ...opts as object, abortSignal: stop.signal } as never);
+      const last = (await drain(execute as AsyncIterable<DelegationOutput>)).at(-1)!;
+
+      expect(last).toMatchObject({ status: 'failed', cutoff: 'interrupted', tools: [{ tool: 'bash' }] });
+      expect(last.error).toBeUndefined();
+      expect(record).toHaveBeenCalledExactlyOnceWith(
+        legal, working, null, '法務顧問 被使用者中斷，只完成部分工作。已完成的步驟：計算評等。已寫出的內容：初步結果',
+      );
+    });
+
+    it('逾時中止不算中斷：沿用現有結果', async () => {
+      const stop = new AbortController();
+      const record = vi.fn<RecordSpeech>(async () => {});
+      const t = assignTaskTool({ consultants: [legal], run: abortedRun(() => stop.abort()), record, intervalMs: 0 });
+      const execute = t.execute!({ consultant_id: 'c-legal', task: 'x' }, { ...opts as object, abortSignal: stop.signal } as never);
+      const last = (await drain(execute as AsyncIterable<DelegationOutput>)).at(-1)!;
+
+      expect(last).toMatchObject({ status: 'failed', error: 'run 已中止' });
+      expect(last.cutoff).toBeUndefined();
+      expect(record.mock.calls[0][3]).toBeUndefined();
+    });
   });
 
   it('記錄發言失敗：仍算完成，結果照常交給主管', async () => {

@@ -6,7 +6,7 @@ import {
 } from '../src/tools/discuss';
 import type { AgentInstance } from '../src/types';
 import { textOf } from '../src/ui-stream';
-import { ConsultantStoppedError } from '../src/errors';
+import { ConsultantStoppedError, USER_STOP } from '../src/errors';
 import { TIME_UP } from '../src/run-clock';
 
 const opts = { toolCallId: 't', messages: [] } as never;
@@ -157,6 +157,39 @@ describe('runDiscussion', () => {
       status: 'failed', cutoff: 'stopped', text: '寫到一半的意見', error: '逾時，只完成部分發言',
     });
     expect(formatTranscript(state)).toContain('【第 1 輪｜法務】（逾時，只完成部分發言）\n寫到一半的意見');
+  });
+
+  it('使用者中斷：發言標 interrupted，摘要寫進紀錄，討論結束但不算錯誤', async () => {
+    const stop = new AbortController();
+    const run: ConsultantRunner = async function* (instance) {
+      yield msg(`${instance.name}寫到一半`);
+      stop.abort(USER_STOP);
+      throw new Error('run 已中止');
+    };
+    const record = vi.fn<RecordSpeech>(async () => {});
+    const state = await finalState(runDiscussion({ topic: 't', participants: [legal, eng], maxRounds: 3, run, record, abortSignal: stop.signal }));
+
+    expect(state).toMatchObject({ finished: true, round: 1 });
+    expect(state.error).toBeUndefined();
+    expect(state.speeches).toHaveLength(2);
+    expect(state.speeches[0]).toMatchObject({ status: 'failed', cutoff: 'interrupted', text: '法務寫到一半' });
+    expect(state.speeches[0].error).toBeUndefined();
+    expect(record.mock.calls.map((c) => c[3])).toEqual([
+      '法務 被使用者中斷，只完成部分工作。已完成的步驟：無。已寫出的內容：法務寫到一半',
+      '工程 被使用者中斷，只完成部分工作。已完成的步驟：無。已寫出的內容：工程寫到一半',
+    ]);
+  });
+
+  it('使用者在輪與輪之間中斷：不開下一輪，也不算錯誤', async () => {
+    const stop = new AbortController();
+    const { run, calls } = scriptedRunner({ 'c-legal': ['L1'], 'c-eng': ['E1'] });
+    const stoppingRecord: RecordSpeech = async () => stop.abort(USER_STOP);
+    const state = await finalState(runDiscussion({
+      topic: 't', participants: [legal, eng], maxRounds: 3, run, record: stoppingRecord, abortSignal: stop.signal,
+    }));
+    expect(calls).toHaveLength(2);
+    expect(state.finished).toBe(true);
+    expect(state.error).toBeUndefined();
   });
 
   it('某一輪全部失敗：中止並帶錯誤', async () => {

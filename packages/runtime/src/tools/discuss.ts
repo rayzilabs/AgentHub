@@ -1,11 +1,12 @@
 import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
-import { ConsultantStoppedError, errorText } from '../errors';
+import { ConsultantStoppedError, errorText, isUserStop } from '../errors';
 import { TIME_UP } from '../run-clock';
 import { DISCUSSION_SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
 import { deliveredFiles, textOf, toolEvents, type DeliveredFile, type ToolEvent } from '../ui-stream';
+import { INTERRUPTED_REASON, partialSummary } from './delegate';
 
 export const MAX_ROUNDS = 3;
 export const TIME_UP_DISCUSSION = '時間不足，提前結束討論';
@@ -25,8 +26,8 @@ export type Speech = {
   /** 顧問發言期間交付的檔案，前端顯示下載按鈕 */
   files?: DeliveredFile[];
   error?: string;
-  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
-  cutoff?: 'wrap-up' | 'stopped';
+  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止。interrupted = 使用者按了停止，不算錯誤 */
+  cutoff?: 'wrap-up' | 'stopped' | 'interrupted';
 };
 
 export type DiscussionState = { topic: string; round: number; finished: boolean; error?: string; speeches: Speech[] };
@@ -111,6 +112,7 @@ async function* speakConcurrently(
     state.speeches.push(speech);
     feed.mark();
     let message: UIMessage | undefined;
+    let summary: string | undefined;
     try {
       for await (const m of run(instance, prompt, abortSignal)) {
         message = m;
@@ -129,7 +131,10 @@ async function* speakConcurrently(
       if (acceptUntil !== undefined && Date.now() >= acceptUntil) speech.cutoff = 'wrap-up';
     } catch (e) {
       speech.status = 'failed';
-      if (e instanceof ConsultantStoppedError) {
+      if (isUserStop(abortSignal)) {
+        speech.cutoff = 'interrupted';
+        summary = partialSummary(instance.name, speech.tools ?? [], speech.text, INTERRUPTED_REASON);
+      } else if (e instanceof ConsultantStoppedError) {
         speech.cutoff = 'stopped';
         speech.error = STOPPED_SPEECH;
       } else {
@@ -138,7 +143,7 @@ async function* speakConcurrently(
     }
     try {
       // 只要產生過內容就記錄（含失敗），記錄失敗不影響這次發言的結果
-      if (message) await record(instance, message, round);
+      if (message) await record(instance, message, round, summary);
     } catch (e) {
       console.error(`記錄 ${instance.name} 第 ${round} 輪發言失敗：${errorText(e)}`);
     } finally {
@@ -168,7 +173,7 @@ export async function* runDiscussion(opts: {
 
   const stopIfAborted = () => {
     if (!opts.abortSignal?.aborted) return false;
-    state.error ??= '討論已中止';
+    if (!isUserStop(opts.abortSignal)) state.error ??= '討論已中止';
     return true;
   };
   const timeUp = () => {
@@ -194,6 +199,7 @@ export async function* runDiscussion(opts: {
       }
       if (state.error) break;
     }
+    if (isUserStop(opts.abortSignal)) break;
 
     const thisRound = state.speeches.filter((s) => s.round === round);
     const succeeded = thisRound.filter((s) => s.status === 'done');

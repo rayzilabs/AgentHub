@@ -14,7 +14,8 @@ import { usageRecorder } from './usage';
 
 export type ConsultantRunner = (instance: AgentInstance, task: string, abortSignal?: AbortSignal) => AsyncGenerator<UIMessage>;
 
-export type RecordSpeech = (instance: AgentInstance, message: UIMessage, round: number | null) => Promise<void>;
+/** summary 給沒做完的發言用：取代文字內容寫進紀錄 */
+export type RecordSpeech = (instance: AgentInstance, message: UIMessage, round: number | null, summary?: string) => Promise<void>;
 
 export type ConsultantRunnerDeps = {
   db: Db;
