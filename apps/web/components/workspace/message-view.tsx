@@ -12,6 +12,18 @@ import { isRunningPart, isToolPart, settleStep, stepOf, toolNameOf, type ToolPar
 import { ToolStep } from './tool-steps';
 import { useNow } from './use-now';
 
+function UserBubble({ text, animateIn }: { text: string; animateIn: boolean }) {
+  // 送出的訊息從右下角的輸入列方向長出來
+  return (
+    <div className="flex justify-end">
+      <motion.div initial={animateIn ? { opacity: 0, y: 16, scale: 0.96 } : false} animate={{ opacity: 1, y: 0, scale: 1 }}
+        className="max-w-[85%] origin-bottom-right whitespace-pre-wrap rounded-[20px] rounded-br-md bg-brand px-4 py-2.5 text-white sm:max-w-[70%]">
+        {text}
+      </motion.div>
+    </div>
+  );
+}
+
 export function MessageView({ message, speaker, speakerColor, colorOf, animateIn, live }: {
   message: UIMessage;
   speaker: string;
@@ -24,15 +36,7 @@ export function MessageView({ message, speaker, speakerColor, colorOf, animateIn
 }) {
   const now = useNow(live && message.parts.some((p) => isToolPart(p) && isRunningPart(p as unknown as ToolPartLike)));
   if (message.role === 'user') {
-    // 送出的訊息從右下角的輸入列方向長出來
-    return (
-      <div className="flex justify-end">
-        <motion.div initial={animateIn ? { opacity: 0, y: 16, scale: 0.96 } : false} animate={{ opacity: 1, y: 0, scale: 1 }}
-          className="max-w-[85%] origin-bottom-right whitespace-pre-wrap rounded-[20px] rounded-br-md bg-brand px-4 py-2.5 text-white sm:max-w-[70%]">
-          {message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')}
-        </motion.div>
-      </div>
-    );
+    return <UserBubble text={message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')} animateIn={animateIn} />;
   }
   const delivered = filesInMessage(message);
   return (
@@ -50,6 +54,10 @@ export function MessageView({ message, speaker, speakerColor, colorOf, animateIn
             </p>
           );
         }
+        if (part.type === 'data-interjection') {
+          return <div key={i} className="my-4"><UserBubble text={(part as { data: { text: string } }).data.text} animateIn={live} /></div>;
+        }
+        if (part.type === 'data-interrupted') return <p key={i} role="status" className="mt-3 text-sm text-muted">已由你中斷</p>;
         if (!isToolPart(part)) return null;
         const tool = part as unknown as ToolPartLike;
         const name = toolNameOf(tool);

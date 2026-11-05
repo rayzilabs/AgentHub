@@ -10,6 +10,8 @@ const STANCE_LINE = /\n?\s*立場\s*[:：]\s*(同意|有保留)\s*$/;
 
 function SpeechBlock({ speech, color, live }: { speech: Speech; color: string; live: boolean }) {
   const body = speech.text.replace(STANCE_LINE, '');
+  // 使用者中斷不算錯誤；回覆結束了卻還在發言中，代表 run 中止時來不及回報最後狀態
+  const interrupted = speech.cutoff === 'interrupted' || (!live && speech.status === 'speaking');
   return (
     <div className="panel px-5 py-4">
       <div className="flex items-center justify-between gap-3">
@@ -17,12 +19,13 @@ function SpeechBlock({ speech, color, live }: { speech: Speech; color: string; l
           <Avatar name={speech.name} color={color} />
           <span className="min-w-0 truncate font-semibold">{speech.name}</span>
         </span>
-        {speech.status === 'speaking' && <span className="chip chip-brand"><span className="dot-busy" aria-hidden />發言中</span>}
+        {interrupted && <span className="chip">已中斷</span>}
+        {speech.status === 'speaking' && !interrupted && <span className="chip chip-brand"><span className="dot-busy" aria-hidden />發言中</span>}
         {speech.cutoff === 'stopped' && <span className="chip chip-seal">逾時</span>}
         {speech.status === 'done' && speech.stance && <Seal stance={speech.stance} />}
       </div>
       <ToolSteps tools={speech.tools} ended={!live || speech.status !== 'speaking'} />
-      {speech.status === 'failed' && speech.cutoff !== 'stopped' ? (
+      {speech.status === 'failed' && speech.cutoff !== 'stopped' && !interrupted ? (
         <p className="notice notice-error mt-3">未發言：{speech.error}</p>
       ) : (
         body && (
@@ -55,14 +58,17 @@ export function DiscussionView({ state, colorOf, failedText, live }: {
     );
   }
   const rounds = [...new Set(state.speeches.map((s) => s.round))].sort((a, b) => a - b);
+  const interrupted = (!live && !state.finished) || state.speeches.some((s) => s.cutoff === 'interrupted');
   return (
     <section className="my-4 rounded-[24px] bg-sunken p-3 sm:p-5" aria-label="顧問討論">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1">
         <h3 className="text-xl font-semibold">顧問討論</h3>
-        <span className={`chip ${state.finished ? '' : 'chip-brand'}`}>
-          {state.finished
-            ? `已結束，共 ${state.round} 輪`
-            : <><span className="dot-busy" aria-hidden />第 {state.round} 輪，最多 3 輪</>}
+        <span className={`chip ${state.finished || interrupted ? '' : 'chip-brand'}`}>
+          {interrupted
+            ? `已中斷，進行到第 ${state.round} 輪`
+            : state.finished
+              ? `已結束，共 ${state.round} 輪`
+              : <><span className="dot-busy" aria-hidden />第 {state.round} 輪，最多 3 輪</>}
         </span>
       </div>
       <p className="mt-1 px-1 text-sm text-muted">{state.topic}</p>
@@ -79,7 +85,7 @@ export function DiscussionView({ state, colorOf, failedText, live }: {
           </div>
         </div>
       ))}
-      {state.finished ? (
+      {interrupted ? null : state.finished ? (
         state.error
           ? <p className="notice notice-error mt-4">討論提前結束：{state.error}</p>
           : <p className="mt-4 px-1 text-sm text-muted">討論結束，主管接著整理總結。</p>

@@ -5,16 +5,19 @@ import { DefaultChatTransport, type UIMessage } from 'ai';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { currentActivity, formatElapsed, isStalled } from '@/lib/progress';
+import { afterRun, readIds, restoredInput } from '@/lib/queue';
+import type { QueuedView, ThreadMessages } from '@/lib/services/threads';
 import { textOf } from '@/lib/text';
 import { MessageView } from './message-view';
+import { QueuedMessages } from './queued-messages';
 import { useNow } from './use-now';
-
-type ThreadMessages = { messages: UIMessage[]; running: boolean; error: string | null; startedAt: string | null; updatedAt: string | null };
 
 /** 輪詢失敗後的等待時間：3 秒、6 秒，之後每 10 秒；連續失敗 5 次才放棄。 */
 const POLL_INTERVAL_MS = 3000;
 const POLL_BACKOFF_MS = [3000, 6000, 10000];
 const MAX_POLL_FAILURES = 5;
+/** 這輪正常完成、還有排隊訊息時，等伺服器開下一輪的時間；超過就把訊息放回輸入框 */
+const QUEUE_WAIT_MS = 30_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function Chat({ threadId, ready, speaker, speakerColor, hasManager, colorOf, onSettled }: {
@@ -30,6 +33,8 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   const [input, setInput] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [waiting, setWaiting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [queued, setQueued] = useState<QueuedView[]>([]);
   // 這次回覆的開始時間（送出當下，或輪詢時伺服器回報的 run 開始時間）與伺服器最後更新時間
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -55,6 +60,15 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   );
 
   const pollUntilDoneRef = useRef<() => Promise<void>>(async () => {});
+  const queuedRef = useRef<QueuedView[]>([]);
+  useEffect(() => { queuedRef.current = queued; }, [queued]);
+
+  const restoreQueued = useCallback((items: QueuedView[]) => {
+    setInput((current) => restoredInput(current, items));
+    setQueued([]);
+    // 409 是已被 agent 讀走；其他失敗頂多下次打開對話再放回一次，都不必打擾使用者
+    for (const { id } of items) void api(`/api/threads/${threadId}/queue/${id}`, { method: 'DELETE' }).catch(() => undefined);
+  }, [threadId]);
 
   const { messages, sendMessage, setMessages, status } = useChat({
     id: threadId,
@@ -62,8 +76,9 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     onFinish: ({ isError, isAbort, finishReason }) => {
       // 出錯由 onError 處理；使用者中止不需要處理
       if (isError || isAbort) return;
-      // 串流正常關閉卻沒有 finish（runtime 逾時中止或 Vercel 函式時間到）：回覆可能沒完成，改向伺服器確認
-      if (finishReason == null) {
+      // 串流正常關閉卻沒有 finish（runtime 逾時中止或 Vercel 函式時間到）：回覆可能沒完成，改向伺服器確認。
+      // 還有排隊訊息時也要繼續看伺服器，下一輪是伺服器自己開的
+      if (finishReason == null || queuedRef.current.length > 0) {
         void pollUntilDoneRef.current();
         return;
       }
@@ -81,6 +96,8 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         setMessages((prev) => (prev.at(-1)?.role === 'user' ? prev.slice(0, -1) : prev));
         setInput(draft.current);
         setNotice(serverMessage);
+        // 這輪沒有開始，等著被它讀走的排隊訊息也放回輸入框
+        restoreQueued(queuedRef.current);
         return;
       }
       // 連線中斷：如果回覆已開始（出現助理訊息），改用輪詢取回；否則檢查伺服器上的狀態
@@ -88,12 +105,20 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     },
   });
   useEffect(() => { localMessages.current = messages; }, [messages]);
+  const statusRef = useRef(status);
+  useEffect(() => { statusRef.current = status; }, [status]);
+  // 串流中沒有輪詢，靠回覆裡的 data-interjection 知道哪些排隊訊息被讀走了
+  useEffect(() => {
+    const read = readIds(messages);
+    setQueued((prev) => (prev.some((q) => read.has(q.id)) ? prev.filter((q) => !read.has(q.id)) : prev));
+  }, [messages]);
 
   const pollUntilDone = useCallback(async () => {
     if (polling.current) return;
     polling.current = true;
     setWaiting(true);
     let failures = 0;
+    let queueDeadline: number | null = null;
     try {
       while (alive.current) {
         let data: ThreadMessages;
@@ -111,8 +136,21 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         }
         failures = 0;
         if (!alive.current) return;
+        setQueued(data.queued);
         if (!data.running) {
           const local = localMessages.current;
+          const next = afterRun(data);
+          if (next === 'wait') {
+            queueDeadline ??= Date.now() + QUEUE_WAIT_MS;
+            if (Date.now() < queueDeadline) {
+              if (data.messages.length >= local.length) {
+                markKnown(data.messages);
+                setMessages(data.messages);
+              }
+              await sleep(POLL_INTERVAL_MS);
+              continue;
+            }
+          }
           const replyStarted = local.at(-1)?.role === 'assistant';
           if (!replyStarted && data.messages.length < local.length) {
             // 伺服器沒有收到這則訊息：還原草稿，請使用者重送
@@ -122,15 +160,18 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           } else {
             markKnown(data.messages);
             setMessages(data.messages);
-            setNotice(data.error ? `這次回覆沒有完成：${data.error}` : null);
+            setNotice(data.error ? `這次回覆沒有完成：${data.error}` : next === 'wait' ? '排隊訊息沒有送出，已放回輸入框' : null);
             settled.current?.();
           }
+          if (next !== 'none') restoreQueued(data.queued);
           return;
         }
+        queueDeadline = null;
         if (data.startedAt) setStartedAt(Date.parse(data.startedAt));
         setUpdatedAt(data.updatedAt);
-        // runtime 每 5 秒把進度存進 final：伺服器上已經有這次的回覆就直接顯示
-        if (data.messages.at(-1)?.role === 'assistant') {
+        // runtime 每 5 秒把進度存進 final：伺服器上已經有這次的回覆就直接顯示；
+        // 伺服器自己開的下一輪還沒有回覆，但使用者訊息要先出現
+        if (data.messages.at(-1)?.role === 'assistant' || data.messages.length > localMessages.current.length) {
           markKnown(data.messages);
           setMessages(data.messages);
         }
@@ -140,7 +181,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
       polling.current = false;
       if (alive.current) setWaiting(false);
     }
-  }, [threadId, setMessages, markKnown]);
+  }, [threadId, setMessages, markKnown, restoreQueued]);
   useEffect(() => { pollUntilDoneRef.current = pollUntilDone; }, [pollUntilDone]);
 
   useEffect(() => {
@@ -150,15 +191,19 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         if (!alive.current) return;
         markKnown(data.messages);
         setMessages(data.messages);
-        if (data.running) {
+        setQueued(data.queued);
+        const next = afterRun(data);
+        if (data.running || next === 'wait') {
           if (data.startedAt) setStartedAt(Date.parse(data.startedAt));
           void pollUntilDone();
+          return;
         }
-        else if (data.error) setNotice(`上一次回覆沒有完成：${data.error}`);
+        if (data.error) setNotice(`上一次回覆沒有完成：${data.error}`);
+        if (next === 'restore') restoreQueued(data.queued);
       })
       .catch((e) => { if (alive.current) setNotice((e as Error).message); });
     return () => { alive.current = false; };
-  }, [threadId, setMessages, pollUntilDone, markKnown]);
+  }, [threadId, setMessages, pollUntilDone, markKnown, restoreQueued]);
 
   // 使用者往上捲就停止跟到最新；捲回底部附近再恢復。只看「往上」才停，避免平滑捲動途中被誤判
   useEffect(() => {
@@ -193,11 +238,76 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
   const reply = messages.at(-1)?.role === 'assistant' ? messages.at(-1) : undefined;
   // 串流連線還在就表示 runtime 活著；只有輪詢時才用更新時間判斷是否卡住
   const stalled = waiting && isStalled(updatedAt, now);
+  useEffect(() => { if (!busy) setStopping(false); }, [busy]);
+
+  async function enqueue(text: string) {
+    setInput('');
+    setNotice(null);
+    try {
+      const item = await api<QueuedView>(`/api/threads/${threadId}/queue`, {
+        method: 'POST',
+        body: JSON.stringify({ text, chatPending: status === 'submitted' }),
+      });
+      if (!alive.current || readIds(localMessages.current).has(item.id)) return;
+      // 上一則在這個請求途中被拒絕：那時 onError 還看不到這則，這裡補放回輸入框；這輪沒開始，不會有人讀它
+      if (statusRef.current === 'error' && !polling.current) {
+        restoreQueued([item]);
+        return;
+      }
+      setQueued((prev) => (prev.some((q) => q.id === item.id) ? prev : [...prev, item]));
+    } catch (e) {
+      if (!alive.current) return;
+      setInput((current) => restoredInput(current, [{ id: '', text }]));
+      setNotice((e as Error).message);
+    }
+  }
+
+  async function editQueued(id: string, text: string) {
+    try {
+      await api(`/api/threads/${threadId}/queue/${id}`, { method: 'PATCH', body: JSON.stringify({ text }) });
+      setQueued((prev) => prev.map((q) => (q.id === id ? { ...q, text } : q)));
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  }
+
+  async function deleteQueued(id: string) {
+    try {
+      await api(`/api/threads/${threadId}/queue/${id}`, { method: 'DELETE' });
+      setQueued((prev) => prev.filter((q) => q.id !== id));
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  }
+
+  async function stopRun() {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      const askStop = () => api(`/api/threads/${threadId}/stop`, { method: 'POST' });
+      await askStop();
+      // 剛送出時 run 可能還沒建立，這時查不到就停不了；這個請求有結果之前持續要求，重複呼叫無害
+      while (alive.current && statusRef.current === 'submitted') {
+        await sleep(POLL_INTERVAL_MS);
+        await askStop();
+      }
+      // 不用 useChat 的 stop：它只切斷瀏覽器連線，伺服器照跑
+      await pollUntilDone();
+    } catch (e) {
+      if (!alive.current) return;
+      setStopping(false);
+      setNotice((e as Error).message);
+    }
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const text = input.trim();
-    if (!text || busy || !ready) return;
+    if (!text || !ready) return;
+    if (busy) {
+      void enqueue(text);
+      return;
+    }
     draft.current = text;
     setNotice(null);
     setStartedAt(Date.now());
@@ -241,6 +351,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
       </div>
       {/* 浮動輸入列：半透明材質，對話從底下捲過去 */}
       <form onSubmit={submit} className="sticky bottom-0 z-10 -mx-4 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:mx-0 sm:px-0">
+        <QueuedMessages items={queued} onEdit={editQueued} onDelete={deleteQueued} />
         <div className="material-surface flex items-end gap-2 rounded-[24px] p-1.5 pl-4 shadow-float transition-shadow duration-150 focus-within:shadow-[0_0_0_1.5px_var(--color-link),0_0_0_5px_var(--color-brand-soft),var(--shadow-float)]">
           <label className="min-w-0 flex-1 self-center">
             <span className="sr-only">訊息</span>
@@ -250,15 +361,29 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
               value={input}
               disabled={!ready}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) submit(e); }}
-              placeholder={ready ? `輸入訊息給${speaker}` : '工作電腦準備好之後才能送出'}
+              onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return;
+                if (e.key === 'Enter' && !e.shiftKey) submit(e);
+                if (e.key === 'Escape' && busy) void stopRun();
+              }}
+              placeholder={!ready ? '工作電腦準備好之後才能送出' : busy ? '再傳一則訊息，會排隊' : `輸入訊息給${speaker}`}
               className="block max-h-48 w-full resize-none bg-transparent py-1.5 text-base text-ink placeholder:text-muted focus:outline-none disabled:opacity-60"
             />
           </label>
-          <button disabled={busy || !ready || !input.trim()} aria-label="送出"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-white transition-[transform,background-color,opacity] duration-100 hover:bg-brand-strong active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 disabled:active:scale-100">
-            <svg aria-hidden viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
-          </button>
+          {busy && (
+            <button type="button" onClick={() => void stopRun()} disabled={stopping} aria-label={stopping ? '停止中…' : '停止'}
+              className="flex h-9 min-w-9 shrink-0 items-center justify-center rounded-full bg-sunken text-ink transition-[transform,opacity] duration-100 active:scale-90 disabled:cursor-not-allowed disabled:opacity-60 disabled:active:scale-100">
+              {stopping
+                ? <span aria-hidden className="px-3 text-sm">停止中…</span>
+                : <svg aria-hidden viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2" /></svg>}
+            </button>
+          )}
+          {(!busy || input.trim()) && (
+            <button disabled={!ready || !input.trim()} aria-label={busy ? '排隊' : '送出'}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-white transition-[transform,background-color,opacity] duration-100 hover:bg-brand-strong active:scale-90 disabled:cursor-not-allowed disabled:opacity-30 disabled:active:scale-100">
+              <svg aria-hidden viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
+            </button>
+          )}
         </div>
       </form>
     </div>

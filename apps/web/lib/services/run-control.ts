@@ -51,12 +51,15 @@ export async function startQueuedRun(
   if (!res.ok && res.status !== 409) throw new HttpError(502, `無法開始下一輪（HTTP ${res.status}）`);
 }
 
+/** chatPending：瀏覽器的上一則訊息還在送出，run 可能還沒建立。這時不能開新的一輪，否則上一則會被 409 退回；那一輪第一步就會讀到排隊訊息 */
 export async function addQueued(
-  db: Db, userId: string, threadId: string, text: string, forward: typeof forwardChat = forwardChat,
+  db: Db, userId: string, threadId: string, text: string,
+  { forward = forwardChat, chatPending = false }: { forward?: typeof forwardChat; chatPending?: boolean } = {},
 ): Promise<QueuedView> {
   const { project } = await getOwnThread(db, userId, threadId);
   const { data, error } = await db.from('queued_messages').insert({ thread_id: threadId, text }).select('id, text').single();
   if (error) throw error;
+  if (chatPending) return data;
   // runtime 先寫狀態再查排隊，這裡先寫排隊再查狀態，所以兩邊至少一方看得到。
   // 訊息已經存好，接續失敗時留在排隊區，畫面會把它放回輸入框，不算這次送出失敗
   await startQueuedRun(db, project, threadId, forward).catch((e) => console.error('[queue] 無法開始下一輪', e));

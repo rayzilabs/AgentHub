@@ -11,6 +11,9 @@ export function DelegationCard({ output, task, color, failedText, live }: {
   output?: DelegationOutput; task?: string; color: string; failedText?: string; live: boolean;
 }) {
   const name = output?.name ?? '顧問';
+  // 使用者中斷不算錯誤；整則回覆結束了顧問卻還是處理中，代表 run 中止時顧問來不及回報最後狀態
+  const interrupted = output?.cutoff === 'interrupted'
+    || (!live && failedText === undefined && (!output || output.status === 'working'));
   return (
     <div className="panel my-4 overflow-hidden">
       <div className="flex items-center justify-between gap-3 px-5 pt-4">
@@ -18,13 +21,15 @@ export function DelegationCard({ output, task, color, failedText, live }: {
           <Avatar name={name} color={color} />
           <span className="min-w-0 truncate font-semibold">{name}</span>
         </span>
-        {output?.cutoff === 'stopped'
-          ? <span className="chip chip-seal">逾時</span>
-          : failedText !== undefined || output?.status === 'failed'
-            ? <span className="chip chip-seal">失敗</span>
-            : !output || output.status === 'working'
-              ? <span className="chip chip-brand"><span className="dot-busy" aria-hidden />處理中</span>
-              : <span className="chip chip-sage">完成</span>}
+        {interrupted
+          ? <span className="chip">已中斷</span>
+          : output?.cutoff === 'stopped'
+            ? <span className="chip chip-seal">逾時</span>
+            : failedText !== undefined || output?.status === 'failed'
+              ? <span className="chip chip-seal">失敗</span>
+              : !output || output.status === 'working'
+                ? <span className="chip chip-brand"><span className="dot-busy" aria-hidden />處理中</span>
+                : <span className="chip chip-sage">完成</span>}
       </div>
       <div className="px-5 pb-5">
         {task && (
@@ -45,7 +50,7 @@ export function DelegationCard({ output, task, color, failedText, live }: {
         <ToolSteps tools={output?.tools} ended={!live || failedText !== undefined || (!!output && output.status !== 'working')} />
         {output?.cutoff === 'wrap-up' && <p className="notice notice-warn mt-3">時間到，已提前收尾</p>}
         {failedText !== undefined && <p className="notice notice-error mt-3">{failedText}</p>}
-        {output?.status === 'failed' && <p className="notice notice-error mt-3">{output.error}</p>}
+        {output?.status === 'failed' && !interrupted && <p className="notice notice-error mt-3">{output.error}</p>}
         {output?.message && (
           <div className="mt-3">
             {output.status === 'done'

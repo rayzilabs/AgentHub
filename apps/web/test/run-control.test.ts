@@ -116,7 +116,7 @@ describe('addQueued', () => {
   it('沒有 running run 時觸發 forward，不帶 text', async () => {
     const { owner, project, thread } = await setup();
     const forward = fakeForward();
-    const view = await addQueued(db, owner.id, thread.id, '補充', forward);
+    const view = await addQueued(db, owner.id, thread.id, '補充', { forward });
 
     expect(view).toEqual({ id: expect.any(String), text: '補充' });
     expect(forward).toHaveBeenCalledOnce();
@@ -130,7 +130,15 @@ describe('addQueued', () => {
     const { owner, thread } = await setup();
     await startRun(thread.id);
     const forward = fakeForward();
-    await addQueued(db, owner.id, thread.id, '補充', forward);
+    await addQueued(db, owner.id, thread.id, '補充', { forward });
+    expect(forward).not.toHaveBeenCalled();
+    expect(await queuedTexts(thread.id)).toEqual(['補充']);
+  });
+
+  it('上一則還在送出（chatPending）時不觸發 forward，由那一輪讀走', async () => {
+    const { owner, thread } = await setup();
+    const forward = fakeForward();
+    await addQueued(db, owner.id, thread.id, '補充', { forward, chatPending: true });
     expect(forward).not.toHaveBeenCalled();
     expect(await queuedTexts(thread.id)).toEqual(['補充']);
   });
@@ -138,7 +146,7 @@ describe('addQueued', () => {
   it('接續失敗不影響排隊結果，訊息留著', async () => {
     const { owner, thread } = await setup();
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const view = await addQueued(db, owner.id, thread.id, '補充', vi.fn<typeof forwardChat>(async () => { throw new HttpError(502, '連不上'); }));
+    const view = await addQueued(db, owner.id, thread.id, '補充', { forward: vi.fn<typeof forwardChat>(async () => { throw new HttpError(502, '連不上'); }) });
     expect(view.text).toBe('補充');
     expect(await queuedTexts(thread.id)).toEqual(['補充']);
     expect(log).toHaveBeenCalled();
@@ -148,7 +156,7 @@ describe('addQueued', () => {
   it('別人的對話回 404，不寫入', async () => {
     const { thread } = await setup();
     const other = await seedUser(db);
-    await expect(addQueued(db, other.id, thread.id, '補充', fakeForward())).rejects.toMatchObject({ status: 404 });
+    await expect(addQueued(db, other.id, thread.id, '補充', { forward: fakeForward() })).rejects.toMatchObject({ status: 404 });
     expect(await queuedTexts(thread.id)).toEqual([]);
   });
 });
@@ -157,7 +165,7 @@ describe('editQueued、deleteQueued', () => {
   it('編輯與刪除排隊中的訊息', async () => {
     const { owner, thread } = await setup();
     await startRun(thread.id);
-    const { id } = await addQueued(db, owner.id, thread.id, '原文', fakeForward());
+    const { id } = await addQueued(db, owner.id, thread.id, '原文', { forward: fakeForward() });
     await editQueued(db, owner.id, thread.id, id, '改過');
     expect(await queuedTexts(thread.id)).toEqual(['改過']);
     await deleteQueued(db, owner.id, thread.id, id);
@@ -175,7 +183,7 @@ describe('editQueued、deleteQueued', () => {
     const a = await setup();
     const b = await setup();
     await startRun(a.thread.id);
-    const { id } = await addQueued(db, a.owner.id, a.thread.id, '原文', fakeForward());
+    const { id } = await addQueued(db, a.owner.id, a.thread.id, '原文', { forward: fakeForward() });
     await expect(editQueued(db, b.owner.id, b.thread.id, id, 'x')).rejects.toMatchObject({ status: 409 });
     expect(await queuedTexts(a.thread.id)).toEqual(['原文']);
   });

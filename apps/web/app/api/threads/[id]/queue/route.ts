@@ -9,6 +9,9 @@ export const maxDuration = 300;
 
 export const POST = route(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
   const user = await requireUser(req);
-  const { text } = await readJson(req, z.object({ text: z.string().trim().min(1, '請輸入訊息') }));
-  return addQueued(adminDb(), user.id, (await params).id, text);
+  const { text, chatPending } = await readJson(req, z.object({
+    text: z.string().trim().min(1, '請輸入訊息'),
+    chatPending: z.boolean().optional(),
+  }));
+  return addQueued(adminDb(), user.id, (await params).id, text, { chatPending });
 });
