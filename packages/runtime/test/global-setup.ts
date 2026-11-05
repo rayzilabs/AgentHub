@@ -25,9 +25,11 @@ export default function setup(project: TestProject) {
       if (error) throw error;
       const testUsers = data.users.filter((u) => u.email?.endsWith('@test.local'));
       if (testUsers.length === 0) break;
-      const results = await Promise.all(testUsers.map((u) => db.auth.admin.deleteUser(u.id)));
-      const failed = results.find((r) => r.error);
-      if (failed?.error) throw failed.error;
+      // 逐一刪除：這裡的測試帳號常上百個，同時送出會有連線失敗（fetch failed）
+      for (const u of testUsers) {
+        const { error: deleteError } = await db.auth.admin.deleteUser(u.id);
+        if (deleteError) throw deleteError;
+      }
     }
     // 測試專案隨使用者刪除後，留下的 runtime 帳號也要清掉
     const { data } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
