@@ -293,7 +293,7 @@ export async function destroyProjectSprite(name: string): Promise<void> {
 
 export async function forwardChat(
   spriteUrl: string,
-  body: { thread_id: string; text: string },
+  body: { thread_id: string; text?: string },
   opts: { token?: string; projectToken?: string; dbToken?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
 ): Promise<Response> {
   const token = opts.token ?? env.spritesToken;

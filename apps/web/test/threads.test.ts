@@ -64,6 +64,33 @@ describe('threads service', () => {
     expect(r.error).toBe('模型掛了');
   });
 
+  it('回傳 queued 與 runStatus，cancelled 不帶 error', async () => {
+    const { owner, thread } = await setup();
+    expect(await getThreadMessages(db, owner.id, thread.id)).toMatchObject({ queued: [], runStatus: null });
+
+    const { data: run } = await db.from('runs').insert({ thread_id: thread.id }).select('id').single();
+    await db.from('queued_messages').insert([
+      { thread_id: thread.id, text: '第二則', created_at: '2026-11-05T10:00:01Z' },
+      { thread_id: thread.id, text: '第一則', created_at: '2026-11-05T10:00:00Z' },
+    ]);
+    let r = await getThreadMessages(db, owner.id, thread.id);
+    expect(r.queued.map((q) => q.text)).toEqual(['第一則', '第二則']);
+    expect(r.queued[0]).toEqual({ id: expect.any(String), text: '第一則' });
+    expect(r).toMatchObject({ running: true, runStatus: 'running' });
+
+    await db.from('runs').update({ status: 'cancelled' }).eq('id', run!.id);
+    r = await getThreadMessages(db, owner.id, thread.id);
+    expect(r).toMatchObject({ running: false, error: null, runStatus: 'cancelled' });
+    expect(r.queued).toHaveLength(2);
+  });
+
+  it('超過 20 分鐘沒結束的 run，runStatus 視為 failed', async () => {
+    const { owner, thread } = await setup();
+    const startedAt = new Date(Date.now() - 21 * 60_000).toISOString();
+    await db.from('runs').insert({ thread_id: thread.id, started_at: startedAt });
+    expect(await getThreadMessages(db, owner.id, thread.id)).toMatchObject({ running: false, runStatus: 'failed' });
+  });
+
   it('startedAt 是最新 run 的開始時間；updatedAt 是該 run 訊息中最新的 updated_at（含還沒有內容的 final）', async () => {
     const { owner, thread } = await setup();
     const ui = (id: string, role: string, text: string) => ({ id, role, parts: [{ type: 'text', text }] });

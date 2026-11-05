@@ -7,7 +7,7 @@ export type ToolEvent = { tool: string; state: string; description?: string; sta
 export type ToolTimes = Record<string, { started_at: string; ended_at?: string }>;
 
 /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止 */
-export type Cutoff = 'wrap-up' | 'stopped';
+export type Cutoff = 'wrap-up' | 'stopped' | 'interrupted';
 
 /** 與 packages/runtime/src/ui-stream.ts 的 DeliveredFile 相同；folder 是從根算起的完整路徑 */
 export type DeliveredFile = { file_id: string; name: string; folder: string; size: number };

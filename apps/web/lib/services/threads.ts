@@ -4,9 +4,17 @@ import { defaultRunCheck, INTERRUPTED_ERROR, markRunInterrupted, type RunCheck }
 import type { Db } from '@/lib/supabase/admin';
 import { getOwnProject, type ProjectRow, type ThreadRow } from './projects';
 
+export type QueuedView = { id: string; text: string };
+
+export type RunStatus = 'running' | 'succeeded' | 'failed' | 'cancelled';
+
 export type ThreadMessages = {
   messages: UIMessage[];
+  /** 還沒被 agent 讀到的排隊訊息，由舊到新 */
+  queued: QueuedView[];
   running: boolean;
+  /** 最新一次 run 的結果，還沒有 run 時是 null */
+  runStatus: RunStatus | null;
   error: string | null;
   /** 最新一次 run 的開始時間 */
   startedAt: string | null;
@@ -55,35 +63,38 @@ export async function getOwnThread(db: Db, userId: string, threadId: string): Pr
 
 export async function getThreadMessages(db: Db, userId: string, threadId: string, checkRun: RunCheck = defaultRunCheck(db)): Promise<ThreadMessages> {
   const { project } = await getOwnThread(db, userId, threadId);
-  const [messagesResult, runResult] = await Promise.all([
+  const [messagesResult, runResult, queuedResult] = await Promise.all([
     db.from('messages').select('ui_message, run_id, updated_at').eq('thread_id', threadId).in('kind', ['user', 'final']).order('created_at'),
     db.from('runs').select('id, status, error, started_at').eq('thread_id', threadId).order('started_at', { ascending: false }).limit(1).maybeSingle(),
+    db.from('queued_messages').select('id, text').eq('thread_id', threadId).order('created_at'),
   ]);
   if (messagesResult.error) throw messagesResult.error;
   if (runResult.error) throw runResult.error;
+  if (queuedResult.error) throw queuedResult.error;
 
   const rows = messagesResult.data;
   const messages = rows.map((m) => m.ui_message as UIMessage | null).filter((m): m is UIMessage => !!m);
+  const queued = queuedResult.data;
   const run = runResult.data;
-  if (!run) return { messages, running: false, error: null, startedAt: null, updatedAt: null };
+  if (!run) return { messages, queued, running: false, runStatus: null, error: null, startedAt: null, updatedAt: null };
 
   const updatedAt = rows
     .filter((m) => m.run_id === run.id)
     .reduce<string | null>((max, m) => (max === null || Date.parse(m.updated_at) > Date.parse(max) ? m.updated_at : max), null);
-  const times = { startedAt: run.started_at as string, updatedAt };
+  const base = { messages, queued, startedAt: run.started_at as string, updatedAt };
   if (run.status === 'running') {
     // 直接問 runtime：程序被砍或重啟時，它會明確說不知道這個 run，不必等到 20 分鐘
     if (project.sprite_url && (await checkRun(project.sprite_url, run.id, project.id)) === 'gone') {
-      if (await markRunInterrupted(db, run.id)) return { messages, running: false, error: INTERRUPTED_ERROR, ...times };
+      if (await markRunInterrupted(db, run.id)) return { ...base, running: false, runStatus: 'failed', error: INTERRUPTED_ERROR };
       // 沒改到：問的空檔裡 runtime 剛好寫完結果才回答「不在」，照實際結果回答
       const { data: latest, error } = await db.from('runs').select('status, error').eq('id', run.id).single();
       if (error) throw error;
-      return { messages, running: false, error: latest.status === 'failed' ? latest.error : null, ...times };
+      return { ...base, running: false, runStatus: latest.status, error: latest.status === 'failed' ? latest.error : null };
     }
     const stale = Date.now() - new Date(run.started_at).getTime() > STALE_RUN_MS;
-    return { messages, running: !stale, error: stale ? '這次回覆超過 20 分鐘沒有完成' : null, ...times };
+    return { ...base, running: !stale, runStatus: stale ? 'failed' : 'running', error: stale ? '這次回覆超過 20 分鐘沒有完成' : null };
   }
-  return { messages, running: false, error: run.status === 'failed' ? run.error : null, ...times };
+  return { ...base, running: false, runStatus: run.status, error: run.status === 'failed' ? run.error : null };
 }
 
 export async function listMemories(db: Db, userId: string, projectId: string): Promise<MemoryView[]> {

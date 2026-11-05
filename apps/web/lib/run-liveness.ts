@@ -30,6 +30,29 @@ export async function askRuntime(spriteUrl: string, runId: string, dbToken: stri
   }
 }
 
+/**
+ * 要 runtime 停下這個 run（runtime 的 POST /runs/:id/stop）。
+ * 只有明確回答 stopped=false 才是 gone；舊版 runtime 沒有這個路由，和連不上一樣算 unknown。
+ */
+export async function askStop(
+  spriteUrl: string, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch,
+): Promise<'stopped' | 'gone' | 'unknown'> {
+  try {
+    const res = await fetchImpl(`${spriteUrl}/runs/${encodeURIComponent(runId)}/stop`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.spritesToken}`, 'x-agenthub-db-token': dbToken },
+      signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
+    });
+    if (!res.ok) return 'unknown';
+    const body = (await res.json()) as { stopped?: unknown };
+    if (body.stopped === true) return 'stopped';
+    if (body.stopped === false) return 'gone';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 const lastAsked = new Map<string, number>();
 
 /** 同一個 run 每 15 秒最多問一次（各 Vercel 實例各自節流，夠用） */
