@@ -13,7 +13,7 @@ import {
   uploadSkillsZip, waitFor, type ConsultantFields,
 } from './helpers';
 import {
-  emptyTurn, errorAfterTextTurn, failingModel, hangAfterTextTurn, hangingModel, mockModel, promptText, textTurn, toolTurn,
+  emptyTurn, errorAfterTextTurn, failingModel, hangAfterTextTurn, hangingModel, mockModel, promptText, steppedModel, textTurn, toolTurn,
 } from './mock-model';
 import type { LanguageModel } from 'ai';
 
@@ -89,6 +89,66 @@ const stopRun = (a: ReturnType<typeof createApp>, runId: string, headers: Record
 
 const runIdOf = (threadId: string) =>
   waitFor(async () => (await db.from('runs').select('id').eq('thread_id', threadId).maybeSingle()).data?.id as string | undefined);
+
+const queueMessage = (threadId: string, text: string) => db.from('queued_messages').insert({ thread_id: threadId, text }).throwOnError();
+
+describe('排隊訊息進入步驟', () => {
+  const NOTE = '使用者在你工作途中補充：\\n也看第 7 條';
+
+  it('第二步之前排隊的訊息，出現在第二步與第三步的 prompt', async () => {
+    const env = await seedEnv();
+    const model = steppedModel(
+      [toolTurn('write_file', { path: 'a.md', content: 'a' }, 'call-1'), toolTurn('write_file', { path: 'b.md', content: 'b' }, 'call-2'), textTurn('完成')],
+      { 0: () => queueMessage(env.threadId, '也看第 7 條') },
+    );
+    const res = await post(app(env, model), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'succeeded' });
+
+    expect(promptText(model, 0)).not.toContain('第 7 條');
+    expect(promptText(model, 1)).toContain(NOTE);
+    expect(promptText(model, 2).split(NOTE)).toHaveLength(2);
+    expect((await db.from('queued_messages').select('id').eq('thread_id', env.threadId)).data).toEqual([]);
+  });
+
+  it('final 的 ui_message 有 data-interjection，位置在第一步工具之後；interjection 列存原文', async () => {
+    const env = await seedEnv();
+    const model = steppedModel(
+      [toolTurn('write_file', { path: 'a.md', content: 'a' }, 'call-1'), textTurn('完成')],
+      { 0: () => queueMessage(env.threadId, '也看第 7 條') },
+    );
+    const res = await post(app(env, model), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    await waitForRunDone(db, env.threadId);
+
+    const msgs = await messagesOf(env.threadId);
+    const types: string[] = msgs.find((m) => m.kind === 'final').ui_message.parts.map((p: { type: string }) => p.type);
+    expect(types.indexOf('tool-write_file')).toBeLessThan(types.indexOf('data-interjection'));
+    expect(types.indexOf('data-interjection')).toBeLessThan(types.indexOf('text'));
+    expect(msgs.find((m) => m.kind === 'interjection')).toMatchObject({ content: '也看第 7 條' });
+  });
+
+  it('多顧問：顧問看不到排隊訊息，主管下一步才看到', async () => {
+    const env = await seedEnv({ name: '法務顧問' });
+    await seedConsultant(db, env.projectId, { name: '工程顧問' });
+    await seedManager(db, env.projectId);
+    const model = steppedModel(
+      [
+        toolTurn('assign_task', { consultant_id: env.consultantId, task: '審查' }),
+        toolTurn('write_file', { path: 'a.md', content: 'a' }, 'call-c1'),
+        textTurn('法務意見'),
+        textTurn('總結'),
+      ],
+      { 1: () => queueMessage(env.threadId, '也看第 7 條') },
+    );
+    const res = await post(app(env, model), { thread_id: env.threadId, text: '問題' });
+    await res.text();
+    await waitForRunDone(db, env.threadId);
+
+    expect(promptText(model, 2)).not.toContain('第 7 條');
+    expect(promptText(model, 3)).toContain(NOTE);
+  });
+});
 
 describe('POST /runs/:id/stop', () => {
   const finalOf = async (threadId: string) => (await messagesOf(threadId)).find((m) => m.kind === 'final');

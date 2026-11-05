@@ -7,6 +7,7 @@ import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
 import type { Db } from './db';
 import { errorText, USER_STOP } from './errors';
+import { createInbox } from './inbox';
 import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
 import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
@@ -95,6 +96,7 @@ async function prepareRootAgent(
   const secrets = await loadSecrets(db, config.PROJECT_ID);
   // 一個 run 一份：所有顧問交付的檔案合計不超過上限
   const deliveries: DeliveryBudget = { used: 0 };
+  const inbox = createInbox({ db, threadId, runId });
 
   if (consultants.length === 1) {
     const root = consultants[0];
@@ -105,6 +107,7 @@ async function prepareRootAgent(
       wrapUpAt: clock.soloWrapUpAt,
       gateway,
       env: envs.get(root.id),
+      inbox,
     });
     return { rootId: root.id, streamUI: built.streamUI, close: built.close };
   }
@@ -124,7 +127,7 @@ async function prepareRootAgent(
     });
   };
   const built = await buildManager({
-    db, model, config, manager, consultants, sharedFiles, record, clock, images,
+    db, model, config, manager, consultants, sharedFiles, record, clock, images, inbox,
     runner: createConsultantRunner({
       db, model, config, runId, sharedFiles, secrets, images, envs, deliveries,
       wrapUpAt: clock.consultantWrapUpAt, stopAt: clock.consultantStopAt, gateway,

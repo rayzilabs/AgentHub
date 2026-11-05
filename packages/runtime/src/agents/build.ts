@@ -6,6 +6,7 @@ import {
 import type { Config } from '../config';
 import type { Db } from '../db';
 import { modelErrorText } from '../errors';
+import { withInbox, type Inbox } from '../inbox';
 import { connectMcpServers } from '../mcp';
 import { withToolTimes } from '../tool-clock';
 import { agentDir, skillsDir, type SharedFile } from '../sync';
@@ -79,6 +80,8 @@ export type ConsultantContext = {
   /** deliver_file 登記交付檔案所屬的 run，以及這個 run 所有顧問共用的交付額度；兩者都有才提供 deliver_file */
   runId?: string;
   deliveries?: DeliveryBudget;
+  /** 使用者排隊的訊息；只有根 agent 有，主管派出去的顧問不接 */
+  inbox?: Inbox;
 };
 
 export type PlatformGateway = { baseUrl: string; token: string };
@@ -125,15 +128,17 @@ type StreamableAgent = {
   }>;
 };
 
-function wrapAgent(agent: StreamableAgent, instructions: string, warnings: string[], close: () => Promise<void>): BuiltAgent {
+function wrapAgent(
+  agent: StreamableAgent, instructions: string, warnings: string[], close: () => Promise<void>, inbox?: Inbox,
+): BuiltAgent {
   return {
     instructions,
     warnings,
     close,
     streamUI: async ({ messages, abortSignal }) => {
       const result = await agent.stream({ messages, abortSignal });
-      const ui = result.toUIMessageStream({ generateMessageId: generateId, onError: modelErrorText });
-      return withWarnings(withToolTimes(ui), warnings);
+      const ui = withToolTimes(result.toUIMessageStream({ generateMessageId: generateId, onError: modelErrorText }));
+      return withWarnings(inbox ? inbox.pipe(ui) : ui, warnings);
     },
   };
 }
@@ -185,10 +190,10 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       stopWhen: stepCountIs(MAX_STEPS),
       maxRetries: MODEL_RETRIES,
       onStepEnd: ctx.onStepEnd,
-      prepareStep: wrapUpStep(ctx.wrapUpAt, instructions, CONSULTANT_WRAP_UP),
+      prepareStep: withInbox(wrapUpStep(ctx.wrapUpAt, instructions, CONSULTANT_WRAP_UP), ctx.inbox),
     });
 
-    return wrapAgent(agent, instructions, warnings, mcp.close);
+    return wrapAgent(agent, instructions, warnings, mcp.close, ctx.inbox);
   } catch (e) {
     // 組裝失敗時 MCP 連線（含 stdio 子行程）沒有人會關，先關掉再往上丟
     await mcp.close();
@@ -208,6 +213,7 @@ export type ManagerContext = {
   onStepEnd?: (step: StepLike) => Promise<void> | void;
   clock?: Pick<RunClock, 'consultantWrapUpAt' | 'consultantStopAt'>;
   images?: ImageRegistry;
+  inbox?: Inbox;
 };
 
 export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
@@ -235,7 +241,7 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
     stopWhen: stepCountIs(MAX_STEPS),
     maxRetries: MODEL_RETRIES,
     onStepEnd: ctx.onStepEnd,
-    prepareStep: wrapUpStep(ctx.clock?.consultantStopAt, instructions, MANAGER_WRAP_UP),
+    prepareStep: withInbox(wrapUpStep(ctx.clock?.consultantStopAt, instructions, MANAGER_WRAP_UP), ctx.inbox),
   });
-  return wrapAgent(agent, instructions, [], async () => {});
+  return wrapAgent(agent, instructions, [], async () => {}, ctx.inbox);
 }

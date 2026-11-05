@@ -72,6 +72,18 @@ export function mockModel(...turns: Turn[]) {
   return new MockLanguageModelV4({ doStream: turns });
 }
 
+/** 和 mockModel 相同，但第 n 次呼叫前先跑 before[n]，用來在指定的步驟之間排隊訊息 */
+export function steppedModel(turns: Turn[], before: Record<number, () => PromiseLike<unknown>>) {
+  let call = 0;
+  return new MockLanguageModelV4({
+    doStream: async () => {
+      const n = call++;
+      await before[n]?.();
+      return turns[n];
+    },
+  });
+}
+
 export function failingModel(message: string) {
   return new MockLanguageModelV4({
     doStream: async () => {
