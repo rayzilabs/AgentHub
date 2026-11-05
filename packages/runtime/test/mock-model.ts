@@ -56,6 +56,18 @@ export function errorAfterTextTurn(text: string, message: string): Turn {
   };
 }
 
+/** 吐出一段文字後就停住，不結束也不理會中止 */
+export function hangAfterTextTurn(text: string): Turn {
+  return {
+    stream: new ReadableStream({
+      start(c) {
+        c.enqueue({ type: 'text-start', id: 't1' });
+        c.enqueue({ type: 'text-delta', id: 't1', delta: text });
+      },
+    }),
+  };
+}
+
 export function mockModel(...turns: Turn[]) {
   return new MockLanguageModelV4({ doStream: turns });
 }

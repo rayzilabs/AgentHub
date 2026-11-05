@@ -1,4 +1,4 @@
-import { readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai';
+import { generateId, readUIMessageStream, type UIMessage, type UIMessageChunk } from 'ai';
 import { errorText } from './errors';
 import { truncate } from './tools/bash';
 
@@ -91,6 +91,12 @@ export function toolRecords(m: UIMessage): ToolRecord[] {
 /** 有沒有任何值得存下來的內容（文字或工具紀錄）；算不算有回覆要看 textOf */
 export function hasContent(m: UIMessage | undefined): m is UIMessage {
   return !!m && m.parts.some((p) => p.type === 'text' || p.type === 'dynamic-tool' || p.type.startsWith('tool-'));
+}
+
+/** 補上「已由你中斷」的標記；還沒有任何內容時新建一則訊息，畫面才有地方顯示 */
+export function interruptedMessage(m: UIMessage | undefined): UIMessage {
+  const base: UIMessage = m ?? { id: generateId(), role: 'assistant', parts: [] };
+  return { ...base, parts: [...base.parts, { type: 'data-interrupted', data: {} }] };
 }
 
 export async function* readSnapshots(

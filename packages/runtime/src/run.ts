@@ -6,7 +6,7 @@ import type { DeliveryBudget } from './tools/deliver';
 import { createConsultantRunner, type RecordSpeech } from './consultant';
 import type { Config } from './config';
 import type { Db } from './db';
-import { errorText } from './errors';
+import { errorText, USER_STOP } from './errors';
 import { startKeepAlive } from './keepalive';
 import { groupSecrets, loadInstances, loadSecrets } from './project-store';
 import { progressSaver, PROGRESS_INTERVAL_MS } from './progress';
@@ -18,14 +18,16 @@ import {
   type RunResult,
 } from './run-store';
 import { agentDir, skillsDir, syncSharedFiles, syncSkills } from './sync';
-import { consumeToEnd, hasContent, textOf, toolRecords } from './ui-stream';
+import { consumeToEnd, hasContent, interruptedMessage, textOf, toolRecords } from './ui-stream';
 import { usageRecorder } from './usage';
 
 export const RUN_TIMEOUT_MS = 15 * 60_000;
+/** 按停止後等串流自己結束的時間，超過就強制收尾 */
+export const STOP_GRACE_MS = 10_000;
 const TIMEOUT_ERROR = 'run 超過 15 分鐘';
 const NO_REPLY_ERROR = '模型沒有產生回覆';
 
-/** runTimeoutMs、progressIntervalMs 只給測試縮短時間用，正式環境一律用預設值 */
+/** runTimeoutMs、progressIntervalMs、stopGraceMs 只給測試縮短時間用，正式環境一律用預設值 */
 export type RunDeps = {
   /** 用 Vercel 附上的 runtime 帳號通行證開這次 run 的資料庫連線 */
   openDb: (dbToken: string) => Db;
@@ -34,6 +36,7 @@ export type RunDeps = {
   config: Config;
   runTimeoutMs?: number;
   progressIntervalMs?: number;
+  stopGraceMs?: number;
 };
 
 type ActiveDeps = Omit<RunDeps, 'openDb' | 'modelFor'> & { db: Db; model: LanguageModel; images: ImageRegistry };
@@ -178,23 +181,42 @@ export async function startRun(
   await assertThreadInProject(db, req.threadId, config.PROJECT_ID);
   await cleanOrphanRunsOnce(runDeps, db);
   const runId = await createRun(db, req.threadId);
-  activeRuns.add(runId);
+  const abort = new AbortController();
+  let stopped = false;
+  let finished = false;
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  let endGrace!: () => void;
+  const graceOver = new Promise<'deadline'>((resolve) => {
+    endGrace = () => resolve('deadline');
+  });
+  let flushProgress = () => {};
+  const requestStop = () => {
+    if (stopped || finished) return;
+    stopped = true;
+    abort.abort(USER_STOP);
+    flushProgress();
+    graceTimer = setTimeout(endGrace, deps.stopGraceMs ?? STOP_GRACE_MS);
+  };
+  activeRuns.set(runId, requestStop);
 
   const keepAlive = await startKeepAlive(config.SPRITE_API_SOCK, `run-${runId}`);
   const runTimeoutMs = deps.runTimeoutMs ?? RUN_TIMEOUT_MS;
   const clock = createRunClock(Date.now(), runTimeoutMs);
   // 時間到先通知 agent 中止；工具或串流卡住、中止沒有效果時，再過一段時間強制收尾
   const hardDeadlineMs = runTimeoutMs + Math.min(30_000, runTimeoutMs);
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), runTimeoutMs);
+  let timerFired = false;
+  const timer = setTimeout(() => {
+    timerFired = true;
+    abort.abort();
+  }, runTimeoutMs);
   let hardTimer: ReturnType<typeof setTimeout> | undefined;
   let closeAgent: (() => Promise<void>) | undefined;
-  let finished = false;
   const finish = async (result: RunResult) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
     clearTimeout(hardTimer);
+    clearTimeout(graceTimer);
     await closeAgent?.().catch(() => undefined);
     await finishRun(db, runId, result).catch((e) => console.error('[run] 無法更新 run 狀態', errorText(e)));
     // 狀態寫完才移除：平台在「已移除、狀態還沒寫」的空檔問到時，會誤判成中斷
@@ -216,6 +238,15 @@ export async function startRun(
     const root = await prepareRootAgent(deps, runId, req.threadId, clock, gateway);
     closeAgent = root.close;
     rootId = root.rootId;
+    // 準備階段（同步檔案、裝套件）不能中止，等它做完才處理停止
+    if (stopped) {
+      await insertMessage(db, {
+        thread_id: req.threadId, run_id: runId, speaker_instance_id: rootId, kind: 'final', content: '',
+        ui_message: interruptedMessage(undefined),
+      });
+      await finish({ status: 'cancelled' });
+      return createUIMessageStreamResponse({ stream: new ReadableStream({ start: (c) => c.close() }) });
+    }
     // final 先插入，執行中定期更新，輪詢的前端隨時看得到進度
     finalId = await insertMessage(db, {
       thread_id: req.threadId, run_id: runId, speaker_instance_id: rootId, kind: 'final', content: '',
@@ -238,15 +269,28 @@ export async function startRun(
     touch: () => touchMessage(db, finalId),
     intervalMs: deps.progressIntervalMs ?? PROGRESS_INTERVAL_MS,
   });
+  flushProgress = progress.flush;
 
   const settle = async (): Promise<RunResult> => {
     const deadline = new Promise<'deadline'>((resolve) => {
       hardTimer = setTimeout(() => resolve('deadline'), hardDeadlineMs);
     });
-    const outcome = await Promise.race([consumeToEnd(forServer, (m) => progress.offer(m)), deadline]);
-    // 串流結束當下就判定是否逾時，不受之後寫入資料庫花的時間影響
-    const timedOut = abort.signal.aborted;
+    let latest: UIMessage | undefined;
+    const consumed = consumeToEnd(forServer, (m) => {
+      latest = m;
+      progress.offer(m);
+    });
+    const outcome = await Promise.race([consumed, deadline, graceOver]);
+    // 串流結束當下就判定結果，不受之後寫入資料庫花的時間影響
+    const timedOut = timerFired;
+    const interrupted = stopped;
     await progress.stop();
+    if (interrupted) {
+      stop();
+      const partial = outcome === 'deadline' ? latest : outcome.final ?? latest;
+      await saveFinal(interruptedMessage(partial)).catch((e) => console.error('[run] 無法儲存中斷的回覆', errorText(e)));
+      return { status: 'cancelled' };
+    }
     if (outcome === 'deadline') {
       stop();
       if (!progress.saved) await dropFinal();

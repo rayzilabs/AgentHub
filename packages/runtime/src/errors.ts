@@ -4,6 +4,13 @@ export class SyncError extends Error {}
 /** 顧問超過 RunClock.consultantStopAt 被強制停止 */
 export class ConsultantStoppedError extends Error {}
 
+/** 使用者按停止時的中止原因，用來和逾時分開 */
+export const USER_STOP = 'user-stop';
+
+export function isUserStop(signal?: AbortSignal): boolean {
+  return signal?.reason === USER_STOP;
+}
+
 export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }

@@ -9,6 +9,8 @@ export const HEARTBEAT_MS = 20_000;
 export type ProgressSaver = {
   /** 交給它最新的快照：依間隔節流，有內容才存 */
   offer(m: UIMessage): void;
+  /** 不等間隔，把還沒存的最新快照排入寫入 */
+  flush(): void;
   /** 停止心跳與接受快照，並等已排入的寫入完成 */
   stop(): Promise<void>;
   /** 是否至少成功存過一次快照 */
@@ -59,6 +61,7 @@ export function progressSaver(opts: {
       if (wait <= 0) flush();
       else trailing ??= setTimeout(flush, wait);
     },
+    flush,
     async stop() {
       stopped = true;
       clearInterval(heartbeat);

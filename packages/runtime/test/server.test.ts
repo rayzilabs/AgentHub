@@ -4,6 +4,7 @@ import { createServer, type IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { activeRuns } from '../src/active-runs';
 import { createApp } from '../src/server';
 import { skillsDir } from '../src/sync';
 import type { Db } from '../src/db';
@@ -12,7 +13,7 @@ import {
   uploadSkillsZip, waitFor, type ConsultantFields,
 } from './helpers';
 import {
-  emptyTurn, errorAfterTextTurn, failingModel, hangingModel, mockModel, promptText, textTurn, toolTurn,
+  emptyTurn, errorAfterTextTurn, failingModel, hangAfterTextTurn, hangingModel, mockModel, promptText, textTurn, toolTurn,
 } from './mock-model';
 import type { LanguageModel } from 'ai';
 
@@ -80,6 +81,115 @@ describe('GET /runs/:id', () => {
     const a = app(env, mockModel(textTurn('好')));
     expect((await a.request(`/runs/${randomUUID()}`)).status).toBe(401);
     expect((await a.request(`/runs/${randomUUID()}`, { headers: { 'x-agenthub-db-token': 't' } })).status).toBe(401);
+  });
+});
+
+describe('POST /runs/:id/stop', () => {
+  const stopRun = (a: ReturnType<typeof createApp>, runId: string, headers: Record<string, string> = { 'x-agenthub-db-token': 'db-token' }) =>
+    a.request(`/runs/${runId}/stop`, { method: 'POST', headers });
+  const runIdOf = (threadId: string) =>
+    waitFor(async () => (await db.from('runs').select('id').eq('thread_id', threadId).maybeSingle()).data?.id as string | undefined);
+  const finalOf = async (threadId: string) => (await messagesOf(threadId)).find((m) => m.kind === 'final');
+  const graceApp = (env: Awaited<ReturnType<typeof seedEnv>>, model: LanguageModel, stopGraceMs: number) =>
+    createApp({ openDb: () => db, modelFor: () => model, config: env.config, stopGraceMs });
+  const INTERRUPTED = { type: 'data-interrupted', data: {} };
+
+  it('停止執行中的 run：status=cancelled、error 為 null、保留已產生文字、有 data-interrupted', async () => {
+    const env = await seedEnv();
+    const a = app(env, mockModel(textTurn('一段要講很久的回答'.repeat(20), 100)), undefined, 10);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    const runId = await runIdOf(env.threadId);
+    await waitFor(async () => ((await finalOf(env.threadId))?.content ? true : undefined));
+
+    expect(await (await stopRun(a, runId)).json()).toEqual({ stopped: true });
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled', error: null });
+    const final = (await finalOf(env.threadId))!;
+    expect(final.content).toMatch(/^一段/);
+    expect(final.ui_message.parts.at(-1)).toEqual(INTERRUPTED);
+  });
+
+  it('沒有任何內容時也留下 final 與中斷標記', async () => {
+    const env = await seedEnv();
+    const a = graceApp(env, hangingModel(), 50);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    await stopRun(a, await runIdOf(env.threadId));
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled', error: null });
+    const final = (await finalOf(env.threadId))!;
+    expect(final.content).toBe('');
+    expect(final.ui_message.role).toBe('assistant');
+    expect(final.ui_message.parts).toEqual([INTERRUPTED]);
+  });
+
+  it('模型不理會中止：寬限時間後強制收尾，保留已串出的文字', async () => {
+    const env = await seedEnv();
+    const a = graceApp(env, mockModel(hangAfterTextTurn('已經寫出來的內容')), 50);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    const runId = await runIdOf(env.threadId);
+    await waitFor(async () => ((await finalOf(env.threadId))?.content ? true : undefined));
+    const start = Date.now();
+    await stopRun(a, runId);
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled', error: null });
+    expect(Date.now() - start).toBeLessThan(10_000);
+    const final = (await finalOf(env.threadId))!;
+    expect(final.content).toBe('已經寫出來的內容');
+    expect(final.ui_message.parts.at(-1)).toEqual(INTERRUPTED);
+  });
+
+  it('重複停止回 stopped=true，run 結束後回 stopped=false，都不報錯', async () => {
+    const env = await seedEnv();
+    const a = graceApp(env, hangingModel(), 200);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    const runId = await runIdOf(env.threadId);
+
+    expect(await (await stopRun(a, runId)).json()).toEqual({ stopped: true });
+    expect(await (await stopRun(a, runId)).json()).toEqual({ stopped: true });
+    await res.text();
+    await waitForRunDone(db, env.threadId);
+    await waitFor(async () => (activeRuns.has(runId) ? undefined : true));
+
+    const again = await stopRun(a, runId);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ stopped: false });
+  });
+
+  it('準備階段就停止：不呼叫模型，run 為 cancelled，有中斷標記', async () => {
+    const env = await seedEnv();
+    // 準備階段第一件事是讀顧問，在這時按停止才保證落在串流開始之前
+    const stoppingDb = new Proxy(db, {
+      get(target, key) {
+        if (key !== 'from') return Reflect.get(target, key);
+        return (table: string) => {
+          if (table === 'agent_instances') for (const stop of activeRuns.values()) stop();
+          return target.from(table);
+        };
+      },
+    });
+    const model = mockModel(textTurn('不該出現'));
+    const a = createApp({ openDb: () => stoppingDb, modelFor: () => model, config: env.config });
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled', error: null });
+    expect(model.doStreamCalls).toHaveLength(0);
+    expect((await finalOf(env.threadId))!.ui_message.parts).toEqual([INTERRUPTED]);
+  });
+
+  it('沒有通行證回 401', async () => {
+    const env = await seedEnv();
+    const res = await stopRun(app(env, mockModel()), randomUUID(), {});
+    expect(res.status).toBe(401);
+  });
+
+  it('查不到這個 run 回 401', async () => {
+    const env = await seedEnv();
+    const res = await stopRun(app(env, mockModel()), randomUUID());
+    expect(res.status).toBe(401);
   });
 });
 

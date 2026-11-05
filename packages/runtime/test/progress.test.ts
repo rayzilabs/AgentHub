@@ -31,6 +31,19 @@ describe('progressSaver', () => {
     expect(saved).toEqual(['A', 'AB']);
   });
 
+  it('flush 不等間隔就存下最新快照，之後仍接受新快照', async () => {
+    const saved: string[] = [];
+    const p = progressSaver({ save: async (m) => { saved.push(textOf(m)); }, touch: noop, intervalMs: 10_000, heartbeatMs: 10_000 });
+    p.offer(msg('A'));
+    p.offer(msg('AB'));
+    p.flush();
+    await sleep(10);
+    expect(saved).toEqual(['A', 'AB']);
+    p.offer(msg('ABC'));
+    await p.stop();
+    expect(saved).toEqual(['A', 'AB', 'ABC']);
+  });
+
   it('依序寫入：前一筆還沒寫完不會並行', async () => {
     let active = 0;
     let maxActive = 0;
