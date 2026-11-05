@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createRun, finishRun, insertMessage, loadHistory } from '../src/run-store';
 import { createApp } from '../src/server';
 import {
   runtimeDb, runtimeToken, seedConsultant, seedProject, seedSharedFile, seedTemplate, seedThread, seedUser, testConfig, testDb, tmpRoots,
@@ -115,5 +116,16 @@ describe('以 runtime 帳號通行證執行', () => {
     const client = runtimeDb(await runtimeToken(db, env.projectId));
     const { error } = await client.from('messages').select('speaker_instance_id').eq('thread_id', env.threadId);
     expect(error).toBeNull();
+  });
+
+  it('runtime 帳號組得出被中斷那一輪的歷史', async () => {
+    const env = await seed();
+    const runId = await createRun(db, env.threadId);
+    const base = { thread_id: env.threadId, run_id: runId };
+    await insertMessage(db, { ...base, speaker_instance_id: null, kind: 'user', content: '問題' });
+    await insertMessage(db, { ...base, speaker_instance_id: env.consultantId, kind: 'delegation', content: '顧問報告' });
+    await finishRun(db, runId, { status: 'cancelled' });
+    const history = await loadHistory(runtimeDb(await runtimeToken(db, env.projectId)), env.threadId);
+    expect(history[1].content).toContain('【法務顧問】\n顧問報告');
   });
 });

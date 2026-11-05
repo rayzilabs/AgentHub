@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, RunConflictError } from '../src/errors';
 import {
-  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, insertMessage, loadHistory, touchMessage,
-  updateMessage,
+  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, hasQueued, insertMessage, INTERRUPTED_HEADER,
+  loadHistory, takeQueued, touchMessage, updateMessage,
 } from '../src/run-store';
-import { seedProject, seedThread, seedUser, testDb } from './helpers';
+import type { MessageKind } from '../src/types';
+import { seedConsultant, seedProject, seedThread, seedUser, testDb } from './helpers';
 
 const db = testDb();
 
@@ -118,5 +119,134 @@ describe('進度存檔', () => {
     await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'user', content: '問題' });
     await insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: null, kind: 'final', content: '' });
     expect(await loadHistory(db, threadId)).toEqual([{ role: 'user', content: '問題' }]);
+  });
+});
+
+describe('排隊訊息', () => {
+  async function queue(threadId: string, ...rows: { text: string; created_at?: string }[]) {
+    await db.from('queued_messages').insert(rows.map((r) => ({ thread_id: threadId, ...r }))).throwOnError();
+  }
+
+  it('takeQueued 依時間回傳，第二次取不到', async () => {
+    const { threadId } = await setup();
+    await queue(threadId, { text: 'b', created_at: '2026-11-05T10:00:01Z' }, { text: 'a', created_at: '2026-11-05T10:00:00Z' });
+    expect((await takeQueued(db, threadId)).map((m) => m.text)).toEqual(['a', 'b']);
+    expect(await takeQueued(db, threadId)).toEqual([]);
+  });
+
+  it('takeQueued 同時取走時每則只給一方', async () => {
+    const { threadId } = await setup();
+    await queue(threadId, { text: 'a' }, { text: 'b' });
+    const [one, two] = await Promise.all([takeQueued(db, threadId), takeQueued(db, threadId)]);
+    expect([...one, ...two].map((m) => m.text).sort()).toEqual(['a', 'b']);
+  });
+
+  it('hasQueued 反映這串對話有沒有排隊訊息', async () => {
+    const { threadId } = await setup();
+    expect(await hasQueued(db, threadId)).toBe(false);
+    await queue(threadId, { text: 'a' });
+    expect(await hasQueued(db, threadId)).toBe(true);
+  });
+});
+
+describe('loadHistory 組裝插話與中斷', () => {
+  const message = (threadId: string, runId: string, kind: MessageKind, content: string, speaker: string | null = null) =>
+    insertMessage(db, { thread_id: threadId, run_id: runId, speaker_instance_id: speaker, kind, content });
+
+  it('interjection 排在同 run 的 final 之前', async () => {
+    const { threadId } = await setup();
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'final', '回答');
+    await message(threadId, runId, 'interjection', '補充一');
+    await message(threadId, runId, 'interjection', '補充二');
+    expect(await loadHistory(db, threadId)).toEqual([
+      { role: 'user', content: '問題' },
+      { role: 'user', content: '補充一' },
+      { role: 'user', content: '補充二' },
+      { role: 'assistant', content: '回答' },
+    ]);
+  });
+
+  it('一般完成的 run 不帶 delegation', async () => {
+    const { threadId } = await setup();
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'final', '回答');
+    await message(threadId, runId, 'delegation', '顧問報告');
+    await finishRun(db, runId, { status: 'succeeded' });
+    expect(await loadHistory(db, threadId)).toEqual([
+      { role: 'user', content: '問題' },
+      { role: 'assistant', content: '回答' },
+    ]);
+  });
+
+  it('cancelled 的 run 帶入報告並標明顧問', async () => {
+    const { threadId, projectId } = await setup();
+    const speaker = await seedConsultant(db, projectId, { name: '授信顧問' });
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'final', '主管寫到一半');
+    await message(threadId, runId, 'delegation', '顧問報告', speaker);
+    await finishRun(db, runId, { status: 'cancelled' });
+    expect((await db.from('runs').select('error').eq('id', runId).single()).data!.error).toBeNull();
+    expect(await loadHistory(db, threadId)).toEqual([
+      { role: 'user', content: '問題' },
+      { role: 'assistant', content: `${INTERRUPTED_HEADER}\n\n主管寫到一半\n\n【授信顧問】\n顧問報告` },
+    ]);
+  });
+
+  it('cancelled 的 run 沒有 final 文字也帶入報告', async () => {
+    const { threadId, projectId } = await setup();
+    const speaker = await seedConsultant(db, projectId, { name: '授信顧問' });
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'final', '');
+    await message(threadId, runId, 'delegation', '顧問報告', speaker);
+    await finishRun(db, runId, { status: 'cancelled' });
+    expect(await loadHistory(db, threadId)).toEqual([
+      { role: 'user', content: '問題' },
+      { role: 'assistant', content: `${INTERRUPTED_HEADER}\n\n【授信顧問】\n顧問報告` },
+    ]);
+  });
+
+  it('cancelled 的 run 沒有 final 列時在該輪最後補一則', async () => {
+    const { threadId, projectId } = await setup();
+    const speaker = await seedConsultant(db, projectId, { name: '授信顧問' });
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'delegation', '顧問報告', speaker);
+    await finishRun(db, runId, { status: 'cancelled' });
+    const nextRun = await createRun(db, threadId);
+    await message(threadId, nextRun, 'user', '繼續');
+    expect(await loadHistory(db, threadId)).toEqual([
+      { role: 'user', content: '問題' },
+      { role: 'assistant', content: `${INTERRUPTED_HEADER}\n\n【授信顧問】\n顧問報告` },
+      { role: 'user', content: '繼續' },
+    ]);
+  });
+
+  it('cancelled 的 run 什麼內容都沒有時不放進歷史', async () => {
+    const { threadId } = await setup();
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'final', '');
+    await finishRun(db, runId, { status: 'cancelled' });
+    expect(await loadHistory(db, threadId)).toEqual([{ role: 'user', content: '問題' }]);
+  });
+
+  it('報告列不佔歷史上限', async () => {
+    const { threadId, projectId } = await setup();
+    const speaker = await seedConsultant(db, projectId, { name: '授信顧問' });
+    const runId = await createRun(db, threadId);
+    await message(threadId, runId, 'user', '問題');
+    await message(threadId, runId, 'final', '進度');
+    await message(threadId, runId, 'delegation', '報告一', speaker);
+    await message(threadId, runId, 'delegation', '報告二', speaker);
+    await message(threadId, runId, 'delegation', '報告三', speaker);
+    await finishRun(db, runId, { status: 'cancelled' });
+    const history = await loadHistory(db, threadId, 2);
+    expect(history).toHaveLength(2);
+    expect(history[1].content).toContain('報告三');
   });
 });
