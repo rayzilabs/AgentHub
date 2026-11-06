@@ -12,9 +12,11 @@ export default function setup() {
       if (error) throw error;
       const testUsers = data.users.filter((u) => u.email?.endsWith('@test.local'));
       if (testUsers.length === 0) break;
-      const results = await Promise.all(testUsers.map((u) => db.auth.admin.deleteUser(u.id)));
-      const failed = results.find((r) => r.error);
-      if (failed?.error) throw failed.error;
+      // 逐一刪除：這裡的測試帳號常上百個，同時送出會有連線失敗（fetch failed）
+      for (const u of testUsers) {
+        const { error: deleteError } = await db.auth.admin.deleteUser(u.id);
+        if (deleteError) throw deleteError;
+      }
     }
     // 測試範本隨使用者刪除後，Storage 裡的代管 MCP 套件不會跟著刪
     const { removeOrphanBundles } = await import('@/lib/services/hosted-mcp');
