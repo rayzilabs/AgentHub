@@ -229,6 +229,38 @@ describe('排隊訊息接續下一輪', () => {
     expect(await queuedTexts(env.threadId)).toEqual(['來不及讀到']);
   });
 
+  it('continue 在取消 keepalive 登記之前送出：取消登記後 Sprite 會休眠，請求就送不出去', async () => {
+    const env = await seedEnv();
+    const events: string[] = [];
+    const sock = process.platform === 'win32'
+      ? `\\\\.\\pipe\\ka-${randomUUID()}`
+      : path.join(env.roots.agentsRoot, '..', `ka-${randomUUID()}.sock`);
+    const tasks = createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        if (req.method === 'DELETE') events.push('keepalive-released');
+        res.statusCode = req.method === 'DELETE' ? 204 : 200;
+        res.end();
+      });
+    });
+    await new Promise<void>((resolve) => tasks.listen(sock, resolve));
+    try {
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        events.push('continue');
+        return new Response(null, { status: 200 });
+      });
+      const model = steppedModel([textTurn('完成')], { 0: () => queueMessage(env.threadId, '補充') });
+      const a = createApp({ openDb: () => db, modelFor: () => model, config: { ...env.config, SPRITE_API_SOCK: sock }, fetchImpl });
+      await (await post(a, { thread_id: env.threadId, text: '問題' })).text();
+
+      await waitFor(async () => (events.includes('keepalive-released') ? true : undefined));
+      expect(events).toEqual(['continue', 'keepalive-released']);
+    } finally {
+      tasks.closeAllConnections();
+      await new Promise<void>((resolve) => tasks.close(() => resolve()));
+    }
+  });
+
   it('正常結束且沒有排隊：不呼叫 continue', async () => {
     const env = await seedEnv();
     const fetchImpl = fakeFetch();
@@ -337,6 +369,27 @@ describe('POST /runs/:id/stop', () => {
     const final = (await finalOf(env.threadId))!;
     expect(final.content).toMatch(/^一段/);
     expect(final.ui_message.parts.at(-1)).toEqual(INTERRUPTED);
+  });
+
+  it('工具做完後停止：final 內容帶已完成步驟的描述，下一輪看得到做到哪', async () => {
+    const env = await seedEnv();
+    const model = steppedModel(
+      [toolTurn('write_file', { path: 'a.md', content: 'a', description: '寫草稿' }), textTurn('不該出現')],
+      { 1: () => new Promise(() => {}) },
+    );
+    const a = graceApp(env, model, 50);
+    const res = await post(a, { thread_id: env.threadId, text: '問題' });
+    const runId = await runIdOf(env.threadId);
+    await waitFor(async () => (model.doStreamCalls.length > 0 ? true : undefined));
+    await waitFor(async () => {
+      const final = await finalOf(env.threadId);
+      return JSON.stringify(final?.ui_message ?? {}).includes('output-available') ? true : undefined;
+    });
+    await stopRun(a, runId);
+    await res.text();
+
+    expect(await waitForRunDone(db, env.threadId)).toMatchObject({ status: 'cancelled', error: null });
+    expect((await finalOf(env.threadId))!.content).toContain('已完成的步驟：');
   });
 
   it('沒有任何內容時也留下 final 與中斷標記', async () => {

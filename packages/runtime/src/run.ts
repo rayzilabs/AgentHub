@@ -19,7 +19,7 @@ import {
   touchMessage, updateMessage, type RunResult,
 } from './run-store';
 import { agentDir, skillsDir, syncSharedFiles, syncSkills } from './sync';
-import { consumeToEnd, hasContent, interruptedMessage, textOf, toolRecords } from './ui-stream';
+import { consumeToEnd, hasContent, interruptedMessage, interruptedProgress, textOf, toolRecords } from './ui-stream';
 import { usageRecorder } from './usage';
 
 export const RUN_TIMEOUT_MS = 15 * 60_000;
@@ -236,7 +236,7 @@ export async function startRun(
   }, runTimeoutMs);
   let hardTimer: ReturnType<typeof setTimeout> | undefined;
   let closeAgent: (() => Promise<void>) | undefined;
-  const finish = async (result: RunResult) => {
+  const finish = async (result: RunResult, beforeRelease?: () => Promise<void>) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
@@ -246,6 +246,8 @@ export async function startRun(
     await finishRun(db, runId, result).catch((e) => console.error('[run] 無法更新 run 狀態', errorText(e)));
     // 狀態寫完才移除：平台在「已移除、狀態還沒寫」的空檔問到時，會誤判成中斷
     activeRuns.delete(runId);
+    // 取消登記後 Sprite 會休眠，還沒送出的請求會凍結到有人叫醒它為止，所以收尾要做的事都放在這之前
+    await beforeRelease?.();
     await keepAlive.stop();
   };
 
@@ -318,7 +320,9 @@ export async function startRun(
     if (interrupted) {
       stop();
       const partial = outcome === 'deadline' ? latest : outcome.final ?? latest;
-      await saveFinal(interruptedMessage(partial)).catch((e) => console.error('[run] 無法儲存中斷的回覆', errorText(e)));
+      const m = interruptedMessage(partial);
+      await updateMessage(db, finalId, { content: interruptedProgress(partial), ui_message: m, tool_events: toolRecords(m) })
+        .catch((e) => console.error('[run] 無法儲存中斷的回覆', errorText(e)));
       return { status: 'cancelled' };
     }
     if (outcome === 'deadline') {
@@ -350,9 +354,10 @@ export async function startRun(
     } finally {
       // 無論收尾成功與否都要停掉心跳並釋放 run，否則這串對話會一直卡在 running
       await progress.stop();
-      await finish(result);
+      await finish(result, async () => {
+        if (result.status === 'succeeded' && !stopped) await continueQueued(deps, req.threadId, req.platformToken);
+      });
     }
-    if (result.status === 'succeeded' && !stopped) await continueQueued(deps, req.threadId, req.platformToken);
   })().catch((e) => console.error('[run] persist crashed', errorText(e)));
 
   return createUIMessageStreamResponse({ stream: forClient });

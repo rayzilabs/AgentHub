@@ -8,6 +8,7 @@ export type RunResult = { status: 'succeeded' } | { status: 'cancelled' } | { st
 export type QueuedMessage = { id: string; text: string };
 
 export const INTERRUPTED_HEADER = '（這一輪被使用者中斷，以下是中斷當時的進度）';
+export const INTERRUPTED_NO_PROGRESS = '中斷前還沒有完成任何步驟，也還沒有寫出內容。';
 
 export type NewMessage = {
   thread_id: string;
@@ -114,9 +115,10 @@ async function interruptedReports(db: Db, rows: HistoryRow[]): Promise<Map<strin
   return reports;
 }
 
+/** 沒有任何進度也要留下中斷紀錄，否則下一輪看到的是連續的使用者訊息，不知道上一輪被中斷過 */
 function interruptedText(finalText: string, reports: string[]): string {
   const parts = [finalText, ...reports].filter(Boolean);
-  return parts.length ? [INTERRUPTED_HEADER, ...parts].join('\n\n') : '';
+  return [INTERRUPTED_HEADER, ...(parts.length ? parts : [INTERRUPTED_NO_PROGRESS])].join('\n\n');
 }
 
 export async function loadHistory(db: Db, threadId: string, limit = 50): Promise<ModelMessage[]> {

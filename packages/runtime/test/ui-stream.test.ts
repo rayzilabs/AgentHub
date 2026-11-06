@@ -1,6 +1,8 @@
 import type { UIMessage, UIMessageChunk } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { consumeToEnd, hasContent, readSnapshots, textOf, textOnly, toolEvents, toolRecords } from '../src/ui-stream';
+import {
+  consumeToEnd, hasContent, interruptedProgress, readSnapshots, textOf, textOnly, toolEvents, toolRecords,
+} from '../src/ui-stream';
 
 function chunks(list: UIMessageChunk[]): ReadableStream<UIMessageChunk> {
   return new ReadableStream({
@@ -61,6 +63,25 @@ describe('ui-stream', () => {
     // 已取走的排隊訊息只存在 final 裡，刪掉 final 這則訊息就從畫面消失了
     expect(hasContent({ id: 'y', role: 'assistant', parts: [{ type: 'data-interjection', id: 'q', data: { id: 'q', text: '補充' } }] } as UIMessage)).toBe(true);
     expect(hasContent({ id: 'y', role: 'assistant', parts: [{ type: 'data-warning', data: { text: '提醒' } }] } as UIMessage)).toBe(false);
+  });
+
+  it('interruptedProgress：已完成與進行中的步驟描述加上已寫出的文字，不含工具輸出', () => {
+    const m = {
+      id: 'x',
+      role: 'assistant',
+      parts: [
+        { type: 'tool-bash', toolCallId: 'c1', state: 'output-available', input: { command: 'ls', description: '列出檔案' }, output: { output: '機密輸出' } },
+        { type: 'text', text: '先看過檔案了' },
+        { type: 'tool-read_file', toolCallId: 'c2', state: 'output-available', input: { path: 'a.md' }, output: '機密內容' },
+        { type: 'tool-bash', toolCallId: 'c3', state: 'output-error', input: { command: 'x', description: '失敗的步驟' }, errorText: '錯誤' },
+        { type: 'tool-bash', toolCallId: 'c4', state: 'input-available', input: { command: 'sleep 90', description: '長任務' } },
+      ],
+    } as unknown as UIMessage;
+    const text = interruptedProgress(m);
+    expect(text).toBe('已完成的步驟：列出檔案；read_file\n\n中斷時正在進行：長任務\n\n先看過檔案了');
+    expect(text).not.toContain('機密');
+    expect(interruptedProgress({ id: 'y', role: 'assistant', parts: [{ type: 'text', text: '只有文字' }] } as UIMessage)).toBe('只有文字');
+    expect(interruptedProgress(undefined)).toBe('');
   });
 
   it('toolEvents 帶出 description 與 metadata 裡的時間', () => {

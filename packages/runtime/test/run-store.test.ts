@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, RunConflictError } from '../src/errors';
 import {
-  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, hasQueued, insertMessage, INTERRUPTED_HEADER,
+  assertThreadInProject, createRun, deleteMessage, failRunningRuns, finishRun, hasQueued, insertMessage, INTERRUPTED_HEADER, INTERRUPTED_NO_PROGRESS,
   loadHistory, takeQueued, touchMessage, updateMessage,
 } from '../src/run-store';
 import type { MessageKind } from '../src/types';
@@ -226,13 +226,19 @@ describe('loadHistory 組裝插話與中斷', () => {
     ]);
   });
 
-  it('cancelled 的 run 什麼內容都沒有時不放進歷史', async () => {
+  it('cancelled 的 run 什麼內容都沒有時仍留下中斷紀錄，下一輪才知道這輪被中斷過', async () => {
     const { threadId } = await setup();
     const runId = await createRun(db, threadId);
     await message(threadId, runId, 'user', '問題');
     await message(threadId, runId, 'final', '');
     await finishRun(db, runId, { status: 'cancelled' });
-    expect(await loadHistory(db, threadId)).toEqual([{ role: 'user', content: '問題' }]);
+    const nextRun = await createRun(db, threadId);
+    await message(threadId, nextRun, 'user', '做到哪了？');
+    expect(await loadHistory(db, threadId)).toEqual([
+      { role: 'user', content: '問題' },
+      { role: 'assistant', content: `${INTERRUPTED_HEADER}\n\n${INTERRUPTED_NO_PROGRESS}` },
+      { role: 'user', content: '做到哪了？' },
+    ]);
   });
 
   it('報告列不佔歷史上限', async () => {

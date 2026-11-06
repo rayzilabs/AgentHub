@@ -94,6 +94,20 @@ export function hasContent(m: UIMessage | undefined): m is UIMessage {
 }
 
 /** 補上「已由你中斷」的標記；還沒有任何內容時新建一則訊息，畫面才有地方顯示 */
+/** 被使用者中斷時給下一輪看的進度：只有步驟描述與已寫出的文字，不含工具輸入輸出 */
+export function interruptedProgress(m: UIMessage | undefined): string {
+  if (!m) return '';
+  const events = toolEvents(m);
+  const names = (states: string[]) => events.filter((e) => states.includes(e.state)).map((e) => e.description ?? e.tool);
+  const done = names(['output-available']);
+  const running = names(['input-streaming', 'input-available']);
+  return [
+    done.length ? `已完成的步驟：${done.join('；')}` : '',
+    running.length ? `中斷時正在進行：${running.join('；')}` : '',
+    textOf(m),
+  ].filter(Boolean).join('\n\n');
+}
+
 export function interruptedMessage(m: UIMessage | undefined): UIMessage {
   const base: UIMessage = m ?? { id: generateId(), role: 'assistant', parts: [] };
   return { ...base, parts: [...base.parts, { type: 'data-interrupted', data: {} }] };
