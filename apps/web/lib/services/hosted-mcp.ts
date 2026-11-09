@@ -2,7 +2,7 @@ import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import { signCreatorToken } from '@/lib/platform-tokens';
 import type { Db } from '@/lib/supabase/admin';
-import { getOwnTemplate } from './templates';
+import { getEditableTemplate } from './templates';
 
 export const HOSTED_LIMITS = { publishedPerMcp: 3, spritesPerCreator: 10, bundleBytes: 50 * 1024 * 1024, deployMs: 10 * 60_000 };
 
@@ -70,7 +70,7 @@ function tail(text: string, lines = LOG_LINES): string {
 }
 
 async function ownHostedMcp(db: Db, userId: string, templateId: string, mcpName: string): Promise<void> {
-  const template = await getOwnTemplate(db, userId, templateId);
+  const template = await getEditableTemplate(db, userId, templateId);
   const ok = template.mcp_servers.some((s) => s.name === mcpName && s.transport === 'remote' && s.hosted === true);
   if (!ok) throw new HttpError(400, '這個 MCP 不是平台代管');
 }
@@ -84,7 +84,7 @@ async function loadVersion(db: Db, versionId: string): Promise<HostedVersion> {
 
 async function ownVersion(db: Db, userId: string, versionId: string): Promise<HostedVersion> {
   const version = await loadVersion(db, versionId);
-  await getOwnTemplate(db, userId, version.template_id);
+  await getEditableTemplate(db, userId, version.template_id);
   return version;
 }
 

@@ -1,11 +1,17 @@
 import { requireUser } from '@/lib/auth';
 import { readJson, route } from '@/lib/http';
 import { TemplateInputSchema } from '@/lib/schemas';
-import { createTemplate, listMyTemplates, listPublishedTemplates } from '@/lib/services/templates';
+import { createTemplate, listMyTemplates, listOrgTemplates, listPublishedTemplates } from '@/lib/services/templates';
 import { adminDb } from '@/lib/supabase/admin';
 
 export const GET = route(async (req: Request) => {
-  if (new URL(req.url).searchParams.get('mine') === '1') {
+  const params = new URL(req.url).searchParams;
+  const orgId = params.get('org');
+  if (orgId) {
+    const user = await requireUser(req);
+    return listOrgTemplates(adminDb(), user.id, orgId);
+  }
+  if (params.get('mine') === '1') {
     const user = await requireUser(req);
     return listMyTemplates(adminDb(), user.id);
   }

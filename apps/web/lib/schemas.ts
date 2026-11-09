@@ -59,6 +59,8 @@ export const TemplateInputSchema = z.object({
   category: TemplateFields.category.default(''),
   system_prompt: TemplateFields.system_prompt.default(''),
   mcp_servers: TemplateFields.mcp_servers.default([]),
+  /** 只在建立時決定；TemplatePatchSchema 刻意沒有這個欄位，公開與組織之間不能互換 */
+  org_id: z.uuid('組織 id 格式不對').optional(),
 });
 export type TemplateInput = z.infer<typeof TemplateInputSchema>;
 

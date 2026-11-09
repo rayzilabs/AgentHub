@@ -5,10 +5,13 @@ import { requirementsProblems } from '@/lib/requirements';
 import type { McpServer, TemplateInput, TemplatePatch } from '@/lib/schemas';
 import { parseSkillsZip, SkillZipError, type SkillMeta } from '@/lib/skills-zip';
 import type { Db } from '@/lib/supabase/admin';
+import { getMembership, requireAdmin, requireMember, type OrgRole } from './orgs';
 
 export type TemplateRow = {
   id: string;
   creator_id: string;
+  /** null 是公開市集的範本；有值時只屬於這個組織 */
+  org_id: string | null;
   name: string;
   description: string;
   category: string;
@@ -16,13 +19,13 @@ export type TemplateRow = {
   skills_zip_path: string | null;
   skills: SkillMeta[];
   mcp_servers: McpServer[];
-  status: 'draft' | 'published';
+  status: 'draft' | 'pending' | 'published';
   created_at: string;
   updated_at: string;
 };
 
-/** 擁有者看到的完整資料（含 system prompt、skill 檔路徑、MCP 連線設定）。 */
-export type PublishedTemplate = TemplateRow & { creator_name: string };
+/** 能編輯的人看到的完整資料（含 system prompt、skill 檔路徑、MCP 連線設定）。 */
+export type PublishedTemplate = TemplateRow & { creator_name: string; org_name: string | null };
 
 /** 市集與非擁有者看到的 MCP：只有名稱、連線方式與需要的金鑰，不含指令、網址、headers。 */
 export type PublicMcpServer = Pick<McpServer, 'name' | 'transport' | 'required_secrets'>;
@@ -31,65 +34,110 @@ export type PublicMcpServer = Pick<McpServer, 'name' | 'transport' | 'required_s
 export type PublicTemplate = Omit<TemplateRow, 'system_prompt' | 'skills_zip_path' | 'mcp_servers'> & {
   mcp_servers: PublicMcpServer[];
   creator_name: string;
+  org_name: string | null;
 };
 
-const COLUMNS = 'id, creator_id, name, description, category, system_prompt, skills_zip_path, skills, mcp_servers, status, created_at, updated_at';
-const PUBLIC_COLUMNS = 'id, creator_id, name, description, category, skills, mcp_servers, status, created_at, updated_at';
-const WITH_CREATOR = `${COLUMNS}, creator:profiles(display_name)`;
-const PUBLIC_WITH_CREATOR = `${PUBLIC_COLUMNS}, creator:profiles(display_name)`;
+const COLUMNS = 'id, creator_id, org_id, name, description, category, system_prompt, skills_zip_path, skills, mcp_servers, status, created_at, updated_at';
+const PUBLIC_COLUMNS = 'id, creator_id, org_id, name, description, category, skills, mcp_servers, status, created_at, updated_at';
+const NAMES = 'creator:profiles(display_name), org:organizations(name)';
+const WITH_NAMES = `${COLUMNS}, ${NAMES}`;
+const PUBLIC_WITH_NAMES = `${PUBLIC_COLUMNS}, ${NAMES}`;
 const NOT_FOUND = '找不到這個 agent';
+const NOT_PENDING = '這個顧問不在待核准狀態，請重新整理';
 
-function withCreatorName(row: Record<string, unknown>): PublishedTemplate {
-  const { creator, ...rest } = row;
-  return { ...(rest as TemplateRow), creator_name: (creator as { display_name: string } | null)?.display_name ?? '' };
+function withNames(row: Record<string, unknown>): PublishedTemplate {
+  const { creator, org, ...rest } = row;
+  return {
+    ...(rest as TemplateRow),
+    creator_name: (creator as { display_name: string } | null)?.display_name ?? '',
+    org_name: (org as { name: string } | null)?.name ?? null,
+  };
 }
 
 function toPublic(row: Omit<PublishedTemplate, 'system_prompt' | 'skills_zip_path'>): PublicTemplate {
-  const { id, creator_id, name, description, category, skills, mcp_servers, status, created_at, updated_at, creator_name } = row;
+  const { id, creator_id, org_id, name, description, category, skills, mcp_servers, status, created_at, updated_at, creator_name, org_name } = row;
   return {
-    id, creator_id, name, description, category, skills, status, created_at, updated_at, creator_name,
+    id, creator_id, org_id, name, description, category, skills, status, created_at, updated_at, creator_name, org_name,
     mcp_servers: mcp_servers.map((s) => ({ name: s.name, transport: s.transport, required_secrets: s.required_secrets ?? [] })),
   };
 }
 
+/** 公開範本：建立者本人。組織範本：建立者仍是成員，或該組織管理員（role 是 userId 在該組織的身分）。 */
+function canEdit(t: Pick<TemplateRow, 'creator_id' | 'org_id'>, userId: string | null, role: OrgRole | null): boolean {
+  if (!t.org_id) return t.creator_id === userId;
+  return role === 'admin' || (role === 'member' && t.creator_id === userId);
+}
+
 export async function listPublishedTemplates(db: Db): Promise<PublicTemplate[]> {
-  const { data, error } = await db.from('agent_templates').select(PUBLIC_WITH_CREATOR).eq('status', 'published').order('updated_at', { ascending: false });
+  const { data, error } = await db.from('agent_templates').select(PUBLIC_WITH_NAMES)
+    .eq('status', 'published').is('org_id', null).order('updated_at', { ascending: false });
   if (error) throw error;
-  return data.map((row) => toPublic(withCreatorName(row)));
+  return data.map((row) => toPublic(withNames(row)));
 }
 
+/** 一般成員只看得到已上架的；管理員看得到全部狀態（含待核准）。 */
+export async function listOrgTemplates(db: Db, userId: string, orgId: string): Promise<(PublicTemplate & { editable: boolean })[]> {
+  const role = await requireMember(db, userId, orgId);
+  let query = db.from('agent_templates').select(PUBLIC_WITH_NAMES).eq('org_id', orgId);
+  if (role !== 'admin') query = query.eq('status', 'published');
+  const { data, error } = await query.order('updated_at', { ascending: false });
+  if (error) throw error;
+  return data.map((row) => {
+    const t = toPublic(withNames(row));
+    return { ...t, editable: canEdit(t, userId, role) };
+  });
+}
+
+/** 自己建的範本；組織範本在自己離開組織後就不再列出（只剩管理員能維護）。 */
 export async function listMyTemplates(db: Db, userId: string): Promise<TemplateRow[]> {
-  const { data, error } = await db.from('agent_templates').select(COLUMNS).eq('creator_id', userId).order('updated_at', { ascending: false });
+  const [{ data, error }, { data: memberships, error: memberError }] = await Promise.all([
+    db.from('agent_templates').select(COLUMNS).eq('creator_id', userId).order('updated_at', { ascending: false }),
+    db.from('org_members').select('org_id').eq('user_id', userId),
+  ]);
   if (error) throw error;
-  return data as TemplateRow[];
+  if (memberError) throw memberError;
+  const myOrgs = new Set(memberships.map((m) => m.org_id as string));
+  return (data as TemplateRow[]).filter((t) => !t.org_id || myOrgs.has(t.org_id));
 }
 
-/** 擁有者拿到完整資料；其他人（含未登入）只拿到公開欄位，且只看得到已上架的。 */
+/**
+ * 能編輯的人拿到完整資料；其他人（含未登入）只拿到公開欄位，且只看得到已上架的。
+ * 組織範本只有該組織成員看得到。
+ */
 export async function getTemplate(db: Db, id: string, viewerId: string | null): Promise<PublishedTemplate | PublicTemplate> {
-  const { data, error } = await db.from('agent_templates').select(WITH_CREATOR).eq('id', id).maybeSingle();
+  const { data, error } = await db.from('agent_templates').select(WITH_NAMES).eq('id', id).maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError(404, NOT_FOUND);
-  const row = withCreatorName(data);
-  if (row.creator_id === viewerId) return row;
+  const row = withNames(data);
+  let role: OrgRole | null = null;
+  if (row.org_id) {
+    role = viewerId ? await getMembership(db, viewerId, row.org_id) : null;
+    if (!role) throw new HttpError(404, NOT_FOUND);
+  }
+  if (canEdit(row, viewerId, role)) return row;
   if (row.status !== 'published') throw new HttpError(404, NOT_FOUND);
   return toPublic(row);
 }
 
-export async function getOwnTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
-  const { data, error } = await db.from('agent_templates').select(COLUMNS).eq('id', id).eq('creator_id', userId).maybeSingle();
+export async function getEditableTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
+  const { data, error } = await db.from('agent_templates').select(COLUMNS).eq('id', id).maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError(404, NOT_FOUND);
-  return data as TemplateRow;
+  const template = data as TemplateRow;
+  const role = template.org_id ? await getMembership(db, userId, template.org_id) : null;
+  if (!canEdit(template, userId, role)) throw new HttpError(404, NOT_FOUND);
+  return template;
 }
 
 export async function createTemplate(db: Db, userId: string, input: TemplateInput): Promise<TemplateRow> {
+  if (input.org_id) await requireMember(db, userId, input.org_id);
   const { data, error } = await db.from('agent_templates').insert({ ...input, creator_id: userId }).select(COLUMNS).single();
   if (error) throw error;
   return data as TemplateRow;
 }
 
 export async function createSkillsUploadUrl(db: Db, userId: string, id: string): Promise<{ signedUrl: string; path: string }> {
-  await getOwnTemplate(db, userId, id);
+  await getEditableTemplate(db, userId, id);
   const path = `${id}/upload.zip`;
   const { data, error } = await db.storage.from('skills').createSignedUploadUrl(path, { upsert: true });
   if (error) throw error;
@@ -148,7 +196,7 @@ async function assertNoOrphanedVersions(db: Db, id: string, saved: McpServer[], 
 }
 
 export async function updateTemplate(db: Db, userId: string, id: string, patch: TemplatePatch): Promise<TemplateRow> {
-  const template = await getOwnTemplate(db, userId, id);
+  const template = await getEditableTemplate(db, userId, id);
   if (patch.mcp_servers) {
     await assertNoOrphanedVersions(db, id, template.mcp_servers, patch.mcp_servers);
     // 已上架：原本就在的代管 MCP 要保有已發布版本。新加的代管 MCP 要先存檔才能建立版本，
@@ -164,16 +212,56 @@ export async function updateTemplate(db: Db, userId: string, id: string, patch: 
   return data as TemplateRow;
 }
 
-export async function publishTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
-  const template = await getOwnTemplate(db, userId, id);
+async function assertPublishable(db: Db, template: TemplateRow): Promise<void> {
   if (!template.system_prompt.trim()) throw new HttpError(400, '請先填寫 system prompt');
-  await assertHostedPublished(db, id, template.mcp_servers);
-  const { data, error } = await db
-    .from('agent_templates')
-    .update({ status: 'published', updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select(COLUMNS)
-    .single();
+  await assertHostedPublished(db, template.id, template.mcp_servers);
+}
+
+async function setStatus(db: Db, id: string, status: TemplateRow['status']): Promise<TemplateRow> {
+  const { data, error } = await db.from('agent_templates').update({ status, updated_at: new Date().toISOString() })
+    .eq('id', id).select(COLUMNS).single();
   if (error) throw error;
   return data as TemplateRow;
+}
+
+/** 組織要求核准時，一般成員還沒上架的顧問先進待核准；已上架的再按一次仍是原地更新。 */
+async function needsApproval(db: Db, userId: string, template: TemplateRow): Promise<boolean> {
+  if (!template.org_id || template.status === 'published') return false;
+  const [{ data: org, error }, role] = await Promise.all([
+    db.from('organizations').select('require_template_approval').eq('id', template.org_id).single(),
+    getMembership(db, userId, template.org_id),
+  ]);
+  if (error) throw error;
+  return org.require_template_approval && role !== 'admin';
+}
+
+export async function publishTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
+  const template = await getEditableTemplate(db, userId, id);
+  await assertPublishable(db, template);
+  return setStatus(db, id, (await needsApproval(db, userId, template)) ? 'pending' : 'published');
+}
+
+export async function reviewTemplate(db: Db, userId: string, id: string, action: 'approve' | 'reject'): Promise<TemplateRow> {
+  const { data, error } = await db.from('agent_templates').select(COLUMNS).eq('id', id).maybeSingle();
+  if (error) throw error;
+  const template = data as TemplateRow | null;
+  // 組織外的人一律當作不存在，不透露這是哪個組織的範本
+  if (!template?.org_id || !(await getMembership(db, userId, template.org_id))) throw new HttpError(404, NOT_FOUND);
+  await requireAdmin(db, userId, template.org_id);
+  if (template.status !== 'pending') throw new HttpError(409, NOT_PENDING);
+  // 待核准期間內容可能被改過，核准時再檢查一次上架條件
+  if (action === 'approve') await assertPublishable(db, template);
+  const { data: updated, error: updateError } = await db.from('agent_templates')
+    .update({ status: action === 'approve' ? 'published' : 'draft', updated_at: new Date().toISOString() })
+    .eq('id', id).eq('status', 'pending').select(COLUMNS).maybeSingle();
+  if (updateError) throw updateError;
+  if (!updated) throw new HttpError(409, NOT_PENDING);
+  return updated as TemplateRow;
+}
+
+/** 下架＝退回草稿；已租進專案的副本由執行時的檢查擋下。 */
+export async function unpublishTemplate(db: Db, userId: string, id: string): Promise<TemplateRow> {
+  const template = await getEditableTemplate(db, userId, id);
+  if (!template.org_id) throw new HttpError(400, '公開市集的顧問目前不能下架');
+  return setStatus(db, id, 'draft');
 }
