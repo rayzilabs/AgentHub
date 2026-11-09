@@ -57,6 +57,18 @@ describe('組織', () => {
     expect(await getMembership(db, y.id, orgId)).toBe('member');
   });
 
+  it('管理員被移出後，他發出的邀請要改由管理員核准', async () => {
+    const [b, z] = await Promise.all([seedUser(db), seedUser(db)]);
+    await acceptInvitation(db, b, (await invited(orgId, b, admin.id)).id);
+    await setMemberRole(db, admin.id, orgId, b.id, 'admin');
+    const inv = await invited(orgId, z, b.id);
+    await removeMember(db, admin.id, orgId, b.id);
+    expect(await acceptInvitation(db, z, inv.id)).toEqual({ joined: false });
+    expect(await getMembership(db, z.id, orgId)).toBeNull();
+    await approveInvitation(db, admin.id, orgId, inv.id);
+    expect(await getMembership(db, z.id, orgId)).toBe('member');
+  });
+
   it('邀請 email 不分大小寫與前後空白', async () => {
     const z = await seedUser(db);
     await invite(db, admin.id, orgId, ' ' + z.email.toUpperCase() + ' ');

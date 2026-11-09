@@ -215,7 +215,8 @@ export async function acceptInvitation(db: Db, user: { id: string; email: string
   if (inv.status !== 'invited') throw new HttpError(404, INVITATION_NOT_FOUND);
   if (isExpired(inv)) throw new HttpError(410, '邀請已過期，請對方重新邀請');
 
-  if (!inv.needs_approval) {
+  // 依邀請人「現在」的角色決定；邀請人已不是管理員（或已離開）就要管理員核准，不看建立邀請時存的 needs_approval
+  if (await getMembership(db, inv.invited_by, inv.org_id) === 'admin') {
     await addMember(db, inv.org_id, user.id, inv.email);
     const { error } = await db.from('org_invitations').delete().eq('id', invitationId);
     if (error) throw error;
