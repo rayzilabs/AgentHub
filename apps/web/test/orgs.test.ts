@@ -4,6 +4,7 @@ import {
   acceptInvitation, approveInvitation, createOrg, getMembership, getOrgDetail, invite, listMyInvitations,
   listMyOrgs, removeMember, revokeInvitation, setMemberRole, updateOrg,
 } from '@/lib/services/orgs';
+import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
 
 const db = testDb();
@@ -19,6 +20,29 @@ async function rejects(p: Promise<unknown>, status: number, message: string) {
 async function invited(orgId: string, who: U, inviterId: string) {
   await invite(db, inviterId, orgId, who.email);
   return (await listMyInvitations(db, who.email)).find((i) => i.org_id === orgId)!;
+}
+
+/** 管理員邀請、對方接受後直接加入 */
+async function join(orgId: string, who: U, adminId: string) {
+  await acceptInvitation(db, who, (await invited(orgId, who, adminId)).id);
+}
+
+async function publishedOrgTemplate(orgId: string, creatorId: string) {
+  const t = await createTemplate(db, creatorId, {
+    name: '組織顧問', description: '內部', category: '金融', system_prompt: '內部方法', mcp_servers: [], org_id: orgId,
+  });
+  return publishTemplate(db, creatorId, t.id);
+}
+
+async function deleteAccount(userId: string) {
+  const { error } = await db.auth.admin.deleteUser(userId);
+  if (error) throw error;
+}
+
+async function templateRow(id: string) {
+  const { data, error } = await db.from('agent_templates').select('creator_id, status').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 describe('組織', () => {
@@ -149,5 +173,51 @@ describe('組織', () => {
     await removeMember(db, admin.id, orgId, b.id);
     expect(await getMembership(db, b.id, orgId)).toBeNull();
     await rejects(removeMember(db, c.id, orgId, member.id), 403, '只有管理員可以這樣做');
+  });
+
+  // 組織與留下的範本由 global-setup 清掉：刪到最後一位管理員時範本跟著刪，組織才刪得掉
+  it('建立者刪帳號時，組織顧問轉給最早加入的管理員', async () => {
+    const [a, b, c] = await Promise.all([seedUser(db), seedUser(db), seedUser(db)]);
+    const o = await createOrg(db, a, { name: '轉移' });
+    expect(o.creator_deleted_action).toBe('transfer');
+    await join(o.id, b, a.id);
+    await join(o.id, c, a.id);
+    await setMemberRole(db, a.id, o.id, b.id, 'admin');
+    const t = await publishedOrgTemplate(o.id, c.id);
+    await deleteAccount(c.id);
+    expect(await templateRow(t.id)).toEqual({ creator_id: a.id, status: 'published' });
+  });
+
+  it('設定為跟著刪除時，組織顧問一起刪掉', async () => {
+    const [a, m] = await Promise.all([seedUser(db), seedUser(db)]);
+    const o = await createOrg(db, a, { name: '跟著刪除' });
+    expect((await updateOrg(db, a.id, o.id, { creator_deleted_action: 'delete' })).creator_deleted_action).toBe('delete');
+    await join(o.id, m, a.id);
+    const t = await publishedOrgTemplate(o.id, m.id);
+    await deleteAccount(m.id);
+    expect(await templateRow(t.id)).toBeNull();
+  });
+
+  it('沒有其他管理員時一律刪除', async () => {
+    const [a, m] = await Promise.all([seedUser(db), seedUser(db)]);
+    const o = await createOrg(db, a, { name: '唯一管理員' });
+    await join(o.id, m, a.id);
+    const t = await publishedOrgTemplate(o.id, a.id);
+    await deleteAccount(a.id);
+    expect(await templateRow(t.id)).toBeNull();
+    // 建立者已刪，created_by 變成 null，global-setup 找不到這個組織
+    await db.from('organizations').delete().eq('id', o.id);
+  });
+
+  it('建立與修改組織可以設定這個選項', async () => {
+    const [a, m] = await Promise.all([seedUser(db), seedUser(db)]);
+    const o = await createOrg(db, a, { name: '設定', creator_deleted_action: 'delete' });
+    expect(o.creator_deleted_action).toBe('delete');
+    const { data, error } = await db.from('organizations').select('creator_deleted_action').eq('id', o.id).single();
+    if (error) throw error;
+    expect(data.creator_deleted_action).toBe('delete');
+    await join(o.id, m, a.id);
+    await rejects(updateOrg(db, m.id, o.id, { creator_deleted_action: 'transfer' }), 403, '只有管理員可以這樣做');
+    await db.from('organizations').delete().eq('id', o.id);
   });
 });

@@ -3,7 +3,13 @@ import type { OrgInput, OrgPatch } from '@/lib/schemas';
 import type { Db } from '@/lib/supabase/admin';
 
 export type OrgRole = 'admin' | 'member';
-export type OrgRow = { id: string; name: string; require_template_approval: boolean; created_at: string };
+export type CreatorDeletedAction = 'transfer' | 'delete';
+export type OrgRow = {
+  id: string; name: string; require_template_approval: boolean;
+  /** 做顧問的人刪帳號時他的組織顧問怎麼處理；由 profiles 的 before delete trigger 執行 */
+  creator_deleted_action: CreatorDeletedAction;
+  created_at: string;
+};
 export type MyOrg = OrgRow & { role: OrgRole };
 export type OrgMember = { user_id: string; email: string; role: OrgRole; joined_at: string };
 export type OrgInvitation = {
@@ -19,7 +25,7 @@ export type OrgInvitation = {
 export type OrgDetail = { org: OrgRow; role: OrgRole; members: OrgMember[]; invitations: OrgInvitation[] };
 export type MyInvitation = { id: string; org_id: string; org_name: string; invited_by_email: string; expires_at: string };
 
-const ORG_COLUMNS = 'id, name, require_template_approval, created_at';
+const ORG_COLUMNS = 'id, name, require_template_approval, creator_deleted_action, created_at';
 const MEMBER_COLUMNS = 'user_id, email, role, joined_at';
 const INVITATION_COLUMNS = 'id, org_id, email, invited_by, needs_approval, status, accepted_user_id, expires_at';
 const ORG_NOT_FOUND = '找不到這個組織';
@@ -37,7 +43,13 @@ const isExpired = (inv: Pick<InvitationRow, 'status' | 'expires_at'>) => inv.sta
 
 export async function createOrg(db: Db, user: { id: string; email: string }, input: OrgInput): Promise<OrgRow> {
   const { data, error } = await db.from('organizations')
-    .insert({ name: input.name, require_template_approval: input.require_template_approval ?? false, created_by: user.id })
+    .insert({
+      name: input.name,
+      require_template_approval: input.require_template_approval ?? false,
+      // 沒帶時 JSON 不含這個欄位，由資料庫預設 transfer
+      creator_deleted_action: input.creator_deleted_action,
+      created_by: user.id,
+    })
     .select(ORG_COLUMNS).single();
   if (error) throw error;
   const { error: memberError } = await db.from('org_members').insert({ org_id: data.id, user_id: user.id, role: 'admin', email: normalizeEmail(user.email) });

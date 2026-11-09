@@ -2,6 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import type { CreatorDeletedAction } from '@/lib/services/orgs';
+import { CreatorDeletedField } from './creator-deleted-field';
 import { useAction } from './use-action';
 
 export function NewOrgForm() {
@@ -9,9 +11,10 @@ export function NewOrgForm() {
   const { run, busy, error } = useAction();
   const [name, setName] = useState('');
   const [approval, setApproval] = useState(false);
+  const [onCreatorDeleted, setOnCreatorDeleted] = useState<CreatorDeletedAction>('transfer');
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    void run<{ id: string }>('/api/orgs', { method: 'POST', body: { name, require_template_approval: approval } }, (o) => router.push(`/orgs/${o.id}`));
+    void run<{ id: string }>('/api/orgs', { method: 'POST', body: { name, require_template_approval: approval, creator_deleted_action: onCreatorDeleted } }, (o) => router.push(`/orgs/${o.id}`));
   }
   return (
     <form onSubmit={submit} className="space-y-3">
@@ -26,6 +29,7 @@ export function NewOrgForm() {
         <input type="checkbox" checked={approval} onChange={(e) => setApproval(e.target.checked)} />
         成員放顧問要管理員核准
       </label>
+      <CreatorDeletedField value={onCreatorDeleted} onChange={setOnCreatorDeleted} />
       {error && <p role="alert" className="notice notice-error">{error}</p>}
     </form>
   );

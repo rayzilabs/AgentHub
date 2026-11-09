@@ -75,16 +75,20 @@ export const TemplatePatchSchema = z.object({
 export type TemplatePatch = z.infer<typeof TemplatePatchSchema>;
 
 const OrgName = z.string().trim().min(1, '組織名稱 1～50 個字').max(50, '組織名稱 1～50 個字');
+/** 做顧問的人刪帳號時：transfer＝轉給最早加入的管理員（沒有其他管理員就刪除）、delete＝跟著刪除。不帶時由資料庫預設 transfer。 */
+const CreatorDeletedAction = z.enum(['transfer', 'delete'], '請選擇轉給管理員或跟著刪除');
 
 export const OrgInputSchema = z.object({
   name: OrgName,
   require_template_approval: z.boolean().optional(),
+  creator_deleted_action: CreatorDeletedAction.optional(),
 });
 export type OrgInput = z.infer<typeof OrgInputSchema>;
 
 export const OrgPatchSchema = z.object({
   name: OrgName.optional(),
   require_template_approval: z.boolean().optional(),
+  creator_deleted_action: CreatorDeletedAction.optional(),
 });
 export type OrgPatch = z.infer<typeof OrgPatchSchema>;
 
