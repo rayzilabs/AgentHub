@@ -4,14 +4,14 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { api } from '@/lib/client-api';
 
-export function NewTemplateButton() {
+export function NewTemplateButton({ orgId }: { orgId?: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   async function create() {
     setBusy(true);
     try {
-      const t = await api<{ id: string }>('/api/templates', { method: 'POST', body: JSON.stringify({ name: '未命名的顧問' }) });
+      const t = await api<{ id: string }>('/api/templates', { method: 'POST', body: JSON.stringify({ name: '未命名的顧問', ...(orgId && { org_id: orgId }) }) });
       router.push(`/creator/${t.id}`);
     } catch (e) {
       setError((e as Error).message);

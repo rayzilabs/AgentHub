@@ -1,14 +1,17 @@
 import Link from 'next/link';
 import { signOut } from '@/app/login/actions';
 import { currentUser } from '@/lib/auth';
+import { listMyInvitations } from '@/lib/services/orgs';
+import { adminDb } from '@/lib/supabase/admin';
 import { NavLinks } from './nav-links';
 import { ThemeToggle } from './theme-toggle';
 
 export async function Nav() {
   const user = await currentUser();
+  const pending = user ? (await listMyInvitations(adminDb(), user.email ?? '')).length : 0;
   const links = [
     { href: '/', label: '市集' },
-    ...(user ? [{ href: '/projects', label: '我的專案' }, { href: '/cloud', label: '我的雲端' }, { href: '/creator', label: '我上架的 agent' }] : []),
+    ...(user ? [{ href: '/projects', label: '我的專案' }, { href: '/cloud', label: '我的雲端' }, { href: '/orgs', label: pending > 0 ? `組織 (${pending})` : '組織' }, { href: '/creator', label: '我上架的 agent' }] : []),
   ];
   return (
     <header id="site-nav" className="material scroll-edge sticky top-0 z-30">
