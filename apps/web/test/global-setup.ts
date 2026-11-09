@@ -1,6 +1,13 @@
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
+// .in() 的 id 放在網址裡，一次太多會超過長度限制
+function chunks(ids: string[], size = 100): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
 export default function setup() {
   process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
   return async () => {
@@ -12,10 +19,22 @@ export default function setup() {
       if (error) throw error;
       const testUsers = data.users.filter((u) => u.email?.endsWith('@test.local'));
       if (testUsers.length === 0) break;
+      // 測試帳號建立的組織不會隨帳號刪除（created_by 變成 null），先記下來；
+      // 組織的範本與副本隨帳號刪掉之後才刪得掉（on delete restrict）
+      const orgIds: string[] = [];
+      for (const ids of chunks(testUsers.map((u) => u.id))) {
+        const { data: orgs, error: orgError } = await db.from('organizations').select('id').in('created_by', ids);
+        if (orgError) throw orgError;
+        orgIds.push(...orgs.map((o) => o.id as string));
+      }
       // 逐一刪除：這裡的測試帳號常上百個，同時送出會有連線失敗（fetch failed）
       for (const u of testUsers) {
         const { error: deleteError } = await db.auth.admin.deleteUser(u.id);
         if (deleteError) throw deleteError;
+      }
+      for (const ids of chunks(orgIds)) {
+        const { error: orgError } = await db.from('organizations').delete().in('id', ids);
+        if (orgError) throw orgError;
       }
     }
     // 測試範本隨使用者刪除後，Storage 裡的代管 MCP 套件不會跟著刪

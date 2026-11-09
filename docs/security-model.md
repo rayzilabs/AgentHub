@@ -3,7 +3,7 @@
 這份是長期維護的文件：誰能碰到什麼、權限怎麼切。權限有任何變動都要更新這份。
 各子專案的實作細節在 `docs/superpowers/specs/`，這裡只記結論。
 
-- 最後更新：2026-11-04
+- 最後更新：2026-11-09
 - 狀態欄位：✅ 已上線、🚧 實作中、📝 已設計、⏳ 尚未設計
 
 ---
@@ -48,6 +48,7 @@
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
 | 單一顧問模式下，主管／顧問本身的原始工具輸入輸出仍會隨串流送到瀏覽器 | ⏳ 已知缺口 |
 | 雲端資料夾（2026-11-03）：使用者只看得到自己專案的檔案；顧問只能用 `deliver_file` 交付到自己專案、自己的資料夾底下，交付前以該顧問的沙盒帳號讀檔（讀不到就交不出去）；runtime 不能刪改使用者的檔案 | 🚧 2026-11-04 實作完成，待上線 |
+| 組織（2026-11-09）：組織顧問只有成員租得到；成員離開或下架後，runtime 讀不到這位顧問、MCP 閘道拒絕 | 🚧 2026-11-09 資料庫部分實作中（`20261109000001_organizations.sql`） |
 
 ## 4. runtime 的資料庫權限（子專案 1-C）
 
@@ -58,8 +59,8 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | 資料 | 讀 | 新增 | 修改 | 刪除 | 限制 |
 |---|---|---|---|---|---|
 | `auth.users`、`profiles`、`projects` | ❌ | ❌ | ❌ | ❌ | runtime 用不到 |
-| `agent_templates` | 只能讀 `creator_id` | ❌ | ❌ | ❌ | 只限自己專案租用的範本 |
-| `agent_instances` | ✅ | ❌ | ❌ | ❌ | 自己專案 |
+| `agent_templates` | 只能讀 `creator_id` | ❌ | ❌ | ❌ | 只限自己專案租用的範本；policy 查的是 `agent_instances`，被擋的組織顧問的範本跟著濾掉 |
+| `agent_instances` | ✅ | ❌ | ❌ | ❌ | 自己專案，且組織顧問（`org_id` 不是 null）要通過 `org_instance_problem`（專案擁有者仍是該組織成員、範本仍上架），否則讀不到 |
 | `instance_secrets`／Vault | 只能透過 `get_project_secrets` | ❌ | ❌ | ❌ | 函式本身檢查只能取自己專案 |
 | `threads` | ✅ | ❌ | ❌ | ❌ | 自己專案 |
 | `runs` | ✅ | ✅ | 只能改 `status`、`error`、`finished_at` | ❌ | 自己專案的對話 |
@@ -72,7 +73,12 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `hosted_mcp_versions` | ❌ | ❌ | ❌ | ❌ | 平台代管 MCP 的版本、Sprite 名稱與網址；只有 Vercel（`service_role`）讀寫（3b） |
 | `hosted_mcp_secrets`／Vault | ❌ | ❌ | ❌ | ❌ | 創作者給代管 MCP 的金鑰；只透過 `set_hosted_mcp_secret`／`get_hosted_mcp_secrets`，只有 `service_role` 能執行（3b） |
 | `project_runtime_accounts` | ❌ | ❌ | ❌ | ❌ | runtime 帳號的密碼與通行證快取；只有 Vercel（`service_role`）讀得到 |
-| Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip |
+| `organizations` | ❌ | ❌ | ❌ | ❌ | 組織；只有 Vercel（`service_role`）讀寫 |
+| `org_members` | ❌ | ❌ | ❌ | ❌ | 組織成員與角色；只有 Vercel（`service_role`）讀寫 |
+| `org_invitations` | ❌ | ❌ | ❌ | ❌ | 組織邀請；只有 Vercel（`service_role`）讀寫 |
+| `org_instance_problem` | | | | | `security definer`，回答一位顧問現在能不能呼叫（null／`not_member`／`unpublished`）；給 `agent_instances` 的 policy 用，所以 `authenticated` 能執行（取捨見第 7 節） |
+| `project_instance_problems` | | | | | 列出專案裡被擋的組織顧問與原因，給專案畫面用；只有 `service_role` 能執行 |
+| Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip；policy 查的是 `agent_instances`，被擋的組織顧問的 zip 跟著下載不到 |
 | `project_folders` | 只能讀 `id`、`project_id`、`parent_id`、`name`、`created_at` | ❌ | ❌ | ❌ | 自己專案；雲端資料夾的資料夾（2026-11-03） |
 | `project_files` | 只能讀 `id`、`project_id`、`folder_id`、`name`、`size`、`content_type`、`source`、`agent_instance_id`、`run_id`、`created_at`、`updated_at` | 只能透過 `deliver_project_file` | ❌ | ❌ | 自己專案；同步到 `/shared` 用。改名、搬移、刪除只有網頁（`service_role`）做得到 |
 | `deliver_project_file` | | | | | runtime 交付檔案的唯一途徑（`security definer`）：函式本身檢查通行證的專案、顧問屬於這個專案、run 屬於這個專案、storage 物件是這個 runtime 帳號自己上傳的（`owner_id`），只能登記到該顧問的資料夾（以顧問名稱命名，被改名或刪掉就重建）底下；檔名、資料夾名不合法就拒絕 |
@@ -157,6 +163,8 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 ## 7. 已知缺口與待辦
 
 - 單一顧問模式的原始工具輸入輸出會送到瀏覽器（見第 3 節）。
+- 組織（2026-11-09）：`org_instance_problem` 給 `authenticated` 執行（`agent_instances` 的 policy 要用），所以知道專案 id 與組織 id 的 runtime 帳號能問出「這個專案的擁有者是不是那個組織的成員」、「那個範本是不是該組織已上架的範本」。只回答是或否，不洩漏名稱與內容。
+- 組織（2026-11-09 實測）：Storage 的下載有快取。runtime 被擋之前下載過的 skill zip，被擋之後（至少 5 秒內）同一個通行證還下載得到；沒下載過的、以及 `list`，會照 policy 拒絕。skill 檔案在租用後本來就已裝在專案的 Sprite 上，所以真正擋呼叫的是「runtime 讀不到這位顧問」，不靠 zip 下載不到。
 - 平台代管 MCP：`mcp-bundles` 尚未設檔案大小上限（大小在開始部署時檢查）。閘道對 `tools/call` 不重送（先以不帶通行證的 HEAD 叫醒 Sprite），失敗版本與孤兒套件由 Vercel 每日排程清理（需設定 `CRON_SECRET`）。
 - 2026-10-13 之前，agent 讀得到每台 Sprite `.env` 裡的平台金鑰且可 sudo 成 root；A 上線後已封住，但金鑰仍存在 `.env`（只有 runtime 讀得到），C 上線後才會移除。
 - 子專案 1 上線前，平台金鑰已存在每台 Sprite 的 `.env`；全部重新佈建後應輪換 Supabase secret key 與 Vertex 金鑰。

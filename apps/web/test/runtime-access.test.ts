@@ -209,3 +209,90 @@ describe('雲端資料夾的 runtime 權限', () => {
     expect((await db.from('project_files').select('id').eq('id', id)).data).toEqual([]);
   });
 });
+
+describe('組織顧問的 runtime 權限', () => {
+  const ok = async (p: PromiseLike<{ error: unknown }>) => {
+    const { error } = await p;
+    if (error) throw error;
+  };
+
+  // 專案有一位組織顧問（seedProject 的顧問補上 org_id、template_id）與一位公開顧問；組織由 global setup 隨建立者清掉
+  async function seedOrgProject() {
+    const base = await seedProject('PROMPT 組織');
+    const admin = await seedUser(db);
+    const orgName = `組織-${randomUUID().slice(0, 8)}`;
+    const { data: org, error } = await db.from('organizations').insert({ name: orgName, created_by: admin.id }).select('id').single();
+    if (error) throw error;
+    const orgId = org.id as string;
+    await ok(db.from('org_members').insert([
+      { org_id: orgId, user_id: admin.id, role: 'admin', email: admin.email },
+      { org_id: orgId, user_id: base.owner.id, role: 'member', email: base.owner.email },
+    ]));
+    const { data: tpl } = await db.from('agent_templates')
+      .insert({ creator_id: admin.id, name: '組織顧問', org_id: orgId, status: 'published', skills_zip_path: base.zip })
+      .select('id').single();
+    const templateId = tpl!.id as string;
+    await ok(db.from('agent_instances').update({ org_id: orgId, template_id: templateId }).eq('id', base.instanceId));
+    const { data: pub } = await db.from('agent_instances')
+      .insert({ project_id: base.project.id, role: 'consultant', name: '公開顧問', system_prompt: 'PROMPT 公開' })
+      .select('id').single();
+    const ra = asToken(await runtimeAccessToken(db, base.project.id));
+    return {
+      ...base, ra, orgName, templateId, orgInstanceId: base.instanceId, publicInstanceId: pub!.id as string,
+      removeOwner: () => ok(db.from('org_members').delete().eq('org_id', orgId).eq('user_id', base.owner.id)),
+      addOwner: () => ok(db.from('org_members').insert({ org_id: orgId, user_id: base.owner.id, role: 'member', email: base.owner.email })),
+      setStatus: (status: string) => ok(db.from('agent_templates').update({ status }).eq('id', templateId)),
+      visible: async () => ((await ra.from('agent_instances').select('id')).data ?? []).map((i) => i.id as string).sort(),
+    };
+  }
+
+  it('runtime 讀不到被擋的組織顧問', async () => {
+    const s = await seedOrgProject();
+    // Storage 的下載有快取：先下載過，被擋之後同一個 zip 還下載得到，所以擋之前用 list 確認讀得到
+    const listZip = async () =>
+      ((await s.ra.storage.from('skills').list('test', { search: s.zip.slice('test/'.length) })).data ?? []).map((o) => o.name);
+    expect(await listZip()).toEqual([s.zip.slice('test/'.length)]);
+    expect(await s.visible()).toEqual([s.orgInstanceId, s.publicInstanceId].sort());
+    expect((await s.ra.from('agent_templates').select('id')).data).toEqual([{ id: s.templateId }]);
+
+    await s.removeOwner();
+    expect(await s.visible()).toEqual([s.publicInstanceId]);
+    expect(await listZip()).toEqual([]);
+    expect((await s.ra.storage.from('skills').download(s.zip)).error).not.toBeNull();
+    const { data: templates, error } = await s.ra.from('agent_templates').select('id');
+    expect(error).toBeNull();
+    expect(templates?.map((t) => t.id)).not.toContain(s.templateId);
+  });
+
+  it('重新加入與重新上架後恢復', async () => {
+    const s = await seedOrgProject();
+    const both = [s.orgInstanceId, s.publicInstanceId].sort();
+
+    await s.removeOwner();
+    expect(await s.visible()).toEqual([s.publicInstanceId]);
+    await s.addOwner();
+    expect(await s.visible()).toEqual(both);
+
+    await s.setStatus('draft');
+    expect(await s.visible()).toEqual([s.publicInstanceId]);
+    await s.setStatus('published');
+    expect(await s.visible()).toEqual(both);
+  });
+
+  it('project_instance_problems 回傳原因', async () => {
+    const s = await seedOrgProject();
+    const problems = async () => {
+      const { data, error } = await db.rpc('project_instance_problems', { p_project_id: s.project.id });
+      expect(error).toBeNull();
+      return data;
+    };
+    expect(await problems()).toEqual([]);
+
+    await s.removeOwner();
+    expect(await problems()).toEqual([{ instance_id: s.orgInstanceId, org_name: s.orgName, problem: 'not_member' }]);
+
+    await s.addOwner();
+    await s.setStatus('draft');
+    expect(await problems()).toEqual([{ instance_id: s.orgInstanceId, org_name: s.orgName, problem: 'unpublished' }]);
+  });
+});
