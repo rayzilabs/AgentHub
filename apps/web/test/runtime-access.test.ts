@@ -279,6 +279,31 @@ describe('組織顧問的 runtime 權限', () => {
     expect(await s.visible()).toEqual(both);
   });
 
+  it('Storage 下載快取只限同一張通行證', async () => {
+    const s = await seedOrgProject();
+    const b = await seedProject('PROMPT B');
+    const rb = asToken(await runtimeAccessToken(db, b.project.id));
+    const download = async (c: ReturnType<typeof asToken>) => (await c.storage.from('skills').download(s.zip)).error;
+
+    expect(await download(s.ra)).toBeNull();
+    // 別的專案：A 剛下載過也拿不到
+    expect(await download(rb)).not.toBeNull();
+
+    await s.removeOwner();
+    // 同一張通行證被擋之後還可能從快取拿得到（docs/security-model.md 第 7 節）；快取多久不保證，所以不斷言
+    // 同一個 runtime 帳號重新登入的新通行證：照 policy 拒絕
+    const { data: row } = await db.from('project_runtime_accounts').select('user_id, password').eq('project_id', s.project.id).single();
+    const { data: account } = await db.auth.admin.getUserById(row!.user_id as string);
+    const auth = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: session, error } = await auth.auth.signInWithPassword({ email: account.user!.email!, password: row!.password as string });
+    if (error) throw error;
+    expect(session.session!.access_token).not.toBe(await runtimeAccessToken(db, s.project.id));
+    expect(await download(asToken(session.session!.access_token))).not.toBeNull();
+    expect(await download(rb)).not.toBeNull();
+  });
+
   it('project_instance_problems 回傳原因', async () => {
     const s = await seedOrgProject();
     const problems = async () => {

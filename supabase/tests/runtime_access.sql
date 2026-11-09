@@ -142,6 +142,55 @@ do $$ begin
   end;
 end $$;
 
+-- 組織顧問（20261109000001）：專案擁有者不是組織成員、或範本沒上架，runtime 就讀不到這位顧問、它的範本與 skill zip
+set local role postgres;
+insert into public.organizations (id, name, created_by)
+values ('00000000-0000-0000-0000-0000000000a9', '實驗室', '00000000-0000-0000-0000-0000000000c1');
+insert into public.agent_templates (id, creator_id, name, status, org_id) values
+  ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-0000000000c1', '組織顧問', 'published', '00000000-0000-0000-0000-0000000000a9'),
+  ('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-0000000000c1', '組織草稿', 'draft', '00000000-0000-0000-0000-0000000000a9');
+insert into public.agent_instances (id, project_id, template_id, org_id, role, name, skills_zip_path) values
+  ('00000000-0000-0000-0000-0000000000d3', '00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000a2',
+   '00000000-0000-0000-0000-0000000000a9', 'consultant', '組織顧問', 'a2/z.zip'),
+  ('00000000-0000-0000-0000-0000000000d4', '00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-0000000000a3',
+   '00000000-0000-0000-0000-0000000000a9', 'consultant', '組織草稿', 'a3/w.zip');
+insert into storage.objects (bucket_id, name) values ('skills', 'a2/z.zip'), ('skills', 'a3/w.zip');
+set local role authenticated;
+do $$ begin
+  assert (select array_agg(id order by id) from public.agent_instances)
+         = array['00000000-0000-0000-0000-0000000000d1']::uuid[], '擁有者不是組織成員：組織顧問讀不到，公開顧問照常';
+  assert (select array_agg(id order by id) from public.agent_templates)
+         = array['00000000-0000-0000-0000-0000000000a1']::uuid[], '擁有者不是組織成員：組織範本讀不到';
+  assert (select array_agg(name order by name) from storage.objects where bucket_id = 'skills') = array['a1/x.zip'],
+         '擁有者不是組織成員：組織顧問的 skill zip 讀不到';
+  assert (select org_id from public.agent_instances) is null, 'runtime 讀得到 org_id 欄位（公開顧問是 null）';
+  begin
+    perform 1 from public.project_instance_problems('00000000-0000-0000-0000-0000000000b1');
+    assert false, 'runtime 不能執行 project_instance_problems';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform 1 from public.organizations;
+    assert false, 'runtime 不能讀組織表';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+set local role postgres;
+insert into public.org_members (org_id, user_id, role, email)
+values ('00000000-0000-0000-0000-0000000000a9', '00000000-0000-0000-0000-0000000000c2', 'member', 'owner@test.local');
+set local role authenticated;
+do $$ begin
+  assert (select array_agg(id order by id) from public.agent_instances)
+         = array['00000000-0000-0000-0000-0000000000d1', '00000000-0000-0000-0000-0000000000d3']::uuid[],
+         '擁有者加入組織後讀得到已上架的組織顧問；範本是草稿的仍讀不到';
+  assert (select array_agg(id order by id) from public.agent_templates)
+         = array['00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000a2']::uuid[], '組織範本跟著讀得到（草稿的除外）';
+  assert (select array_agg(name order by name) from storage.objects where bucket_id = 'skills') = array['a1/x.zip', 'a2/z.zip'],
+         '組織顧問的 skill zip 跟著讀得到（草稿的除外）';
+  assert (select org_id from public.agent_instances where id = '00000000-0000-0000-0000-0000000000d3')
+         = '00000000-0000-0000-0000-0000000000a9', 'runtime 讀得到組織顧問的 org_id';
+end $$;
+
 -- 一般使用者身分（專案擁有者本人，沒有 runtime 標記）
 set local request.jwt.claims = '{"sub":"00000000-0000-0000-0000-0000000000c2","role":"authenticated","app_metadata":{"provider":"email"}}';
 do $$ begin
@@ -152,6 +201,16 @@ do $$ begin
     perform 1 from public.get_project_secrets('00000000-0000-0000-0000-0000000000b1');
     assert false, '一般使用者不能取金鑰';
   exception when raise_exception then null;
+  end;
+  begin
+    perform 1 from public.project_instance_problems('00000000-0000-0000-0000-0000000000b1');
+    assert false, '一般使用者不能執行 project_instance_problems';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform 1 from public.org_members;
+    assert false, '一般使用者不能讀組織成員表';
+  exception when insufficient_privilege then null;
   end;
 end $$;
 update public.memories set content = '使用者改的';

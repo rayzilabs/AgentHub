@@ -78,7 +78,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `org_invitations` | ❌ | ❌ | ❌ | ❌ | 組織邀請；只有 Vercel（`service_role`）讀寫 |
 | `org_instance_problem` | | | | | `security definer`，回答一位顧問現在能不能呼叫（null／`not_member`／`unpublished`）；給 `agent_instances` 的 policy 用，所以 `authenticated` 能執行（取捨見第 7 節） |
 | `project_instance_problems` | | | | | 列出專案裡被擋的組織顧問與原因，給專案畫面用；只有 `service_role` 能執行 |
-| Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip；policy 查的是 `agent_instances`，被擋的組織顧問的 zip 跟著下載不到 |
+| Storage `skills` | 只能下載 | ❌ | ❌ | ❌ | 只限自己專案租用的顧問的 skill zip；policy 查的是 `agent_instances`，被擋的組織顧問的 zip 跟著下載不到（例外：同一張通行證之前下載過的會從快取拿到，見第 7 節） |
 | `project_folders` | 只能讀 `id`、`project_id`、`parent_id`、`name`、`created_at` | ❌ | ❌ | ❌ | 自己專案；雲端資料夾的資料夾（2026-11-03） |
 | `project_files` | 只能讀 `id`、`project_id`、`folder_id`、`name`、`size`、`content_type`、`source`、`agent_instance_id`、`run_id`、`created_at`、`updated_at` | 只能透過 `deliver_project_file` | ❌ | ❌ | 自己專案；同步到 `/shared` 用。改名、搬移、刪除只有網頁（`service_role`）做得到 |
 | `deliver_project_file` | | | | | runtime 交付檔案的唯一途徑（`security definer`）：函式本身檢查通行證的專案、顧問屬於這個專案、run 屬於這個專案、storage 物件是這個 runtime 帳號自己上傳的（`owner_id`），只能登記到該顧問的資料夾（以顧問名稱命名，被改名或刪掉就重建）底下；檔名、資料夾名不合法就拒絕 |
@@ -163,8 +163,8 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 ## 7. 已知缺口與待辦
 
 - 單一顧問模式的原始工具輸入輸出會送到瀏覽器（見第 3 節）。
-- 組織（2026-11-09）：`org_instance_problem` 給 `authenticated` 執行（`agent_instances` 的 policy 要用），所以知道專案 id 與組織 id 的 runtime 帳號能問出「這個專案的擁有者是不是那個組織的成員」、「那個範本是不是該組織已上架的範本」。只回答是或否，不洩漏名稱與內容。
-- 組織（2026-11-09 實測）：Storage 的下載有快取。runtime 被擋之前下載過的 skill zip，被擋之後（至少 5 秒內）同一個通行證還下載得到；沒下載過的、以及 `list`，會照 policy 拒絕。skill 檔案在租用後本來就已裝在專案的 Sprite 上，所以真正擋呼叫的是「runtime 讀不到這位顧問」，不靠 zip 下載不到。
+- 組織（2026-11-09）：`org_instance_problem` 給 `authenticated` 執行（`agent_instances` 的 policy 要用）。任何帶 `authenticated` JWT 的人都能呼叫，不只 runtime 帳號，網站使用者用自己的 Supabase 登入通行證直接打 PostgREST 也可以。知道專案 id 與組織 id 就能問出「這個專案的擁有者是不是那個組織的成員」，知道範本 id 與組織 id 就能問出「那個範本是不是該組織已上架的範本」。只回答是或否，不洩漏名稱與內容；id 都是隨機 uuid，網站也不會把別人的專案 id 給出去。
+- 組織（2026-11-09 實測，`runtime-access.test.ts`「Storage 下載快取只限同一張通行證」）：Storage 的下載有快取，以**通行證**為單位。runtime 被擋之前用某張通行證下載過的 skill zip，被擋之後用**同一張**通行證還下載得到（實測至少 5 秒；多久沒測，推測最長到通行證過期，目前 1 小時）。以下都照 policy 拒絕：別的專案的通行證（即使 A 剛下載過）、同一個 runtime 帳號重新登入拿到的新通行證、從沒下載過的通行證，以及 `list`。所以快取不會讓跨專案或跨租用者拿到檔案，影響只在「被擋前已經拿過這個 zip 的同一台 runtime」。而 skill 檔案在租用後本來就已裝在專案的 Sprite 上，真正擋呼叫的是「runtime 讀不到這位顧問」，不靠 zip 下載不到。
 - 平台代管 MCP：`mcp-bundles` 尚未設檔案大小上限（大小在開始部署時檢查）。閘道對 `tools/call` 不重送（先以不帶通行證的 HEAD 叫醒 Sprite），失敗版本與孤兒套件由 Vercel 每日排程清理（需設定 `CRON_SECRET`）。
 - 2026-10-13 之前，agent 讀得到每台 Sprite `.env` 裡的平台金鑰且可 sudo 成 root；A 上線後已封住，但金鑰仍存在 `.env`（只有 runtime 讀得到），C 上線後才會移除。
 - 子專案 1 上線前，平台金鑰已存在每台 Sprite 的 `.env`；全部重新佈建後應輪換 Supabase secret key 與 Vertex 金鑰。
