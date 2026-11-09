@@ -21,6 +21,7 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
   return (
     <div className="grid gap-8 py-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-12 lg:py-14">
       <header className="min-w-0">
+        {template.org_name && <p className="mb-2"><span className="chip">「{template.org_name}」組織專用</span></p>}
         <p className="text-sm"><span className="font-medium text-link">{template.category || '未分類'}</span><span className="text-muted">，由 {template.creator_name || '匿名創作者'} 製作</span></p>
         <h1 className="mt-2 font-display text-2xl font-bold sm:text-4xl">{template.name}</h1>
         <p className="mt-5 max-w-2xl whitespace-pre-line text-muted sm:text-xl">{template.description || '（創作者還沒寫介紹）'}</p>
@@ -28,8 +29,10 @@ export default async function TemplatePage({ params }: { params: Promise<{ id: s
 
       <aside className="panel h-fit p-6 shadow-float lg:sticky lg:top-[calc(var(--nav-h,57px)+1.5rem)] lg:max-h-[calc(100dvh-var(--nav-h,57px)-3rem)] lg:overflow-y-auto lg:col-start-2 lg:row-span-2 lg:row-start-1">
         <h2 className="mb-4 text-xl font-semibold">加入你的專案</h2>
-        {template.status !== 'published' ? (
-          <p className="text-muted">這是你的草稿，上架後才能加入專案。<Link href={`/creator/${template.id}`} className="link">回去編輯</Link></p>
+        {template.status === 'pending' ? (
+          <p className="text-muted">等管理員核准後才能加入專案。<Link href={`/creator/${template.id}`} className="link">回去編輯</Link></p>
+        ) : template.status === 'draft' ? (
+          <p className="text-muted">{template.org_id ? '這是草稿，上架後才能加入專案。' : '這是你的草稿，上架後才能加入專案。'}<Link href={`/creator/${template.id}`} className="link">回去編輯</Link></p>
         ) : user ? (
           <HireForm templateId={template.id} mcpServers={template.mcp_servers.map((s) => ({ name: s.name, required_secrets: s.required_secrets }))} projects={projects.map((p) => ({ id: p.id, name: p.name }))} />
         ) : (

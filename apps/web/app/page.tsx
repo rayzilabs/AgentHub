@@ -1,5 +1,8 @@
 import Link from 'next/link';
-import { listPublishedTemplates } from '@/lib/services/templates';
+import { TemplateCard } from '@/components/template-card';
+import { currentUser } from '@/lib/auth';
+import { listMyOrgs } from '@/lib/services/orgs';
+import { listOrgTemplates, listPublishedTemplates } from '@/lib/services/templates';
 import { adminDb } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
@@ -11,7 +14,15 @@ const STEPS = [
 ];
 
 export default async function Marketplace() {
-  const templates = await listPublishedTemplates(adminDb());
+  const db = adminDb();
+  const user = await currentUser();
+  const templates = await listPublishedTemplates(db);
+  const orgGroups = user
+    ? (await Promise.all((await listMyOrgs(db, user.id)).map(async (org) => ({
+        org,
+        templates: (await listOrgTemplates(db, user.id, org.id)).filter((t) => t.status === 'published'),
+      })))).filter((g) => g.templates.length > 0)
+    : [];
   return (
     <>
       <section className="pb-12 pt-12 sm:pb-16 sm:pt-20">
@@ -33,6 +44,22 @@ export default async function Marketplace() {
         </ol>
       </section>
 
+      {orgGroups.length > 0 && (
+        <section aria-labelledby="org-roster" className="mb-12">
+          <h2 id="org-roster" className="mb-4 font-display text-2xl font-bold">我的組織的顧問</h2>
+          <div className="space-y-8">
+            {orgGroups.map(({ org, templates: list }) => (
+              <div key={org.id}>
+                <h3 className="mb-3 text-lg font-medium"><Link href={`/orgs/${org.id}`} className="link">{org.name}</Link></h3>
+                <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {list.map((t) => <li key={t.id} className="min-w-0"><TemplateCard t={t} /></li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section aria-labelledby="roster">
         <div className="mb-4 flex items-baseline justify-between gap-4">
           <h2 id="roster" className="font-display text-2xl font-bold">顧問名冊</h2>
@@ -45,22 +72,7 @@ export default async function Marketplace() {
           </div>
         ) : (
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {templates.map((t) => (
-              <li key={t.id} className="min-w-0">
-                <Link href={`/templates/${t.id}`}
-                  className="panel group flex h-full flex-col p-6 transition-transform duration-150 ease-out active:scale-[0.98]">
-                  <div className="text-sm font-medium text-link">{t.category || '未分類'}</div>
-                  <div className="mt-1.5 font-display text-xl font-bold [overflow-wrap:anywhere] group-hover:text-link">{t.name}</div>
-                  <div className="text-sm text-muted">由 {t.creator_name || '匿名創作者'} 製作</div>
-                  <p className="mt-3 flex-1 text-muted [overflow-wrap:anywhere]">{t.description || '（創作者還沒寫介紹）'}</p>
-                  <div className="mt-5 flex flex-wrap gap-1.5">
-                    {t.skills.slice(0, 3).map((s) => <span key={s.name} className="chip">{s.name}</span>)}
-                    {t.skills.length > 3 && <span className="chip">+{t.skills.length - 3}</span>}
-                    {t.mcp_servers.length > 0 && <span className="chip">{t.mcp_servers.length} 個外部工具</span>}
-                  </div>
-                </Link>
-              </li>
-            ))}
+            {templates.map((t) => <li key={t.id} className="min-w-0"><TemplateCard t={t} /></li>)}
           </ul>
         )}
       </section>

@@ -25,7 +25,11 @@ export function AgentRoster({ agents, colorOf }: { agents: AgentSummary[]; color
             <li key={a.id} className="flex items-start gap-3">
               <Avatar name={a.name} color={colorOf(a.id)} />
               <div className="min-w-0">
-                <div className="font-medium">{a.name}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{a.name}</span>
+                  {a.unavailable && <span className="chip">無法使用</span>}
+                </div>
+                {a.unavailable && <div className="text-sm text-muted">{a.unavailable}</div>}
                 {a.description && <div className="line-clamp-2 text-sm text-muted" title={a.description}>{a.description}</div>}
               </div>
             </li>

@@ -8,12 +8,15 @@ import { api } from '@/lib/client-api';
 import { emptyDraft, fromDraft, isSavedHosted, toDraft, type McpDraft } from '@/lib/mcp-draft';
 import type { TemplateRow } from '@/lib/services/templates';
 
-export function TemplateEditor({ initial }: { initial: TemplateRow }) {
+const STATUS_LABEL = { draft: '草稿', pending: '待核准', published: '已上架' } as const;
+
+export function TemplateEditor({ initial, orgName }: { initial: TemplateRow; orgName: string | null }) {
   const [t, setT] = useState(initial);
   const [mcp, setMcp] = useState<McpDraft[]>(initial.mcp_servers.map(toDraft));
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [confirmUnpublish, setConfirmUnpublish] = useState(false);
 
   async function run(label: string, action: () => Promise<TemplateRow>, apply: (updated: TemplateRow) => void): Promise<boolean> {
     setBusy(true);
@@ -61,14 +64,33 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
 
   const publish = async () => {
     if (!(await save())) return;
-    await run('已上架，現在大家都能在市集看到這位顧問', () => api<TemplateRow>(`/api/templates/${t.id}/publish`, { method: 'POST' }), applyAll);
+    setBusy(true);
+    try {
+      const published = await api<TemplateRow>(`/api/templates/${t.id}/publish`, { method: 'POST' });
+      applyAll(published);
+      setMessage({
+        kind: 'ok',
+        text: published.status === 'pending' ? '已送出，等管理員核准'
+          : orgName ? `已上架，「${orgName}」的成員都能使用` : '已上架，現在大家都能在市集看到這位顧問',
+      });
+    } catch (e) {
+      setMessage({ kind: 'error', text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unpublish = async () => {
+    if (!confirmUnpublish) { setConfirmUnpublish(true); return; }
+    setConfirmUnpublish(false);
+    await run('已下架，回到草稿', () => api<TemplateRow>(`/api/templates/${t.id}/unpublish`, { method: 'POST' }), applyAll);
   };
 
   return (
     <div className="space-y-8 pb-4">
       <div className="flex items-center gap-3">
         <h1 className="font-display text-2xl font-bold sm:text-4xl">編輯顧問</h1>
-        <span className={`chip ${t.status === 'published' ? 'chip-sage' : ''}`}>{t.status === 'published' ? '已上架' : '草稿'}</span>
+        <span className={`chip ${t.status === 'published' ? 'chip-sage' : ''}`}>{STATUS_LABEL[t.status]}</span>
       </div>
       <section aria-labelledby="basic-title">
         <h2 id="basic-title" className="group-title">基本資料</h2>
@@ -184,7 +206,13 @@ export function TemplateEditor({ initial }: { initial: TemplateRow }) {
           <button onClick={publish} disabled={busy} className="btn btn-primary">
             {t.status === 'published' ? '儲存並更新上架內容' : '儲存並上架'}
           </button>
-          {t.status === 'published' && <Link href={`/templates/${t.id}`} className="link ml-auto text-sm">看市集上的樣子</Link>}
+          {t.org_id && t.status === 'published' && (
+            <button onClick={unpublish} onBlur={() => setConfirmUnpublish(false)} disabled={busy}
+              className={`btn btn-secondary ${confirmUnpublish ? 'text-seal' : ''}`}>
+              {confirmUnpublish ? '確定下架？再按一次' : '下架'}
+            </button>
+          )}
+          {t.status === 'published' && <Link href={`/templates/${t.id}`} className="link ml-auto text-sm">{t.org_id ? '看組織成員看到的樣子' : '看市集上的樣子'}</Link>}
         </div>
       </div>
     </div>

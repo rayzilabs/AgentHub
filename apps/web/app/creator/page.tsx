@@ -6,6 +6,8 @@ import { currentUser } from '@/lib/auth';
 import { listMyTemplates } from '@/lib/services/templates';
 import { adminDb } from '@/lib/supabase/admin';
 
+const STATUS_LABEL = { draft: '草稿', pending: '待核准', published: '已上架' } as const;
+
 export const dynamic = 'force-dynamic';
 
 export default async function CreatorPage() {
@@ -36,7 +38,7 @@ export default async function CreatorPage() {
                   <span className="min-w-0 flex-1">
                     <span className="block text-xl font-medium [overflow-wrap:anywhere]">{t.name}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-                      <span className={`chip ${t.status === 'published' ? 'chip-sage' : ''}`}>{t.status === 'published' ? '已上架' : '草稿'}</span>
+                      <span className={`chip ${t.status === 'published' ? 'chip-sage' : ''}`}>{STATUS_LABEL[t.status]}</span>
                       <span>{t.skills.length} 個 skill</span>
                     </span>
                   </span>
