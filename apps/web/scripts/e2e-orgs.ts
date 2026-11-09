@@ -108,13 +108,15 @@ try {
   const thread = await call<{ id: string }>(member, `/api/projects/${projectId}/threads`, post({}));
 
   const chat = async (text: string) => {
+    const before = (await call<{ messages: Message[] }>(member, `/api/threads/${thread.id}/messages`)).messages.length;
     const res = await raw(member, `/api/threads/${thread.id}/chat`, post({ text }));
     if (!res.ok) return { status: res.status, body: await res.text().catch(() => '') };
     await res.text();
     for (let i = 0; ; i++) {
       const m = await call<{ messages: Message[]; running: boolean; error: string | null }>(member, `/api/threads/${thread.id}/messages`);
       if (!m.running) {
-        const last = [...m.messages].reverse().find((x) => x.role === 'assistant');
+        // 只看這一輪新增的訊息，避免把上一輪的回覆當成這一輪的
+        const last = [...m.messages.slice(before)].reverse().find((x) => x.role === 'assistant');
         return { status: res.status, error: m.error, reply: (last?.parts ?? []).map((p) => p.text ?? '').join('').trim() };
       }
       if (i > 300) throw new Error('等待回覆逾時');
@@ -141,9 +143,13 @@ try {
   record('重新加入後送訊息成功', again.status === 200 && 'reply' in again && !!again.reply && !again.error, JSON.stringify(again));
 } finally {
   // 中途失敗時照樣清乾淨：刪專案會先刪 Sprite；刪不掉就印出來，避免刪掉使用者後找不到它
+  let projectLeft = false;
   if (projectId && memberUser) {
     const res = await fetch(`${BASE}/api/projects/${projectId}`, { method: 'DELETE', headers: memberUser.headers }).catch((e: unknown) => e);
-    if (!(res instanceof Response && res.ok)) console.error(`⚠ 刪除專案失敗，請手動刪除 Sprite agenthub-${projectId}`);
+    if (!(res instanceof Response && res.ok)) {
+      projectLeft = true;
+      console.error(`⚠ 刪除專案失敗，測試使用者與組織先保留。請用 ${memberUser.email}（${memberUser.id}）重試 DELETE /api/projects/${projectId}，並確認 Sprite agenthub-${projectId} 已刪；組織 ${orgId ?? '-'}`);
+    }
   }
   if (templateId) {
     const { error } = await db.from('agent_templates').delete().eq('id', templateId);
@@ -153,7 +159,8 @@ try {
     const { error } = await db.from('organizations').delete().eq('id', orgId);
     if (error) console.error(`⚠ 刪除組織 ${orgId} 失敗：${error.message}`);
   }
-  for (const id of userIds) {
+  if (projectLeft) console.error('⚠ 因專案還在，未刪除測試使用者');
+  else for (const id of userIds) {
     const { error } = await db.auth.admin.deleteUser(id);
     if (error) console.error(`⚠ 刪除測試使用者 ${id} 失敗：${error.message}`);
   }
