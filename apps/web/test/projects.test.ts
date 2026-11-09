@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
 import {
-  createProject, deleteOwnProject, getOwnProject, getProjectDetail, hireAgent, listProjects, setSpriteState,
+  createProject, deleteOwnProject, getOwnProject, getProjectDetail, hireAgent, listProjects, setSpriteState, usableConsultantCount,
 } from '@/lib/services/projects';
 import { completeUpload, createUploadUrl } from '@/lib/services/files';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
@@ -105,14 +105,50 @@ describe('projects service', () => {
     if (orgError) throw orgError;
 
     const outsiderProject = await createProject(db, outsider.id, 'p');
-    const rejected = await hireAgent(db, outsider.id, outsiderProject.id, templateId, {}).then(() => null, (e) => e);
-    expect(rejected?.code).toBe('42501');
+    await expectStatus(hireAgent(db, outsider.id, outsiderProject.id, templateId, {}), 403, '你不是這個組織的成員');
     expect((await getProjectDetail(db, outsider.id, outsiderProject.id)).agents).toEqual([]);
 
     const memberProject = await createProject(db, member.id, 'p');
     const instanceId = await hireAgent(db, member.id, memberProject.id, templateId, {});
     const { data: inst } = await db.from('agent_instances').select('org_id').eq('id', instanceId).single();
     expect(inst?.org_id).toBe(org.id);
+  });
+
+  it('專案畫面標出無法使用的顧問與原因', async () => {
+    const admin = await seedUser(db);
+    const member = await seedUser(db);
+    const { data: org, error } = await db.from('organizations').insert({ name: '實驗室', created_by: admin.id }).select('id').single();
+    if (error) throw error;
+    const { error: memberError } = await db.from('org_members').insert([
+      { org_id: org.id, user_id: admin.id, role: 'admin', email: admin.email },
+      { org_id: org.id, user_id: member.id, role: 'member', email: member.email },
+    ]);
+    if (memberError) throw memberError;
+    const orgTemplate = await publishedTemplate(admin.id);
+    await db.from('agent_templates').update({ org_id: org.id }).eq('id', orgTemplate);
+    const publicTemplate = await publishedTemplate(admin.id, { name: '公開顧問' });
+
+    const p = await createProject(db, member.id, 'p');
+    await hireAgent(db, member.id, p.id, orgTemplate, {});
+    await hireAgent(db, member.id, p.id, publicTemplate, {});
+    const unavailable = async () => {
+      const agents = (await getProjectDetail(db, member.id, p.id)).agents;
+      return {
+        org: agents.find((a) => a.template_id === orgTemplate)!.unavailable,
+        pub: agents.find((a) => a.template_id === publicTemplate)!.unavailable,
+      };
+    };
+    expect(await unavailable()).toEqual({ org: null, pub: null });
+    expect(await usableConsultantCount(db, p.id)).toBe(2);
+
+    await db.from('agent_templates').update({ status: 'draft' }).eq('id', orgTemplate);
+    expect(await unavailable()).toEqual({ org: '這位顧問已從「實驗室」下架', pub: null });
+    expect(await usableConsultantCount(db, p.id)).toBe(1);
+
+    await db.from('agent_templates').update({ status: 'published' }).eq('id', orgTemplate);
+    await db.from('org_members').delete().eq('org_id', org.id).eq('user_id', member.id);
+    expect(await unavailable()).toEqual({ org: '你已不是「實驗室」的成員', pub: null });
+    expect(await usableConsultantCount(db, p.id)).toBe(1);
   });
 
   it('刪除專案時刪掉 storage 裡的檔案', async () => {

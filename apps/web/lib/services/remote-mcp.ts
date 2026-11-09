@@ -12,12 +12,19 @@ export async function resolveRemoteTarget(db: Db, instanceId: string, mcpName: s
   if (!UUID.test(instanceId)) throw new HttpError(404, '找不到這位顧問');
   const { data: inst, error } = await db
     .from('agent_instances')
-    .select('project_id, role, template_id, template:agent_templates(creator_id)')
+    .select('project_id, role, template_id, org_id, template:agent_templates(creator_id)')
     .eq('id', instanceId)
     .maybeSingle();
   if (error) throw error;
   if (!inst || inst.role !== 'consultant') throw new HttpError(404, '找不到這位顧問');
   if (inst.project_id !== projectId) throw new HttpError(403, '這位顧問不屬於這個專案');
+  if (inst.org_id) {
+    const { data: problem, error: problemError } = await db.rpc('org_instance_problem', {
+      p_org_id: inst.org_id, p_template_id: inst.template_id, p_project_id: projectId,
+    });
+    if (problemError) throw problemError;
+    if (problem) throw new HttpError(403, '這位顧問已無法使用');
+  }
   const { data: target, error: targetError } = await db
     .from('remote_mcp_targets')
     .select('kind, url, hosted_version_id')

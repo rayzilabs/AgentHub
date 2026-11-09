@@ -4,6 +4,7 @@ import { env } from '@/lib/env';
 import { HttpError, readJson, route } from '@/lib/http';
 import { signProjectToken } from '@/lib/platform-tokens';
 import { runtimeAccessToken } from '@/lib/runtime-session';
+import { assertConsultantsUsable } from '@/lib/services/projects';
 import { getOwnThread } from '@/lib/services/threads';
 import { forwardChat } from '@/lib/sprites';
 import { adminDb } from '@/lib/supabase/admin';
@@ -18,6 +19,8 @@ export const POST = route(async (req: Request, { params }: { params: Promise<{ i
   const { project } = await getOwnThread(adminDb(), user.id, threadId);
   if (project.sprite_status !== 'ready' || !project.sprite_url) throw new HttpError(409, 'agent 環境還在準備中，請稍候再送出');
   const { text } = await readJson(req, z.object({ text: z.string().trim().min(1, '請輸入訊息') }));
+
+  await assertConsultantsUsable(adminDb(), project.id);
 
   // 專案通行證：runtime 用它呼叫模型（平台代理）與創作者的 MCP；沒有它對話一定失敗，不轉送
   const secret = env.runtimeTokenSecret;

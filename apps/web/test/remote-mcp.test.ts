@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { GET as jwks } from '@/app/.well-known/jwks.json/route';
 import { POST } from '@/app/api/mcp/[instanceId]/[name]/route';
 import { publicJwk, signProjectToken } from '@/lib/platform-tokens';
-import { forwardToCreator, toolCallName } from '@/lib/services/remote-mcp';
+import { forwardToCreator, resolveRemoteTarget, toolCallName } from '@/lib/services/remote-mcp';
 import { createProject, deleteOwnProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
@@ -197,6 +197,27 @@ describe('遠端 MCP 閘道', () => {
   afterAll(async () => {
     vi.unstubAllEnvs();
     await new Promise((resolve) => server.close(resolve));
+  });
+
+  it('組織顧問被停用後閘道拒絕', async () => {
+    const creator = await seedUser(db);
+    const { data: org, error } = await db.from('organizations').insert({ name: '實驗室', created_by: creator.id }).select('id').single();
+    if (error) throw error;
+    await db.from('org_members').insert({ org_id: org.id, user_id: creator.id, role: 'admin', email: creator.email });
+    const t = await createTemplate(db, creator.id, {
+      name: '組織顧問', description: '', category: '', system_prompt: '你是顧問',
+      mcp_servers: [{ name: 'fin', transport: 'remote', url: mcpUrl, required_secrets: [] }],
+    });
+    await publishTemplate(db, creator.id, t.id);
+    await db.from('agent_templates').update({ org_id: org.id }).eq('id', t.id);
+    const p = await createProject(db, creator.id, 'p');
+    const instanceId = await hireAgent(db, creator.id, p.id, t.id, {});
+    expect((await resolveRemoteTarget(db, instanceId, 'fin', p.id)).url).toBe(mcpUrl);
+
+    await db.from('org_members').delete().eq('org_id', org.id).eq('user_id', creator.id);
+    const e = await resolveRemoteTarget(db, instanceId, 'fin', p.id).then(() => null, (err) => err);
+    expect(e?.status).toBe(403);
+    expect(e?.message).toBe('這位顧問已無法使用');
   });
 
   async function hired(url = mcpUrl) {

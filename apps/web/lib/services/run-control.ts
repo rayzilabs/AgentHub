@@ -6,7 +6,7 @@ import { askStop, markRunInterrupted } from '@/lib/run-liveness';
 import { runtimeAccessToken } from '@/lib/runtime-session';
 import { forwardChat } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
-import type { ProjectRow } from './projects';
+import { assertConsultantsUsable, type ProjectRow } from './projects';
 import { getOwnThread, type QueuedView } from './threads';
 
 async function runningRunId(db: Db, threadId: string): Promise<string | null> {
@@ -40,6 +40,7 @@ export async function startQueuedRun(
   if (error) throw error;
   if (data.length === 0 || !project.sprite_url) return;
 
+  await assertConsultantsUsable(db, project.id);
   const secret = env.runtimeTokenSecret;
   if (!secret) throw new HttpError(503, '平台尚未設定專案通行證，暫時無法對話');
   const res = await forward(project.sprite_url, { thread_id: threadId }, {
