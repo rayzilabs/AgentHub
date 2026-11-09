@@ -33,6 +33,7 @@
 - 對話串流：runtime 把 UI stream tee 成兩路，一路回瀏覽器、一路寫 DB，所以瀏覽器斷線不影響結果；前端串流中斷時改輪詢 `/api/threads/:id/messages`。
 - 主管（或單一顧問）的 `final` 在 run 開始就插入，執行中每 5 秒更新一次、每 20 秒更新 `updated_at` 當心跳（`packages/runtime/src/progress.ts`），所以輪詢時看得到進度；`messages` 裡 `final` 會排在同一個 run 的 `delegation` / `discussion` 之前。`messages.tool_events` 存完整工具紀錄（`toolRecords`，含截短的輸入輸出）；送給瀏覽器的只有 `toolEvents` 摘要。
 - 派工 / 討論是 generator tool，用 preliminary output 推送快照（`DelegationOutput` 在 `packages/runtime/src/tools/delegate.ts`、`DiscussionState` 在 `tools/discuss.ts`），前端在 `components/workspace/` 渲染。**web 端在 `apps/web/lib/agent-output.ts` 有一份相同的型別，改形狀時兩邊要一起改。**
+- 組織（團隊內部共用顧問）：三張表 `organizations`／`org_members`／`org_invitations`，`agent_templates.org_id` 與 `agent_instances.org_id` 標記顧問屬於哪個組織。組織顧問能不能用，只由資料庫函式 `org_instance_problem()` 決定，它同時餵給 runtime 對 `agent_instances` 的 RLS、MCP 閘道的 `resolveRemoteTarget`、專案頁與對話前的檢查；**改規則時這幾處要一起改、一起看**。組織的權限規則在 `apps/web/lib/services/orgs.ts` 與 `lib/services/templates.ts`。
 - Vercel Hobby：函式最長 300 秒（`maxDuration = 300`），所以長討論會在 production 改成輪詢，這是預期行為。
 
 ## 專案結構
