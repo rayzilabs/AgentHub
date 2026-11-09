@@ -56,8 +56,12 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
 
   const consultants = agents.filter((a) => a.role === 'consultant');
   const colorOf = (id: string) => consultantColor(Math.max(0, consultants.findIndex((a) => a.id === id)));
-  const speaker = consultants.length > 1 ? '主管' : consultants[0]?.name ?? '顧問';
-  const speakerColor = consultants.length > 1 ? MANAGER_COLOR : colorOf(consultants[0]?.id ?? '');
+  // 回答的人只看可用的顧問（runtime 只剩一位可用時走單一顧問模式）；都不可用時維持原樣，由伺服器回 409
+  const usable = agents.filter((a) => a.role === 'consultant' && !a.unavailable);
+  const answering = usable.length > 0 ? usable : consultants;
+  const hasManager = answering.length > 1;
+  const speaker = hasManager ? '主管' : answering[0]?.name ?? '顧問';
+  const speakerColor = hasManager ? MANAGER_COLOR : colorOf(answering[0]?.id ?? '');
 
   async function newThread() {
     try {
@@ -155,7 +159,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
             <Link href="/" className="btn btn-primary mt-4">到市集挑顧問</Link>
           </div>
         ) : threadId ? (
-          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} speakerColor={speakerColor} hasManager={consultants.length > 1} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
+          <Chat key={threadId} threadId={threadId} ready={project.sprite_status === 'ready'} speaker={speaker} speakerColor={speakerColor} hasManager={hasManager} colorOf={colorOf} onSettled={() => setMemoryTick((n) => n + 1)} />
         ) : (
           <div className="panel p-6">
             <p className="text-xl font-semibold">還沒有對話</p>

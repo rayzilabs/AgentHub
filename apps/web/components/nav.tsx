@@ -8,7 +8,14 @@ import { ThemeToggle } from './theme-toggle';
 
 export async function Nav() {
   const user = await currentUser();
-  const pending = user ? (await listMyInvitations(adminDb(), user.email ?? '')).length : 0;
+  let pending = 0;
+  if (user) {
+    try {
+      pending = (await listMyInvitations(adminDb(), user.email ?? '')).length;
+    } catch (e) {
+      console.error('[nav]', e);
+    }
+  }
   const links = [
     { href: '/', label: '市集' },
     ...(user ? [{ href: '/projects', label: '我的專案' }, { href: '/cloud', label: '我的雲端' }, { href: '/orgs', label: pending > 0 ? `組織 (${pending})` : '組織' }, { href: '/creator', label: '我上架的 agent' }] : []),
