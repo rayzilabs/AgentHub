@@ -71,3 +71,24 @@ export const TemplatePatchSchema = z.object({
   process_upload: z.boolean().optional(),
 });
 export type TemplatePatch = z.infer<typeof TemplatePatchSchema>;
+
+const OrgName = z.string().trim().min(1, '組織名稱 1～50 個字').max(50, '組織名稱 1～50 個字');
+
+export const OrgInputSchema = z.object({
+  name: OrgName,
+  require_template_approval: z.boolean().optional(),
+});
+export type OrgInput = z.infer<typeof OrgInputSchema>;
+
+export const OrgPatchSchema = z.object({
+  name: OrgName.optional(),
+  require_template_approval: z.boolean().optional(),
+});
+export type OrgPatch = z.infer<typeof OrgPatchSchema>;
+
+export const InviteSchema = z.object({ email: z.email('請輸入有效的 Email') });
+
+export const MemberPatchSchema = z.object({ role: z.enum(['admin', 'member']) });
+
+export const InvitationActionSchema = z.object({ action: z.enum(['approve', 'reject']) });
+export const MyInvitationActionSchema = z.object({ action: z.enum(['accept', 'decline']) });
