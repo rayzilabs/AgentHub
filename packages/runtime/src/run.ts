@@ -33,7 +33,7 @@ export type RunDeps = {
   /** 用 Vercel 附上的 runtime 帳號通行證開這次 run 的資料庫連線 */
   openDb: (dbToken: string) => Db;
   /** 模型經平台代理呼叫，用專案通行證驗證；images 讓請求送出前把共用資料夾的圖片換成簽名網址 */
-  modelFor: (platformToken: string | undefined, images?: ImageRegistry) => LanguageModel;
+  modelFor: (platformToken: string, images?: ImageRegistry) => LanguageModel;
   config: Config;
   runTimeoutMs?: number;
   progressIntervalMs?: number;
@@ -70,7 +70,7 @@ async function prepareRootAgent(
   runId: string,
   threadId: string,
   clock: RunClock,
-  gateway: PlatformGateway | undefined,
+  gateway: PlatformGateway,
 ): Promise<PreparedRoot> {
   const { db, config, model, images } = deps;
   const instances = await loadInstances(db, config.PROJECT_ID);
@@ -79,14 +79,14 @@ async function prepareRootAgent(
 
   // 每位顧問一個沙盒帳號；建立失敗就不執行（不在沒有隔離的狀態下替顧問跑指令）
   await ensureConsultantSandboxes(config.SANDBOX_USER, config.AGENTS_ROOT, consultants.map((c) => c.id));
+  // 以下三件事互不相關，同時做；錯誤照原本的順序回報（先檔案同步、再 skill 與套件、最後金鑰）
   // /shared 的寫入與刪除以主管的沙盒帳號執行，不用 runtime 帳號（見 sync.ts）
-  const sharedFiles = await syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT, {
+  const pendingShared = syncSharedFiles(db, config.PROJECT_ID, config.SHARED_ROOT, {
     sandbox: createSandbox(config.SANDBOX_USER), statePath: config.SYNC_STATE_PATH,
   });
-  images.useSharedFiles(sharedFiles);
-  for (const i of consultants) await syncSkills(db, config.AGENTS_ROOT, i);
-  // 顧問的 requirements.txt：以顧問自己的帳號在工作目錄建虛擬環境（裝過的不重裝）；各顧問同時裝，最多等一份的時間
-  const envs = new Map<string, EnvResult>(await Promise.all(consultants.map(async (i): Promise<[string, EnvResult]> => {
+  // 各顧問先同步自己的 skill，再依 skill 的 requirements.txt 以顧問自己的帳號在工作目錄建虛擬環境（裝過的不重裝）
+  const pendingEnvs = Promise.all(consultants.map(async (i): Promise<[string, EnvResult]> => {
+    await syncSkills(db, config.AGENTS_ROOT, i);
     const workDir = agentDir(config.AGENTS_ROOT, i.id);
     const sandbox = createSandbox(sandboxUserFor(config, i.id));
     return [i.id, await ensureConsultantEnv({
@@ -94,8 +94,13 @@ async function prepareRootAgent(
       requirements: await consultantRequirements(skillsDir(config.AGENTS_ROOT, i.id), i.skills),
       run: (argv, input) => runInSandbox(sandbox, argv, { cwd: workDir, input }),
     })];
-  })));
-  const secrets = await loadSecrets(db, config.PROJECT_ID);
+  }));
+  const pendingSecrets = loadSecrets(db, config.PROJECT_ID);
+  for (const p of [pendingShared, pendingEnvs, pendingSecrets]) p.catch(() => undefined);
+  const sharedFiles = await pendingShared;
+  images.useSharedFiles(sharedFiles);
+  const envs = new Map<string, EnvResult>(await pendingEnvs);
+  const secrets = await pendingSecrets;
   // 一個 run 一份：所有顧問交付的檔案合計不超過上限
   const deliveries: DeliveryBudget = { used: 0 };
   const inbox = createInbox({ db, threadId, runId });
@@ -177,9 +182,9 @@ function stoppable<T>(source: ReadableStream<T>): { stream: ReadableStream<T>; s
  * 這輪結束時還有排隊訊息，請平台開下一輪：這裡的通行證撐不完下一輪，要由平台重新簽發。
  * 失敗只記 log，訊息留在排隊區，下次打開對話時回到輸入框。
  */
-async function continueQueued(deps: ActiveDeps, threadId: string, platformToken: string | undefined): Promise<void> {
+async function continueQueued(deps: ActiveDeps, threadId: string, platformToken: string): Promise<void> {
   try {
-    if (!platformToken || !(await hasQueued(deps.db, threadId))) return;
+    if (!(await hasQueued(deps.db, threadId))) return;
     const res = await (deps.fetchImpl ?? fetch)(`${deps.config.PLATFORM_URL}/api/runtime/threads/${threadId}/continue`, {
       method: 'POST',
       headers: { authorization: `Bearer ${platformToken}` },
@@ -193,7 +198,7 @@ async function continueQueued(deps: ActiveDeps, threadId: string, platformToken:
 /** 沒有 text 代表平台要接續排隊訊息，這輪的使用者訊息由 run 建立之後才取走（撞到 409 時訊息要留著） */
 export async function startRun(
   runDeps: RunDeps,
-  req: { threadId: string; text?: string; platformToken?: string; dbToken: string },
+  req: { threadId: string; text?: string; platformToken: string; dbToken: string },
 ): Promise<Response> {
   const { openDb, modelFor, ...rest } = runDeps;
   const { config } = rest;
@@ -266,8 +271,7 @@ export async function startRun(
       ui_message: { id: generateId(), role: 'user', parts: [{ type: 'text', text }] },
     });
     // 專案通行證只放在記憶體裡傳給 MCP 連線，不寫進沙盒看得到的地方
-    const gateway = config.PLATFORM_URL && req.platformToken ? { baseUrl: config.PLATFORM_URL, token: req.platformToken } : undefined;
-    const root = await prepareRootAgent(deps, runId, req.threadId, clock, gateway);
+    const root = await prepareRootAgent(deps, runId, req.threadId, clock, { baseUrl: config.PLATFORM_URL, token: req.platformToken });
     closeAgent = root.close;
     rootId = root.rootId;
     // 準備階段（同步檔案、裝套件）不能中止，等它做完才處理停止
