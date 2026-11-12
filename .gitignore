@@ -7,3 +7,6 @@ supabase/.temp/
 supabase/.branches/
 .superpowers/
 .vercel/
+
+# Python（平台代管 MCP 套件）
+__pycache__/
