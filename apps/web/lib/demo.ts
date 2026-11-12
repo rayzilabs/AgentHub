@@ -4,12 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync, zipSync } from 'fflate';
 import { RETIRABLE } from '@/lib/hosted-ui';
-import { createHostedSpriteOps } from '@/lib/hosted-sprite';
 import { HttpError } from '@/lib/http';
 import { TemplateInputSchema, type TemplateInput } from '@/lib/schemas';
-import {
-  createVersion, HOSTED_BUCKET, listVersions, publishVersion, retireVersion, startDeploy, syncVersion, type HostedSpriteOps,
-} from '@/lib/services/hosted-mcp';
+import { HOSTED_BUCKET, type HostedVersion, type HostedVersionView } from '@/lib/services/hosted-mcp';
 import { createSkillsUploadUrl, createTemplate, listMyTemplates, publishTemplate, updateTemplate } from '@/lib/services/templates';
 import type { Db } from '@/lib/supabase/admin';
 
@@ -80,35 +77,71 @@ async function storedHash(db: Db, bundlePath: string): Promise<string> {
   return contentHash(unzipSync(new Uint8Array(await data.arrayBuffer())));
 }
 
-/** 內容與最新已發布版本相同就不動（每個版本是一台機器）；否則部署新版本、發布，再下架沒有專案在用的舊版本。回傳是否部署了新版本 */
-async function deployHosted(db: Db, creatorId: string, templateId: string, name: string, files: Files, sprites: HostedSpriteOps): Promise<boolean> {
-  const versions = await listVersions(db, creatorId, templateId, name);
-  const latest = versions.find((v) => v.status === 'published');
-  if (latest && (await storedHash(db, latest.bundle_path)) === contentHash(files)) return false;
+/**
+ * 代管 MCP 的版本操作。部署檢查要用平台私鑰簽通行證，私鑰只在正式站，
+ * 所以上架腳本用 apiHostedClient 以創作者身分呼叫正式站 API（docs/creator/hosted-mcp.md 附錄）。
+ */
+export type HostedClient = {
+  list(templateId: string, mcp: string): Promise<HostedVersionView[]>;
+  create(templateId: string, mcp: string): Promise<{ version: HostedVersion; signedUrl: string }>;
+  deploy(templateId: string, mcp: string, versionId: string): Promise<HostedVersion>;
+  /** 讀取部署中的版本會推進部署 */
+  get(templateId: string, mcp: string, versionId: string): Promise<HostedVersion>;
+  publish(templateId: string, mcp: string, versionId: string): Promise<HostedVersion>;
+  retire(templateId: string, mcp: string, versionId: string): Promise<unknown>;
+};
 
-  const { version, signedUrl } = await createVersion(db, creatorId, templateId, name);
-  await putZip(signedUrl, zipSync(files), `代管 MCP「${name}」的套件`);
-  await startDeploy(db, creatorId, version.id);
-  // 部署靠讀取推進；超過 10 分鐘 syncVersion 會自己標成失敗
-  let current = await syncVersion(db, version.id, sprites);
-  while (current.status === 'deploying') {
-    await new Promise((r) => setTimeout(r, 5000));
-    current = await syncVersion(db, version.id, sprites);
+export function apiHostedClient(platformUrl: string, accessToken: string, fetchImpl: typeof fetch = fetch): HostedClient {
+  const base = platformUrl.replace(/\/$/, '');
+  const call = async <T>(method: string, templateId: string, mcp: string, rest = ''): Promise<T> => {
+    const url = `${base}/api/templates/${templateId}/hosted/${encodeURIComponent(mcp)}/versions${rest}`;
+    const res = await fetchImpl(url, { method, headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(320_000) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new HttpError(res.status, (body as { error?: string }).error ?? `${method} ${url} 回應 ${res.status}`);
+    return body as T;
+  };
+  return {
+    list: (t, m) => call('GET', t, m),
+    create: (t, m) => call('POST', t, m),
+    deploy: (t, m, v) => call('POST', t, m, `/${v}/deploy`),
+    get: (t, m, v) => call('GET', t, m, `/${v}`),
+    publish: (t, m, v) => call('POST', t, m, `/${v}/publish`),
+    retire: (t, m, v) => call('DELETE', t, m, `/${v}`),
+  };
+}
+
+/**
+ * 內容與最新已發布版本相同就不建新版本（每個版本是一台機器）；否則部署新版本並發布。
+ * 最後下架其他沒有專案在用的版本（含上次中斷留下的失敗、等待上傳版本），釋放機器。回傳是否部署了新版本
+ */
+async function deployHosted(db: Db, client: HostedClient, templateId: string, name: string, files: Files): Promise<boolean> {
+  const latest = (await client.list(templateId, name)).find((v) => v.status === 'published');
+  let keep = latest?.id;
+  const deploy = !latest || (await storedHash(db, latest.bundle_path)) !== contentHash(files);
+  if (deploy) {
+    const { version, signedUrl } = await client.create(templateId, name);
+    await putZip(signedUrl, zipSync(files), `代管 MCP「${name}」的套件`);
+    let current = await client.deploy(templateId, name, version.id);
+    // 部署靠讀取推進；超過 10 分鐘會自己標成失敗
+    while (current.status === 'deploying') {
+      await new Promise((r) => setTimeout(r, 5000));
+      current = await client.get(templateId, name, version.id);
+    }
+    if (current.status !== 'ready') throw new Error(`代管 MCP「${name}」部署失敗：\n${current.log_tail}`);
+    await client.publish(templateId, name, version.id);
+    keep = version.id;
   }
-  if (current.status !== 'ready') throw new Error(`代管 MCP「${name}」部署失敗：\n${current.log_tail}`);
-  await publishVersion(db, creatorId, version.id);
-
-  for (const old of versions) {
-    if (old.projects > 0 || !RETIRABLE.includes(old.status)) continue;
+  for (const old of await client.list(templateId, name)) {
+    if (old.id === keep || old.projects > 0 || !RETIRABLE.includes(old.status)) continue;
     // 狀態可能剛好被別人改了或有專案剛租用，跳過即可，下次重跑再清
-    await retireVersion(db, creatorId, old.id, sprites).catch((e) => { if (!(e instanceof HttpError && e.status === 409)) throw e; });
+    await client.retire(templateId, name, old.id).catch((e) => { if (!(e instanceof HttpError && e.status === 409)) throw e; });
   }
-  return true;
+  return deploy;
 }
 
 /** 以創作者身分建立或更新（依名稱比對）範本、上傳 skill zip、部署代管 MCP，再上架。 */
 export async function publishDemoAgents(
-  db: Db, creatorId: string, agents: DemoAgent[], sprites: HostedSpriteOps = createHostedSpriteOps(),
+  db: Db, creatorId: string, agents: DemoAgent[], hosted?: HostedClient,
 ): Promise<{ id: string; name: string; created: boolean; deployed: string[] }[]> {
   const existing = await listMyTemplates(db, creatorId);
   const results = [];
@@ -120,7 +153,8 @@ export async function publishDemoAgents(
     await updateTemplate(db, creatorId, t.id, { ...agent.input, process_upload: true });
     const deployed: string[] = [];
     for (const [name, files] of Object.entries(agent.hosted)) {
-      if (await deployHosted(db, creatorId, t.id, name, files, sprites)) deployed.push(name);
+      if (!hosted) throw new Error(`${agent.input.name} 有平台代管 MCP「${name}」，需要提供 HostedClient（見 scripts/seed-business-agents.ts）`);
+      if (await deployHosted(db, hosted, t.id, name, files)) deployed.push(name);
     }
     await publishTemplate(db, creatorId, t.id);
     results.push({ id: t.id, name: agent.input.name, created: !current, deployed });

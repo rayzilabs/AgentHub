@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
-import type { DeployState, HostedSpriteOps, HostedVersion } from '@/lib/services/hosted-mcp';
+import type { HostedClient } from '@/lib/demo';
+import {
+  createVersion, listVersions, publishVersion, retireVersion, startDeploy, syncVersion,
+  type DeployState, type HostedSpriteOps, type HostedVersion,
+} from '@/lib/services/hosted-mcp';
 import type { Db } from '@/lib/supabase/admin';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
@@ -49,4 +53,19 @@ export function fakeSprites(state: DeployState = { phase: 'installing', log: 'pi
     async destroy(name: string) { calls.push({ fn: 'destroy', args: [name] }); },
   };
   return { ops, calls };
+}
+
+/** 測試用：用 services 加假的 Sprite 操作實作 HostedClient（正式上架走正式站 API） */
+export function serviceHostedClient(db: Db, userId: string, sprites: HostedSpriteOps): HostedClient {
+  return {
+    list: (t, m) => listVersions(db, userId, t, m),
+    create: (t, m) => createVersion(db, userId, t, m),
+    deploy: async (_t, _m, v) => {
+      await startDeploy(db, userId, v);
+      return syncVersion(db, v, sprites);
+    },
+    get: (_t, _m, v) => syncVersion(db, v, sprites),
+    publish: (_t, _m, v) => publishVersion(db, userId, v),
+    retire: (_t, _m, v) => retireVersion(db, userId, v, sprites),
+  };
 }

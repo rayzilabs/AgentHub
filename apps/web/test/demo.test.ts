@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it, vi } from 'vitest';
-import { loadDemoAgents, publishDemoAgents, type DemoAgent } from '@/lib/demo';
+import { apiHostedClient, loadDemoAgents, publishDemoAgents, type DemoAgent } from '@/lib/demo';
+import { HttpError } from '@/lib/http';
 import { TemplateInputSchema } from '@/lib/schemas';
 import { listVersions } from '@/lib/services/hosted-mcp';
 import { listMyTemplates, listPublishedTemplates } from '@/lib/services/templates';
 import { parseSkillsZip } from '@/lib/skills-zip';
-import { fakeSprites, seedUser, testDb } from './helpers';
+import { fakeSprites, seedUser, serviceHostedClient, testDb } from './helpers';
 
 const SKILLS: Record<string, string[]> = {
   credit: ['credit-5p', 'ratio-check'],
@@ -102,19 +103,66 @@ describe('平台代管 MCP 套件', () => {
     const { agents, hosted } = await fixture();
     const { ops, calls } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
 
-    const [first] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), ops);
+    const [first] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
     expect(first.deployed).toEqual(['law']);
     expect((await listPublishedTemplates(db)).some((t) => t.id === first.id)).toBe(true);
     expect((await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status])).toEqual([[1, 'published']]);
 
-    const [same] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), ops);
+    const [same] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
     expect(same.deployed).toEqual([]);
     expect(await listVersions(db, creator.id, first.id, 'law')).toHaveLength(1);
 
     await writeFile(path.join(hosted, 'law/server.mjs'), 'v2');
-    const [changed] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), ops);
+    const [changed] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
     expect(changed.deployed).toEqual(['law']);
     expect((await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status])).toEqual([[2, 'published'], [1, 'retired']]);
     expect(calls.filter((c) => c.fn === 'destroy')).toHaveLength(1);
+  });
+
+  it('內容沒變時，也會下架上次中斷留下的失敗版本', async () => {
+    vi.stubEnv('PLATFORM_URL', 'https://platform.test');
+    vi.stubEnv('MCP_SIGNING_KEY', generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());
+    const creator = await seedUser(db);
+    const { agents, hosted } = await fixture();
+    const { ops } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
+    const [first] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
+    const { error } = await db.from('hosted_mcp_versions')
+      .insert({ template_id: first.id, mcp_name: 'law', version: 2, status: 'failed', bundle_path: `${first.id}/law/2.zip`, sprite_name: 'agenthub-mcp-leftover00000' });
+    if (error) throw error;
+
+    const [again] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
+    expect(again.deployed).toEqual([]);
+    expect((await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status])).toEqual([[2, 'retired'], [1, 'published']]);
+  });
+
+  it('有代管 MCP 卻沒給 HostedClient 時說明要怎麼做', async () => {
+    const creator = await seedUser(db);
+    const { agents, hosted } = await fixture();
+    await expect(publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted))).rejects.toThrow(/平台代管 MCP/);
+  });
+});
+
+describe('apiHostedClient：呼叫正式站的代管 API', () => {
+  it('帶創作者 Bearer token 打對的路徑與方法，錯誤轉成 HttpError', async () => {
+    const seen: string[] = [];
+    const fakeFetch = async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push(`${init?.method ?? 'GET'} ${url} ${(init?.headers as Record<string, string>).authorization}`);
+      if (String(url).endsWith('/publish')) return Response.json({ error: '只有部署成功的版本可以發布' }, { status: 409 });
+      return Response.json({ id: 'v1', status: 'ready' });
+    };
+    const api = apiHostedClient('https://platform.test/', 'tok', fakeFetch as typeof fetch);
+    await api.list('t', 'law');
+    await api.create('t', 'law');
+    await api.deploy('t', 'law', 'v1');
+    await api.get('t', 'law', 'v1');
+    await api.retire('t', 'law', 'v1');
+    const e = await api.publish('t', 'law', 'v1').then(() => null, (x: unknown) => x);
+    expect(e).toBeInstanceOf(HttpError);
+    expect(e).toMatchObject({ status: 409, message: '只有部署成功的版本可以發布' });
+    const base = 'https://platform.test/api/templates/t/hosted/law/versions';
+    expect(seen).toEqual([
+      `GET ${base} Bearer tok`, `POST ${base} Bearer tok`, `POST ${base}/v1/deploy Bearer tok`,
+      `GET ${base}/v1 Bearer tok`, `DELETE ${base}/v1 Bearer tok`, `POST ${base}/v1/publish Bearer tok`,
+    ]);
   });
 });
