@@ -36,7 +36,7 @@ describe('人資顧問', () => {
 
   it('每個 skill 的 description 寫明什麼情況用、結尾有來源段落', () => {
     for (const s of parseSkillsZip(hr.skillsZip)) {
-      expect(s.description, s.name).toMatch(/用|時/);
+      expect(s.description, s.name).toMatch(/時用|用：/);
       expect(files[`${s.name}/SKILL.md`], s.name).toMatch(/\n## 來源\n/);
     }
   });
@@ -84,6 +84,54 @@ describe('試算腳本', () => {
     expect(r.parts['舊制'].amount).toBe(40000);
     expect(r.parts['新制'].amount).toBe(240000);
     expect(r.total).toBe(280000);
+  });
+
+  // 失敗時回傳錯誤訊息，成功時回傳 null
+  const pyError = (script: string, args: string[]): string | null => {
+    try {
+      py(script, args);
+      return null;
+    } catch (e) {
+      return String((e as { stderr?: string }).stderr ?? e);
+    }
+  };
+
+  it('資遣費：勞動部官網範例（年資 3 年 6 個月 15 天、平均工資 30,000）新制 53,125、舊制 107,500', () => {
+    // 新制：30,000 × ½ × {3 + (6 + 15/30) ÷ 12} ≒ 53,124.9
+    expect(py('termination/scripts/severance.py', ['--onboard', '2022-01-01', '--leave', '2025-07-16', '--avg-wage', '30000']).total).toBe(53125);
+    // 舊制：30,000 × {3 + (6 + 1) ÷ 12} ≒ 107,499.9（94/7/1 前的年資）
+    expect(py('termination/scripts/severance.py', ['--onboard', '2001-01-01', '--leave', '2004-07-16', '--avg-wage', '30000']).total).toBe(107500);
+  });
+
+  it('平均工資：前 6 個月工資總額 ÷ 6（勞動部 83 年函釋），不是 ÷ 總日數 × 30', () => {
+    const r = py('termination/scripts/severance.py', ['--onboard', '2023-03-01', '--leave', '2026-09-01', '--wages', '46000,45000,45000,44000,45000,45000']);
+    expect(r.avg_monthly_wage).toBe(45000);
+  });
+
+  it('跨制：依實際改選新制的日期分段；94/7/1 後到職不能選舊制', () => {
+    // 2000 年到職、2008 年才改選新制：舊制 8 年 8 個月＋新制 18 年 9 個月（上限 6 個月）
+    const r = py('termination/scripts/severance.py', ['--onboard', '2000-01-01', '--leave', '2026-01-01', '--avg-wage', '40000', '--switch-date', '2008-01-01']);
+    expect([r.parts['舊制'].amount, r.parts['新制'].amount]).toEqual([320000, 240000]);
+    expect(pyError('termination/scripts/severance.py', ['--onboard', '2010-01-01', '--leave', '2026-01-01', '--avg-wage', '40000', '--old-system'])).toMatch(/94\/7\/1/);
+  });
+
+  it('資遣的期限都是曆日：預告天數依年資、最晚通知日、資遣通報與資遣費給付期限', () => {
+    const r = py('termination/scripts/severance.py', ['--onboard', '2023-03-01', '--leave', '2026-09-01', '--avg-wage', '45000']);
+    expect(r.deadlines).toMatchObject({ notice_days: 30, notify_by: '2026-08-02', report_by: '2026-08-22', pay_by: '2026-10-01' });
+    // 年資滿 3 個月未滿 1 年預告 10 日；未滿 3 個月不用預告
+    expect(py('termination/scripts/severance.py', ['--onboard', '2026-01-01', '--leave', '2026-06-01', '--avg-wage', '30000']).deadlines.notice_days).toBe(10);
+    expect(py('termination/scripts/severance.py', ['--onboard', '2026-04-01', '--leave', '2026-06-01', '--avg-wage', '30000']).deadlines.notice_days).toBe(0);
+  });
+
+  it('特休：已休超過可休天數時報錯說明，不會算出負數；協商遞延的天數一併結算', () => {
+    expect(pyError('leave/scripts/annual_leave.py', ['--onboard', '2024-03-01', '--leave', '2026-05-15', '--taken', '13'])).toMatch(/已休/);
+    const r = py('leave/scripts/annual_leave.py', ['--onboard', '2024-03-01', '--leave', '2026-05-15', '--taken', '4', '--deferred', '2', '--monthly-wage', '36000']);
+    expect([r.unused_days, r.unused_wage]).toEqual([8, 9600]);
+  });
+
+  it('特休：月底到職，次月沒有相當日時，期間末日是月底、隔天才取得特休（民法第 121 條）', () => {
+    const r = py('leave/scripts/annual_leave.py', ['--onboard', '2024-08-31', '--leave', '2025-03-15']);
+    expect(r.current_period).toMatchObject({ start: '2025-03-01', entitled_days: 3 });
   });
 
   it('特休：週年制依年資給假，離職時只算當期未休，全額折發不按比例', () => {
