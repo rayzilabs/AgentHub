@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { descendantFolderIds, UPLOAD_FOLDER_NAME } from '@/lib/file-tree';
 import { HttpError } from '@/lib/http';
 import type { Db } from '@/lib/supabase/admin';
 import { getOwnProject } from './projects';
 
-export const UPLOAD_FOLDER = '我上傳的';
 const BUCKET = 'project-files';
 const NAME_CONFLICT = '這個資料夾已經有同名檔案';
 
@@ -91,7 +91,7 @@ export async function completeUpload(
   if (folderId) {
     await requireFolder(db, projectId, folderId);
   } else {
-    const { data, error } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: null, p_name: UPLOAD_FOLDER });
+    const { data, error } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: null, p_name: UPLOAD_FOLDER_NAME });
     if (error) throw error;
     folderId = data as string;
   }
@@ -169,12 +169,8 @@ export async function updateFolder(
   if (input.name !== undefined) patch.name = input.name;
   if (input.parentId !== undefined) {
     if (input.parentId !== null) {
-      const byId = new Map(folders.map((f) => [f.id, f]));
-      if (!byId.has(input.parentId)) throw new HttpError(404, '找不到這個資料夾');
-      // 從新的上層一路往上走，碰到自己就代表搬進了自己或子孫底下
-      for (let cur: string | null = input.parentId; cur; cur = byId.get(cur)?.parent_id ?? null) {
-        if (cur === folderId) throw new HttpError(400, '不能把資料夾搬進自己裡面');
-      }
+      if (!folders.some((f) => f.id === input.parentId)) throw new HttpError(404, '找不到這個資料夾');
+      if (descendantFolderIds(folders, folderId).includes(input.parentId)) throw new HttpError(400, '不能把資料夾搬進自己裡面');
     }
     patch.parent_id = input.parentId;
   }
@@ -209,30 +205,19 @@ export async function deleteFolder(db: Db, userId: string, projectId: string, fo
   await getOwnProject(db, userId, projectId);
   const folders = await loadFolders(db, projectId);
   if (!folders.some((f) => f.id === folderId)) throw new HttpError(404, '找不到這個資料夾');
-  const ids = new Set([folderId]);
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const f of folders) {
-      if (f.parent_id && ids.has(f.parent_id) && !ids.has(f.id)) {
-        ids.add(f.id);
-        grew = true;
-      }
-    }
-  }
   // 先刪物件再刪資料列（理由同 deleteFile）
-  await removeObjects(db, (await collectFileIds(db, projectId, [...ids])).map((id) => storagePath(projectId, id)));
+  await removeObjects(db, (await collectFileIds(db, projectId, descendantFolderIds(folders, folderId))).map((id) => storagePath(projectId, id)));
   const { error: delError } = await db.from('project_folders').delete().eq('id', folderId).eq('project_id', projectId);
   if (delError) throw delError;
 }
 
 export async function fileDownloadUrl(db: Db, userId: string, fileId: string): Promise<{ url: string; name: string }> {
-  const gone = () => new HttpError(404, '檔案已刪除');
+  const GONE = '檔案已刪除';
   const { data: file, error } = await db.from('project_files').select('project_id, name').eq('id', fileId).maybeSingle();
   if (error) throw error;
-  if (!file) throw gone();
-  await getOwnProject(db, userId, file.project_id).catch(() => {
-    throw gone();
-  });
+  if (!file) throw new HttpError(404, GONE);
+  // 不是擁有者和檔案不存在一樣說成已刪除
+  await getOwnProject(db, userId, file.project_id, GONE);
   const { data, error: urlError } = await db.storage.from(BUCKET).createSignedUrl(storagePath(file.project_id, fileId), 60, { download: file.name });
   if (urlError) throw urlError;
   return { url: data.signedUrl, name: file.name };

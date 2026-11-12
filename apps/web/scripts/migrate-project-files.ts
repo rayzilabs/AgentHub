@@ -3,7 +3,8 @@
 // 可重複執行：搬過的物件已不在第一層。
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { storagePath, UPLOAD_FOLDER } from '@/lib/services/files';
+import { UPLOAD_FOLDER_NAME } from '@/lib/file-tree';
+import { storagePath } from '@/lib/services/files';
 import type { Db } from '@/lib/supabase/admin';
 
 const BUCKET = 'project-files';
@@ -33,7 +34,7 @@ async function legacyObjects(db: Db, projectId: string): Promise<string[]> {
 export async function migrateProjectFiles(db: Db, projectId: string): Promise<{ moved: number }> {
   const names = await legacyObjects(db, projectId);
   if (names.length === 0) return { moved: 0 };
-  const { data: folderId, error: folderError } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: null, p_name: UPLOAD_FOLDER });
+  const { data: folderId, error: folderError } = await db.rpc('ensure_folder', { p_project_id: projectId, p_parent_id: null, p_name: UPLOAD_FOLDER_NAME });
   if (folderError) throw folderError;
   let moved = 0;
   for (const name of names) {

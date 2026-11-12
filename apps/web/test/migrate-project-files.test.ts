@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { getProjectTree, removeProjectStorage, UPLOAD_FOLDER } from '@/lib/services/files';
+import { UPLOAD_FOLDER_NAME } from '@/lib/file-tree';
+import { getProjectTree, removeProjectStorage } from '@/lib/services/files';
 import { createProject } from '@/lib/services/projects';
 import { migrateProjectFiles } from '../scripts/migrate-project-files';
 import { seedUser, testDb } from './helpers';
@@ -20,7 +21,7 @@ describe('migrateProjectFiles', () => {
     expect(await migrateProjectFiles(db, p)).toEqual({ moved: 2 });
 
     const tree = await getProjectTree(db, owner.id, p);
-    const folder = tree.folders.find((f) => f.name === UPLOAD_FOLDER && f.parent_id === null);
+    const folder = tree.folders.find((f) => f.name === UPLOAD_FOLDER_NAME && f.parent_id === null);
     expect(folder).toBeTruthy();
     const inFolder = tree.files.filter((f) => f.folder_id === folder!.id);
     expect(inFolder.map((f) => f.name).sort()).toEqual(['brief.md', 'file_123.pdf']);

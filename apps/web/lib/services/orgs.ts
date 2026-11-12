@@ -90,6 +90,13 @@ async function listMembers(db: Db, orgId: string): Promise<OrgMember[]> {
   return data as OrgMember[];
 }
 
+async function deleteInvitation(db: Db, id: string): Promise<void> {
+  const { error } = await db.from('org_invitations').delete().eq('id', id);
+  if (error) throw error;
+}
+
+const emailsByUser = (members: OrgMember[]) => new Map(members.map((m) => [m.user_id, m.email]));
+
 function toInvitation(row: InvitationRow, emailByUser: Map<string, string>): OrgInvitation {
   return {
     id: row.id,
@@ -104,15 +111,17 @@ function toInvitation(row: InvitationRow, emailByUser: Map<string, string>): Org
 
 export async function getOrgDetail(db: Db, userId: string, orgId: string): Promise<OrgDetail> {
   const role = await requireMember(db, userId, orgId);
-  const { data: org, error } = await db.from('organizations').select(ORG_COLUMNS).eq('id', orgId).single();
-  if (error) throw error;
-  const members = await listMembers(db, orgId);
-  let query = db.from('org_invitations').select(INVITATION_COLUMNS).eq('org_id', orgId).order('created_at');
-  if (role !== 'admin') query = query.eq('invited_by', userId);
-  const { data: rows, error: invError } = await query;
-  if (invError) throw invError;
-  const emailByUser = new Map(members.map((m) => [m.user_id, m.email]));
-  return { org: org as OrgRow, role, members, invitations: (rows as InvitationRow[]).map((r) => toInvitation(r, emailByUser)) };
+  let invitations = db.from('org_invitations').select(INVITATION_COLUMNS).eq('org_id', orgId).order('created_at');
+  if (role !== 'admin') invitations = invitations.eq('invited_by', userId);
+  const [orgResult, members, invResult] = await Promise.all([
+    db.from('organizations').select(ORG_COLUMNS).eq('id', orgId).single(),
+    listMembers(db, orgId),
+    invitations,
+  ]);
+  if (orgResult.error) throw orgResult.error;
+  if (invResult.error) throw invResult.error;
+  const emailByUser = emailsByUser(members);
+  return { org: orgResult.data as OrgRow, role, members, invitations: (invResult.data as InvitationRow[]).map((r) => toInvitation(r, emailByUser)) };
 }
 
 export async function updateOrg(db: Db, userId: string, orgId: string, patch: OrgPatch): Promise<OrgRow> {
@@ -134,8 +143,7 @@ export async function invite(db: Db, userId: string, orgId: string, rawEmail: st
   if (existingError) throw existingError;
   if (existing) {
     if (!isExpired(existing as InvitationRow)) throw new HttpError(409, '已經邀請過這個 email');
-    const { error } = await db.from('org_invitations').delete().eq('id', existing.id);
-    if (error) throw error;
+    await deleteInvitation(db, existing.id);
   }
 
   const { data, error } = await db.from('org_invitations')
@@ -147,7 +155,7 @@ export async function invite(db: Db, userId: string, orgId: string, rawEmail: st
     throw error;
   }
   const members = await listMembers(db, orgId);
-  return toInvitation(data as InvitationRow, new Map(members.map((m) => [m.user_id, m.email])));
+  return toInvitation(data as InvitationRow, emailsByUser(members));
 }
 
 async function getInvitationInOrg(db: Db, orgId: string, invitationId: string): Promise<InvitationRow> {
@@ -161,8 +169,7 @@ export async function revokeInvitation(db: Db, userId: string, orgId: string, in
   const role = await requireMember(db, userId, orgId);
   const inv = await getInvitationInOrg(db, orgId, invitationId);
   if (inv.invited_by !== userId && role !== 'admin') throw new HttpError(403, ADMIN_ONLY);
-  const { error } = await db.from('org_invitations').delete().eq('id', invitationId);
-  if (error) throw error;
+  await deleteInvitation(db, invitationId);
 }
 
 /** 核准／拒絕只處理對方已接受、等待管理員決定的邀請。 */
@@ -176,15 +183,13 @@ async function getAcceptedInvitation(db: Db, userId: string, orgId: string, invi
 export async function approveInvitation(db: Db, userId: string, orgId: string, invitationId: string): Promise<OrgMember> {
   const inv = await getAcceptedInvitation(db, userId, orgId, invitationId);
   const member = await addMember(db, orgId, inv.accepted_user_id, inv.email);
-  const { error } = await db.from('org_invitations').delete().eq('id', invitationId);
-  if (error) throw error;
+  await deleteInvitation(db, invitationId);
   return member;
 }
 
 export async function rejectInvitation(db: Db, userId: string, orgId: string, invitationId: string): Promise<void> {
   await getAcceptedInvitation(db, userId, orgId, invitationId);
-  const { error } = await db.from('org_invitations').delete().eq('id', invitationId);
-  if (error) throw error;
+  await deleteInvitation(db, invitationId);
 }
 
 async function addMember(db: Db, orgId: string, userId: string, email: string): Promise<OrgMember> {
@@ -230,8 +235,7 @@ export async function acceptInvitation(db: Db, user: { id: string; email: string
   // 依邀請人「現在」的角色決定；邀請人已不是管理員（或已離開）就要管理員核准，不看建立邀請時存的 needs_approval
   if (await getMembership(db, inv.invited_by, inv.org_id) === 'admin') {
     await addMember(db, inv.org_id, user.id, inv.email);
-    const { error } = await db.from('org_invitations').delete().eq('id', invitationId);
-    if (error) throw error;
+    await deleteInvitation(db, invitationId);
     return { joined: true };
   }
   const { error } = await db.from('org_invitations').update({ status: 'accepted', accepted_user_id: user.id }).eq('id', invitationId);
@@ -241,8 +245,7 @@ export async function acceptInvitation(db: Db, user: { id: string; email: string
 
 export async function declineInvitation(db: Db, user: { id: string; email: string }, invitationId: string): Promise<void> {
   const inv = await getOwnInvitation(db, user, invitationId);
-  const { error } = await db.from('org_invitations').delete().eq('id', inv.id);
-  if (error) throw error;
+  await deleteInvitation(db, inv.id);
 }
 
 async function assertNotLastAdmin(db: Db, orgId: string, targetUserId: string): Promise<void> {

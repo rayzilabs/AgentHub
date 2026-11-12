@@ -29,24 +29,26 @@ export type ThreadRow = { id: string; project_id: string; title: string; created
 
 export type ProjectDetail = { project: ProjectRow; agents: AgentSummary[]; threads: ThreadRow[] };
 
-const COLUMNS = 'id, owner_id, name, sprite_name, sprite_url, sprite_status, sprite_error, created_at';
+export const PROJECT_COLUMNS = 'id, owner_id, name, sprite_name, sprite_url, sprite_status, sprite_error, created_at';
+export const THREAD_COLUMNS = 'id, project_id, title, created_at';
 
 export async function listProjects(db: Db, userId: string): Promise<ProjectRow[]> {
-  const { data, error } = await db.from('projects').select(COLUMNS).eq('owner_id', userId).order('created_at', { ascending: false });
+  const { data, error } = await db.from('projects').select(PROJECT_COLUMNS).eq('owner_id', userId).order('created_at', { ascending: false });
   if (error) throw error;
   return data as ProjectRow[];
 }
 
 export async function createProject(db: Db, userId: string, name: string): Promise<ProjectRow> {
-  const { data, error } = await db.from('projects').insert({ owner_id: userId, name }).select(COLUMNS).single();
+  const { data, error } = await db.from('projects').insert({ owner_id: userId, name }).select(PROJECT_COLUMNS).single();
   if (error) throw error;
   return data as ProjectRow;
 }
 
-export async function getOwnProject(db: Db, userId: string, id: string): Promise<ProjectRow> {
-  const { data, error } = await db.from('projects').select(COLUMNS).eq('id', id).eq('owner_id', userId).maybeSingle();
+/** notFound：不是擁有者或不存在時的 404 訊息；資料庫錯誤照實丟出 */
+export async function getOwnProject(db: Db, userId: string, id: string, notFound = '找不到這個專案'): Promise<ProjectRow> {
+  const { data, error } = await db.from('projects').select(PROJECT_COLUMNS).eq('id', id).eq('owner_id', userId).maybeSingle();
   if (error) throw error;
-  if (!data) throw new HttpError(404, '找不到這個專案');
+  if (!data) throw new HttpError(404, notFound);
   return data as ProjectRow;
 }
 
@@ -69,12 +71,6 @@ async function consultantIds(db: Db, projectId: string): Promise<string[]> {
   return data.map((r) => r.id as string);
 }
 
-/** 專案裡還能用的顧問數（扣掉被停用的組織顧問） */
-export async function usableConsultantCount(db: Db, projectId: string): Promise<number> {
-  const [ids, problems] = await Promise.all([consultantIds(db, projectId), instanceProblems(db, projectId)]);
-  return ids.filter((id) => !problems.has(id)).length;
-}
-
 /** 有顧問、但全都無法使用時拒絕；沒有顧問的專案維持原行為 */
 export async function assertConsultantsUsable(db: Db, projectId: string): Promise<void> {
   const [ids, problems] = await Promise.all([consultantIds(db, projectId), instanceProblems(db, projectId)]);
@@ -85,7 +81,7 @@ export async function getProjectDetail(db: Db, userId: string, id: string): Prom
   const project = await getOwnProject(db, userId, id);
   const [agentsResult, threadsResult, problems] = await Promise.all([
     db.from('agent_instances').select('id, name, description, role, template_id, skills, mcp_servers').eq('project_id', id).order('created_at'),
-    db.from('threads').select('id, project_id, title, created_at').eq('project_id', id).order('created_at', { ascending: false }),
+    db.from('threads').select(THREAD_COLUMNS).eq('project_id', id).order('created_at', { ascending: false }),
     instanceProblems(db, id),
   ]);
   if (agentsResult.error) throw agentsResult.error;

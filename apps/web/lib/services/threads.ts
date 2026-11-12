@@ -2,7 +2,7 @@ import type { UIMessage } from 'ai';
 import { HttpError } from '@/lib/http';
 import { defaultRunCheck, INTERRUPTED_ERROR, markRunInterrupted, type RunCheck } from '@/lib/run-liveness';
 import type { Db } from '@/lib/supabase/admin';
-import { getOwnProject, type ProjectRow, type ThreadRow } from './projects';
+import { getOwnProject, PROJECT_COLUMNS, type ProjectRow, THREAD_COLUMNS, type ThreadRow } from './projects';
 
 export type QueuedView = { id: string; text: string };
 
@@ -31,7 +31,7 @@ const STALE_RUN_MS = 20 * 60_000;
 
 export async function listThreads(db: Db, userId: string, projectId: string): Promise<ThreadRow[]> {
   await getOwnProject(db, userId, projectId);
-  const { data, error } = await db.from('threads').select('id, project_id, title, created_at').eq('project_id', projectId).order('created_at', { ascending: false });
+  const { data, error } = await db.from('threads').select(THREAD_COLUMNS).eq('project_id', projectId).order('created_at', { ascending: false });
   if (error) throw error;
   return data as ThreadRow[];
 }
@@ -41,24 +41,21 @@ export async function createThread(db: Db, userId: string, projectId: string, ti
   const { data, error } = await db
     .from('threads')
     .insert({ project_id: projectId, ...(title ? { title } : {}) })
-    .select('id, project_id, title, created_at')
+    .select(THREAD_COLUMNS)
     .single();
   if (error) throw error;
   return data as ThreadRow;
 }
 
 export async function getOwnThread(db: Db, userId: string, threadId: string): Promise<{ thread: ThreadRow; project: ProjectRow }> {
-  const { data, error } = await db.from('threads').select('id, project_id, title, created_at').eq('id', threadId).maybeSingle();
+  // 一次查完對話與專案；不是擁有者和不存在一樣說成找不到對話
+  const { data, error } = await db.from('threads')
+    .select(`${THREAD_COLUMNS}, project:projects!inner(${PROJECT_COLUMNS})`)
+    .eq('id', threadId).eq('project.owner_id', userId).maybeSingle();
   if (error) throw error;
   if (!data) throw new HttpError(404, '找不到這串對話');
-  try {
-    const project = await getOwnProject(db, userId, data.project_id);
-    return { thread: data as ThreadRow, project };
-  } catch (e) {
-    // 只有「不是擁有者」對外說成找不到對話；資料庫錯誤照實丟出（回 500）
-    if (e instanceof HttpError && e.status === 404) throw new HttpError(404, '找不到這串對話');
-    throw e;
-  }
+  const { project, ...thread } = data;
+  return { thread: thread as ThreadRow, project: project as unknown as ProjectRow };
 }
 
 export async function getThreadMessages(db: Db, userId: string, threadId: string, checkRun: RunCheck = defaultRunCheck(db)): Promise<ThreadMessages> {

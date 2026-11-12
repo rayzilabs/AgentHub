@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
@@ -25,7 +26,6 @@ export function runtimeEmail(projectId: string): string {
   const tag = createHmac('sha256', env.supabaseSecretKey).update(`runtime-account:${projectId}`).digest('hex').slice(0, 12);
   return `runtime-${projectId}-${tag}@${RUNTIME_EMAIL_DOMAIN}`;
 }
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function isRuntimeAccount(user: { app_metadata?: Record<string, unknown> }): boolean {
   return typeof user.app_metadata?.agenthub_runtime_project === 'string';
@@ -43,14 +43,22 @@ async function readRow(db: Db, projectId: string): Promise<Row | null> {
   return data as Row | null;
 }
 
-async function findUserIdByEmail(db: Db, email: string): Promise<string | null> {
+/** 逐頁列出所有 Auth 帳號 */
+async function* userPages(db: Db) {
   for (let page = 1; ; page++) {
     const { data, error } = await db.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw error;
-    const found = data.users.find((u) => u.email === email);
-    if (found) return found.id;
-    if (data.users.length < 1000) return null;
+    yield data.users;
+    if (data.users.length < 1000) return;
   }
+}
+
+async function findUserIdByEmail(db: Db, email: string): Promise<string | null> {
+  for await (const users of userPages(db)) {
+    const found = users.find((u) => u.email === email);
+    if (found) return found.id;
+  }
+  return null;
 }
 
 /** 專案的 runtime 帳號；沒有就建立 */
@@ -101,8 +109,11 @@ async function save(db: Db, projectId: string, s: { access_token: string; refres
 
 /** 這次對話給 runtime 用的資料庫通行證：剩 20 分鐘以上就沿用，否則換新，再不行就重新登入 */
 export async function runtimeAccessToken(db: Db, projectId: string, now = Date.now()): Promise<string> {
-  await ensureRuntimeAccount(db, projectId);
-  const row = (await readRow(db, projectId))!;
+  let row = await readRow(db, projectId);
+  if (!row) {
+    await ensureRuntimeAccount(db, projectId);
+    row = (await readRow(db, projectId))!;
+  }
   if (row.access_token && row.expires_at && Date.parse(row.expires_at) - now >= MIN_TTL_MS) return row.access_token;
   const auth = authClient().auth;
   if (row.refresh_token) {
@@ -134,22 +145,19 @@ export async function deleteRuntimeAccount(db: Db, projectId: string): Promise<v
 /** 專案已不存在（例如擁有者帳號被刪）但 runtime 帳號還在的，一併刪除 */
 export async function cleanupOrphanRuntimeAccounts(db: Db): Promise<number> {
   let removed = 0;
-  for (let page = 1; ; page++) {
-    const { data, error } = await db.auth.admin.listUsers({ page, perPage: 1000 });
-    if (error) throw error;
-    const runtimeUsers = data.users.filter((u) => isRuntimeAccount(u));
-    if (runtimeUsers.length > 0) {
-      const ids = runtimeUsers.map((u) => u.app_metadata.agenthub_runtime_project as string);
-      const { data: alive, error: aliveError } = await db.from('projects').select('id').in('id', ids);
-      if (aliveError) throw aliveError;
-      const aliveIds = new Set((alive ?? []).map((p) => p.id as string));
-      for (const u of runtimeUsers) {
-        if (aliveIds.has(u.app_metadata.agenthub_runtime_project as string)) continue;
-        const { error: delError } = await db.auth.admin.deleteUser(u.id);
-        if (delError && delError.status !== 404) throw delError;
-        removed++;
-      }
+  for await (const users of userPages(db)) {
+    const runtimeUsers = users.filter((u) => isRuntimeAccount(u));
+    if (runtimeUsers.length === 0) continue;
+    const ids = runtimeUsers.map((u) => u.app_metadata.agenthub_runtime_project as string);
+    const { data: alive, error: aliveError } = await db.from('projects').select('id').in('id', ids);
+    if (aliveError) throw aliveError;
+    const aliveIds = new Set((alive ?? []).map((p) => p.id as string));
+    for (const u of runtimeUsers) {
+      if (aliveIds.has(u.app_metadata.agenthub_runtime_project as string)) continue;
+      const { error: delError } = await db.auth.admin.deleteUser(u.id);
+      if (delError && delError.status !== 404) throw delError;
+      removed++;
     }
-    if (data.users.length < 1000) return removed;
   }
+  return removed;
 }

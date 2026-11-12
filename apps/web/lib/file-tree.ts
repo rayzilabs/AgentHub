@@ -1,6 +1,6 @@
 import type { FileRow, FolderRow, ProjectTree } from '@/lib/services/files';
 
-/** 與 services/files.ts 的 UPLOAD_FOLDER 相同；那邊是 server 模組，client 不能 import */
+/** 每個專案根層的上傳資料夾（client 與 server 共用） */
 export const UPLOAD_FOLDER_NAME = '我上傳的';
 
 export type TreeNode = { folder: FolderRow; folders: TreeNode[]; files: FileRow[] };

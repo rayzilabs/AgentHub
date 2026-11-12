@@ -28,19 +28,12 @@ describe('threads service', () => {
     expect((e as HttpError).status).toBe(404);
   });
 
-  it('查專案時資料庫出錯：原樣丟出，不當成 404', async () => {
+  it('查對話與專案時資料庫出錯：原樣丟出，不當成 404', async () => {
     const dbError = new Error('connection reset');
-    const query = (result: unknown) => {
-      const chain: Record<string, unknown> = {};
-      for (const m of ['select', 'eq']) chain[m] = () => chain;
-      chain.maybeSingle = async () => result;
-      return chain;
-    };
-    const fakeDb = {
-      from: (table: string) => (table === 'threads'
-        ? query({ data: { id: 't', project_id: 'p', title: 'x', created_at: '' }, error: null })
-        : query({ data: null, error: dbError })),
-    } as unknown as Db;
+    const chain: Record<string, unknown> = {};
+    for (const m of ['select', 'eq']) chain[m] = () => chain;
+    chain.maybeSingle = async () => ({ data: null, error: dbError });
+    const fakeDb = { from: () => chain } as unknown as Db;
     await expect(getOwnThread(fakeDb, 'u', 't')).rejects.toBe(dbError);
   });
 

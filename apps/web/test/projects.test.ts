@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
 import {
-  createProject, deleteOwnProject, getOwnProject, getProjectDetail, hireAgent, listProjects, setSpriteState, usableConsultantCount,
+  createProject, deleteOwnProject, getOwnProject, getProjectDetail, hireAgent, listProjects, setSpriteState,
 } from '@/lib/services/projects';
 import { completeUpload, createUploadUrl } from '@/lib/services/files';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
@@ -139,16 +139,13 @@ describe('projects service', () => {
       };
     };
     expect(await unavailable()).toEqual({ org: null, pub: null });
-    expect(await usableConsultantCount(db, p.id)).toBe(2);
 
     await db.from('agent_templates').update({ status: 'draft' }).eq('id', orgTemplate);
     expect(await unavailable()).toEqual({ org: '這位顧問已從「實驗室」下架', pub: null });
-    expect(await usableConsultantCount(db, p.id)).toBe(1);
 
     await db.from('agent_templates').update({ status: 'published' }).eq('id', orgTemplate);
     await db.from('org_members').delete().eq('org_id', org.id).eq('user_id', member.id);
     expect(await unavailable()).toEqual({ org: '你已不是「實驗室」的成員', pub: null });
-    expect(await usableConsultantCount(db, p.id)).toBe(1);
   });
 
   it('刪除專案時刪掉 storage 裡的檔案', async () => {
