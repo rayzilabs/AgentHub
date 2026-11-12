@@ -1,0 +1,192 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "taiwan-payroll year data",
+  "type": "object",
+  "required": [
+    "year",
+    "effectiveDate",
+    "dataVersion",
+    "sources",
+    "minimumWage",
+    "laborInsurance",
+    "occupationalInsurance",
+    "healthInsurance",
+    "pension",
+    "supplementaryPremium"
+  ],
+  "additionalProperties": true,
+  "definitions": {
+    "rate": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "burden": {
+      "type": "object",
+      "required": ["employer", "employee", "government"],
+      "properties": {
+        "employer": { "$ref": "#/definitions/rate" },
+        "employee": { "$ref": "#/definitions/rate" },
+        "government": { "$ref": "#/definitions/rate" }
+      },
+      "additionalProperties": false
+    },
+    "bracket": {
+      "type": "object",
+      "required": ["grade", "min", "max", "insuredSalary"],
+      "properties": {
+        "grade": { "type": "integer", "minimum": 1 },
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": ["integer", "null"] },
+        "insuredSalary": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "brackets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/bracket" } },
+    "taxBracket": {
+      "type": "object",
+      "required": ["min", "max", "rate", "progressiveDiff"],
+      "properties": {
+        "min": { "type": "number" },
+        "max": { "type": ["number", "null"] },
+        "rate": { "$ref": "#/definitions/rate" },
+        "progressiveDiff": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "incomeTax": {
+      "type": "object",
+      "required": ["residentExemption", "standardDeduction", "salaryDeduction", "brackets", "nonMonthly", "nonResident"],
+      "properties": {
+        "residentExemption": { "type": "number" },
+        "standardDeduction": { "type": "number" },
+        "salaryDeduction": { "type": "number" },
+        "brackets": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/taxBracket" } },
+        "nonMonthly": {
+          "type": "object",
+          "required": ["rate", "threshold"],
+          "properties": { "rate": { "$ref": "#/definitions/rate" }, "threshold": { "type": "number" } },
+          "additionalProperties": false
+        },
+        "nonResident": {
+          "type": "object",
+          "required": ["rate", "reducedRate", "reducedThresholdMultiplier"],
+          "properties": {
+            "rate": { "$ref": "#/definitions/rate" },
+            "reducedRate": { "$ref": "#/definitions/rate" },
+            "reducedThresholdMultiplier": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "oldAgePension": {
+      "type": "object",
+      "required": ["formulaARate", "formulaABonus", "formulaBRate", "adjustPerYearRate", "maxAdjustYears", "minYearsForPension", "lumpSumPostAgeCapYears", "singlePaymentBasis", "statutoryAge"],
+      "additionalProperties": false,
+      "properties": {
+        "formulaARate": { "$ref": "#/definitions/rate" },
+        "formulaABonus": { "type": "integer" },
+        "formulaBRate": { "$ref": "#/definitions/rate" },
+        "adjustPerYearRate": { "$ref": "#/definitions/rate" },
+        "maxAdjustYears": { "type": "integer" },
+        "minYearsForPension": { "type": "integer" },
+        "lumpSumPostAgeCapYears": { "type": "integer" },
+        "singlePaymentBasis": {
+          "type": "object",
+          "required": ["firstTierYears", "firstTierBasisPerYear", "secondTierBasisPerYear", "preSixtyMaxBasis", "postSixtyCapYears", "combinedMaxBasis"],
+          "additionalProperties": false,
+          "properties": {
+            "firstTierYears": { "type": "integer" },
+            "firstTierBasisPerYear": { "type": "integer" },
+            "secondTierBasisPerYear": { "type": "integer" },
+            "preSixtyMaxBasis": { "type": "integer" },
+            "postSixtyCapYears": { "type": "integer" },
+            "combinedMaxBasis": { "type": "integer" }
+          }
+        },
+        "statutoryAge": {
+          "type": "object",
+          "required": ["schedule", "defaultAge"],
+          "additionalProperties": false,
+          "properties": {
+            "schedule": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["maxBornRocYear", "age"],
+                "additionalProperties": false,
+                "properties": {
+                  "maxBornRocYear": { "type": "integer" },
+                  "age": { "type": "integer" }
+                }
+              }
+            },
+            "defaultAge": { "type": "integer" }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "year": { "type": "integer" },
+    "rocYear": { "type": "integer" },
+    "effectiveDate": { "type": "string", "format": "date" },
+    "dataVersion": { "type": "string" },
+    "sources": { "type": "array", "items": { "type": "object" } },
+    "minimumWage": {
+      "type": "object",
+      "required": ["monthly", "hourly"],
+      "properties": { "monthly": { "type": "integer" }, "hourly": { "type": "integer" } }
+    },
+    "laborInsurance": {
+      "type": "object",
+      "required": ["rate", "rateWithoutEmploymentInsurance", "burden", "brackets"],
+      "properties": {
+        "rate": { "$ref": "#/definitions/rate" },
+        "rateWithoutEmploymentInsurance": { "$ref": "#/definitions/rate" },
+        "burden": { "$ref": "#/definitions/burden" },
+        "brackets": { "$ref": "#/definitions/brackets" },
+        "partTimeBrackets": { "$ref": "#/definitions/brackets" }
+      }
+    },
+    "occupationalInsurance": {
+      "type": "object",
+      "required": ["defaultRate", "brackets"],
+      "properties": {
+        "defaultRate": { "$ref": "#/definitions/rate" },
+        "brackets": { "$ref": "#/definitions/brackets" }
+      }
+    },
+    "healthInsurance": {
+      "type": "object",
+      "required": ["rate", "burden", "avgDependents", "employerMultiplier", "maxDependentsCharged", "brackets"],
+      "properties": {
+        "rate": { "$ref": "#/definitions/rate" },
+        "burden": { "$ref": "#/definitions/burden" },
+        "avgDependents": { "$ref": "#/definitions/rate" },
+        "employerMultiplier": { "$ref": "#/definitions/rate" },
+        "maxDependentsCharged": { "type": "integer" },
+        "brackets": { "$ref": "#/definitions/brackets" },
+        "partTimeBrackets": { "$ref": "#/definitions/brackets" }
+      }
+    },
+    "pension": {
+      "type": "object",
+      "required": ["employerRate", "brackets"],
+      "properties": {
+        "employerRate": { "$ref": "#/definitions/rate" },
+        "brackets": { "$ref": "#/definitions/brackets" }
+      }
+    },
+    "supplementaryPremium": {
+      "type": "object",
+      "required": ["rate", "bonusThresholdMultiplier", "lowerThreshold", "singlePaymentCap"],
+      "properties": {
+        "rate": { "$ref": "#/definitions/rate" },
+        "bonusThresholdMultiplier": { "type": "integer" },
+        "lowerThreshold": { "type": "integer" },
+        "singlePaymentCap": { "type": "integer" }
+      }
+    },
+    "incomeTax": { "$ref": "#/definitions/incomeTax" },
+    "oldAgePension": { "$ref": "#/definitions/oldAgePension" }
+  }
+}
