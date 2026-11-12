@@ -127,17 +127,34 @@ class CalendarFor(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "兩年"):
             cal.calendar_for("2026-01-01", "2028-06-30", fetch=lambda y: {})
 
-    def test_fetches_each_year_once(self):
+    def test_fetches_each_year_once_plus_neighbours_for_long_weekends(self):
         asked = []
         cal.calendar_for("2026-11-01", "2027-02-28", fetch=lambda y: asked.append(y) or {})
-        self.assertEqual(asked, [2026, 2027])
+        self.assertEqual(asked, [2025, 2026, 2027, 2028])
 
-    def test_source_outage_is_reported_as_missing_year(self):
+    def test_source_outage_is_unavailable_not_unpublished(self):
         def down(year):
             raise OSError("timed out")
         r = cal.calendar_for("2027-01-01", "2027-03-31", fetch=down)
-        self.assertEqual(r["missing_years"], [2027])
+        self.assertEqual(r["unavailable_years"], [2027])
+        self.assertEqual(r["missing_years"], [])
         self.assertTrue(any("暫時取不到" in n for n in r["notes"]))
+
+    def test_long_weekend_crossing_new_year_is_complete(self):
+        years = {
+            2027: {D(2027, 12, 30): {"off": False, "note": ""}, D(2027, 12, 31): {"off": True, "note": "補假"}},
+            2028: {D(2028, 1, 1): {"off": True, "note": "開國紀念日"}, D(2028, 1, 2): {"off": True, "note": ""},
+                   D(2028, 1, 3): {"off": False, "note": ""}},
+        }
+        r = cal.calendar_for("2027-12-01", "2027-12-31", fetch=lambda y: years.get(y, {}))
+        self.assertEqual(r["long_weekends"], [
+            {"start": "2027-12-31", "end": "2028-01-02", "days": 3, "includes": ["補假", "開國紀念日"]}])
+
+    def test_unpublished_next_year_at_the_edge_is_noted(self):
+        years = {2027: {D(2027, 12, 31): {"off": True, "note": "補假"}}}
+        r = cal.calendar_for("2027-12-01", "2027-12-31", fetch=lambda y: years.get(y))
+        self.assertEqual(r["missing_years"], [])
+        self.assertTrue(any("2028" in n and "連假" in n for n in r["notes"]))
 
 
 if __name__ == "__main__":

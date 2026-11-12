@@ -126,7 +126,48 @@ class AiCrawlers(unittest.TestCase):
         self.assertIn("ClaudeBot", f["issue"])
 
 
+class RobotsDetails(unittest.TestCase):
+    def test_query_string_is_matched_against_rules(self):
+        fetch = {**OK_FETCH, "final_url": URL + "products?preview=1"}
+        r = audit(fetch=fetch, robots="User-agent: *\nDisallow: /*?preview=\n")
+        self.assertIn("googlebot_blocked", issues(r))
+
+    def test_crawler_access_is_unknown_when_robots_unreadable(self):
+        r = audit(robots="", robots_status=503)
+        self.assertTrue(all(c["allowed"] is None for c in r["crawlers"]))
+        self.assertEqual(r["robots_status"], 503)
+
+
+class RedirectToAnotherSite(unittest.TestCase):
+    def test_robots_is_refetched_for_the_final_origin(self):
+        asked = []
+
+        def fake_page(url):
+            return GOOD_HTML, {**OK_FETCH, "requested_url": url, "final_url": "https://new.example.tw/"}, True
+
+        def fake_robots(url):
+            asked.append(url)
+            text = ROBOTS_BLOCK_ALL if "new.example.tw" in url else ROBOTS_ALLOW
+            return sa.robots.RobotsTxt.parse(text, sa.robots.normalize_robots_url(url), 200, None)
+
+        orig = (sa.onpage.fetch_page, sa._fetch_robots, sa.sitemap.collect)
+        sa.onpage.fetch_page, sa._fetch_robots = fake_page, fake_robots
+        sa.sitemap.collect = lambda *a, **k: SITEMAP_FOUND
+        try:
+            r = sa.site_audit("http://old.example.tw/")
+        finally:
+            sa.onpage.fetch_page, sa._fetch_robots, sa.sitemap.collect = orig
+        self.assertEqual(asked, ["http://old.example.tw/", "https://new.example.tw/"])
+        self.assertIn("googlebot_blocked", issues(r))
+
+
 class StructuredDataErrors(unittest.TestCase):
+    def test_invalid_jsonld_is_reported_as_error_not_missing(self):
+        html = GOOD_HTML.replace('"@type":"Bakery"', '"@type":"Bakery",,')
+        found = issues(audit(html=html))
+        self.assertIn("structured_data_errors", found)
+        self.assertNotIn("structured_data_missing", found)
+
     def test_product_without_required_fields_is_medium(self):
         html = GOOD_HTML.replace('"@type":"Bakery","name":"阿明手作烘焙",', '"@type":"Product",')
         self.assertEqual(issues(audit(html=html))["structured_data_errors"]["severity"], "中")

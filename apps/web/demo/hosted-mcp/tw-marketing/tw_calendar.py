@@ -125,31 +125,38 @@ def calendar_for(start: str, end: str, fetch=fetch_office_calendar) -> dict:
         raise ValueError("結束日不能早於開始日")
     if (e - s).days > 731:
         raise ValueError("一次最多查兩年，請分段查詢")
-    office, outages = {}, []
-    for y in range(s.year, e.year + 1):
+    office, unavailable, outages = {}, [], []
+    for y in range(s.year - 1, e.year + 2):  # 前後各多抓一年，才看得到跨年的連假
         try:
             office[y] = fetch(y)
         except OSError as err:
             office[y] = None
-            outages.append(f"{y} 年辦公日曆表暫時取不到（{err}），國定假日與連假請稍後再查或看人事總處網站。")
+            if s.year <= y <= e.year:
+                unavailable.append(y)
+                outages.append(f"{y} 年辦公日曆表暫時取不到（{err}），國定假日與連假請稍後再查或看人事總處網站。")
     result = build_calendar(s, e, office)
+    result["missing_years"] = [y for y in result["missing_years"] if y not in unavailable]
+    result["unavailable_years"] = unavailable
     result["notes"] += outages
     return result
 
 
 def build_calendar(start: dt.date, end: dt.date, office_days: dict[int, dict | None]) -> dict:
-    """office_days：{西元年: parse_office_calendar 的結果，或 None 表示人事總處還沒公布}"""
+    """office_days：{西元年: parse_office_calendar 的結果，或 None 表示沒有資料}；可以多給前後年份，用來判斷跨年連假"""
     holidays, makeup, events, notes, missing = [], [], [], [NOTE_ANNIVERSARY], []
     merged: dict[dt.date, dict] = {}
+    for days in office_days.values():
+        merged.update(days or {})
     for year in range(start.year, end.year + 1):
-        days = office_days.get(year)
+        days = office_days.get(year) or {}
         if not days:
             missing.append(year)
-            days = {}
-        merged.update(days)
         year_events, year_notes = _shopping_events(year, days)
         events += year_events
         notes += year_notes
+    for edge, neighbour in ((dt.date(end.year, 12, 31), end.year + 1), (dt.date(start.year, 1, 1), start.year - 1)):
+        if merged.get(edge, {}).get("off") and not office_days.get(neighbour):
+            notes.append(f"{neighbour} 年的辦公日曆表還沒有資料，{edge.isoformat()} 前後的連假可能延續到 {neighbour} 年，天數以人事總處公告為準。")
     for d in sorted(merged):
         if not start <= d <= end:
             continue

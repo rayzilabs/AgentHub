@@ -56,7 +56,7 @@ def _page_findings(page, fetch, schema):
         out.append(_finding("description_missing", "中", "沒有網頁描述（meta description），搜尋結果的摘要會由 Google 自己挑。",
                             "用一兩句話寫出這頁的重點與差異，像在跟顧客介紹。",
                             G + "appearance/snippet?hl=zh-tw"))
-    if not schema["objects"]:
+    if not schema["objects"] and not schema["parse_errors"]:
         out.append(_finding("structured_data_missing", "中", "沒有結構化資料（JSON-LD）。",
                             "店家首頁加 LocalBusiness（名稱、地址、電話、營業時間），商品頁加 Product。",
                             G + "appearance/structured-data/intro-structured-data?hl=zh-tw"))
@@ -89,12 +89,16 @@ def _page_findings(page, fetch, schema):
 def audit_from_responses(url, html, fetch, page_ok, parsed_robots, sitemap_result):
     """parsed_robots：robots.RobotsTxt（4xx 時傳空規則，代表沒有限制）。"""
     final_url = fetch.get("final_url") or url
-    path = urlsplit(final_url).path or "/"
-    crawlers = [{"bot": bot, "purpose": purpose, "allowed": parsed_robots.can_fetch(bot, path)[0], "doc": doc}
+    parts = urlsplit(final_url)
+    path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")  # robots 規則也比對查詢字串
+    unreliable = robots.status_unreliable(parsed_robots.status)
+    # robots.txt 讀不到時不知道規則，allowed 給 None，不假裝允許
+    crawlers = [{"bot": bot, "purpose": purpose, "doc": doc,
+                 "allowed": None if unreliable else parsed_robots.can_fetch(bot, path)[0]}
                 for bot, purpose, doc in CRAWLERS]
     findings = []
 
-    if robots.status_unreliable(parsed_robots.status):
+    if unreliable:
         detail = f"，{parsed_robots.error}" if parsed_robots.error else ""
         findings.append(_finding("robots_unreachable", "高",
                                  f"robots.txt 讀不到（HTTP {parsed_robots.status or '連線失敗'}{detail}），Google 可能暫停或整站不爬。",
@@ -146,6 +150,7 @@ def audit_from_responses(url, html, fetch, page_ok, parsed_robots, sitemap_resul
         "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "notice": NOTICE,
         "page": page,
+        "robots_status": parsed_robots.status,
         "crawlers": crawlers,
         "sitemap": {"declared_in_robots": parsed_robots.sitemaps, "type": sitemap_result.get("type"),
                     "url_count": sitemap_result.get("url_count", 0)},
@@ -167,6 +172,8 @@ def site_audit(url: str) -> dict:
         page_job, robots_job = pool.submit(onpage.fetch_page, url), pool.submit(_fetch_robots, url)
         (html, fetch, page_ok), parsed_robots = page_job.result(), robots_job.result()
     parts = urlsplit(fetch.get("final_url") or url)
+    if (parts.scheme, parts.netloc) != urlsplit(url)[:2]:  # 轉址到別的站：robots.txt 只對同一個協定與主機有效
+        parsed_robots = _fetch_robots(fetch["final_url"])
     # 有宣告就直接用，避免 collect 再抓一次 robots.txt
     entry = parsed_robots.sitemaps[0] if parsed_robots.sitemaps else f"{parts.scheme}://{parts.netloc}/sitemap.xml"
     found = sitemap.collect(entry, limit=5, max_fetches=2, max_seconds=20)
