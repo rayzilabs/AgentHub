@@ -23,6 +23,17 @@ export function route<C>(handler: (req: Request, ctx: C) => Promise<unknown>) {
   };
 }
 
+const HOP_BY_HOP = new Set(['connection', 'content-length', 'transfer-encoding', 'keep-alive', 'content-encoding']);
+
+/** 轉送上游回應時要帶回去的標頭（去掉逐跳標頭） */
+export function upstreamHeaders(h: Headers): Headers {
+  const out = new Headers();
+  h.forEach((v, k) => {
+    if (!HOP_BY_HOP.has(k)) out.set(k, v);
+  });
+  return out;
+}
+
 export async function readJson<T>(req: Request, schema: ZodType<T>): Promise<T> {
   let body: unknown;
   try {

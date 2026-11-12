@@ -1,5 +1,6 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { env } from '@/lib/env';
-import { HttpError } from '@/lib/http';
+import { HttpError, upstreamHeaders } from '@/lib/http';
 import type { Db } from '@/lib/supabase/admin';
 
 /** edgeToken：平台代管時用來通過 Fly 驗證的 Sprites token（Fly 驗證後就拿掉，不會到達創作者的程式） */
@@ -18,19 +19,16 @@ export async function resolveRemoteTarget(db: Db, instanceId: string, mcpName: s
   if (error) throw error;
   if (!inst || inst.role !== 'consultant') throw new HttpError(404, '找不到這位顧問');
   if (inst.project_id !== projectId) throw new HttpError(403, '這位顧問不屬於這個專案');
-  if (inst.org_id) {
-    const { data: problem, error: problemError } = await db.rpc('org_instance_problem', {
-      p_org_id: inst.org_id, p_template_id: inst.template_id, p_project_id: projectId,
-    });
-    if (problemError) throw problemError;
-    if (problem) throw new HttpError(403, '這位顧問已無法使用');
-  }
-  const { data: target, error: targetError } = await db
-    .from('remote_mcp_targets')
-    .select('kind, url, hosted_version_id')
-    .eq('instance_id', instanceId)
-    .eq('mcp_name', mcpName)
-    .maybeSingle();
+  // 兩個查詢互不相關，一起送；仍先判斷組織規則再判斷 MCP
+  const [orgResult, targetResult] = await Promise.all([
+    inst.org_id
+      ? db.rpc('org_instance_problem', { p_org_id: inst.org_id, p_template_id: inst.template_id, p_project_id: projectId })
+      : null,
+    db.from('remote_mcp_targets').select('kind, url, hosted_version_id').eq('instance_id', instanceId).eq('mcp_name', mcpName).maybeSingle(),
+  ]);
+  if (orgResult?.error) throw orgResult.error;
+  if (orgResult?.data) throw new HttpError(403, '這位顧問已無法使用');
+  const { data: target, error: targetError } = targetResult;
   if (targetError) throw targetError;
   const template = inst.template as { creator_id?: string } | null;
   const base = { templateId: inst.template_id as string | null, creatorId: template?.creator_id ?? null };
@@ -69,7 +67,6 @@ export function toolCallName(body: string | undefined): string | null {
 
 /** 只轉 MCP 需要的請求標頭；請求方的 cookie、Authorization 等一律不轉 */
 const FORWARD = ['content-type', 'accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id', 'mcp-method', 'mcp-name'];
-const HOP_BY_HOP = new Set(['connection', 'content-length', 'transfer-encoding', 'keep-alive', 'content-encoding']);
 /** 判斷工具是否失敗時最多看這麼多字，避免大回應占用記憶體 */
 const MAX_INSPECT = 1_000_000;
 
@@ -94,7 +91,6 @@ function rpcFailed(text: string): boolean {
 
 const WAKING = new Set([502, 503]);
 const WAKE_ATTEMPTS = 3;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function wake(url: string, edgeToken: string, signal: AbortSignal, delayMs: number): Promise<void> {
   for (let i = 0; i < WAKE_ATTEMPTS && !signal.aborted; i++) {
@@ -151,10 +147,7 @@ export async function forwardToCreator(
     throw new HttpError(502, '工具服務不能轉址');
   }
 
-  const out = new Headers();
-  upstream.headers.forEach((v, k) => {
-    if (!HOP_BY_HOP.has(k)) out.set(k, v);
-  });
+  const out = upstreamHeaders(upstream.headers);
   if (!onEnd || !upstream.body) {
     await onEnd?.(upstream.ok);
     return new Response(upstream.body, { status: upstream.status, headers: out });

@@ -9,25 +9,32 @@ const ASK_TIMEOUT_MS = 5_000;
 const ASK_INTERVAL_MS = 15_000;
 export const INTERRUPTED_ERROR = '執行環境中斷';
 
+/** 問 runtime 一個是非題，回答 body[field]；連不上、逾時、格式不對都是 null */
+async function askSprite(
+  url: string, field: string, dbToken: string, fetchImpl: typeof fetch, method = 'GET',
+): Promise<boolean | null> {
+  try {
+    const res = await fetchImpl(url, {
+      method,
+      // authorization 給 Fly 驗證 Sprite 網址（驗證後拿掉，到不了 runtime）；runtime 自己用資料庫通行證確認專案
+      headers: { authorization: `Bearer ${env.spritesToken}`, 'x-agenthub-db-token': dbToken },
+      signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const answer = ((await res.json()) as Record<string, unknown>)[field];
+    return typeof answer === 'boolean' ? answer : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 直接問 Sprite 上的 runtime 這個 run 還在不在（runtime 的 GET /runs/:id）。
  * 只有明確回答「不在」才是 gone；連不上、逾時、格式不對都是 unknown，不能拿來判定死亡。
  */
 export async function askRuntime(spriteUrl: string, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch): Promise<Liveness> {
-  try {
-    const res = await fetchImpl(`${spriteUrl}/runs/${encodeURIComponent(runId)}`, {
-      // authorization 給 Fly 驗證 Sprite 網址（驗證後拿掉，到不了 runtime）；runtime 自己用資料庫通行證確認專案
-      headers: { authorization: `Bearer ${env.spritesToken}`, 'x-agenthub-db-token': dbToken },
-      signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
-    });
-    if (!res.ok) return 'unknown';
-    const body = (await res.json()) as { active?: unknown };
-    if (body.active === true) return 'active';
-    if (body.active === false) return 'gone';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  const active = await askSprite(`${spriteUrl}/runs/${encodeURIComponent(runId)}`, 'active', dbToken, fetchImpl);
+  return active === null ? 'unknown' : active ? 'active' : 'gone';
 }
 
 /**
@@ -37,20 +44,8 @@ export async function askRuntime(spriteUrl: string, runId: string, dbToken: stri
 export async function askStop(
   spriteUrl: string, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch,
 ): Promise<'stopped' | 'gone' | 'unknown'> {
-  try {
-    const res = await fetchImpl(`${spriteUrl}/runs/${encodeURIComponent(runId)}/stop`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.spritesToken}`, 'x-agenthub-db-token': dbToken },
-      signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
-    });
-    if (!res.ok) return 'unknown';
-    const body = (await res.json()) as { stopped?: unknown };
-    if (body.stopped === true) return 'stopped';
-    if (body.stopped === false) return 'gone';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  const stopped = await askSprite(`${spriteUrl}/runs/${encodeURIComponent(runId)}/stop`, 'stopped', dbToken, fetchImpl, 'POST');
+  return stopped === null ? 'unknown' : stopped ? 'stopped' : 'gone';
 }
 
 const lastAsked = new Map<string, number>();

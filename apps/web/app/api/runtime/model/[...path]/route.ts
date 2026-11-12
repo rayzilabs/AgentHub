@@ -1,7 +1,7 @@
 import { env } from '@/lib/env';
 import { HttpError, route } from '@/lib/http';
 import { describeRequest } from '@/lib/model-diagnostics';
-import { verifyProjectToken } from '@/lib/platform-tokens';
+import { requireProjectToken } from '@/lib/platform-tokens';
 
 export const maxDuration = 300;
 
@@ -11,12 +11,8 @@ const MODEL_PATH = /^models\/[\w.-]+:(generateContent|streamGenerateContent|coun
 
 /** runtime 的模型請求：驗證專案通行證後換上 Vertex 金鑰轉送；Sprite 上不放 Vertex 金鑰 */
 async function handle(req: Request, { params }: Ctx): Promise<Response> {
-  const secret = env.runtimeTokenSecret;
-  if (!secret) throw new HttpError(503, '平台尚未設定專案通行證');
   // AI SDK 的 express mode 把 apiKey 放在 x-goog-api-key；runtime 放的是專案通行證
-  const token = req.headers.get('x-goog-api-key');
-  if (!token) throw new HttpError(401, '缺少專案通行證');
-  const projectId = verifyProjectToken(token, secret);
+  const projectId = requireProjectToken(req.headers.get('x-goog-api-key'));
   const { path } = await params;
   // 只放行模型呼叫（白名單）：避免被攻破的 Sprite 拿平台的 Vertex 金鑰打其他 API。
   // Next 會先切段再解碼，%2F 會變成段內的 /，所以檢查接起來的完整路徑
@@ -31,7 +27,7 @@ async function handle(req: Request, { params }: Ctx): Promise<Response> {
   const started = Date.now();
   const body = await req.text();
   const upstream = await fetch(target, { method: 'POST', headers, body, signal: req.signal });
-  console.log(JSON.stringify({ event: 'model_proxy', project_id: projectId, path: path.join('/'), status: upstream.status, ms: Date.now() - started }));
+  console.log(JSON.stringify({ event: 'model_proxy', project_id: projectId, path: joined, status: upstream.status, ms: Date.now() - started }));
   if (!upstream.ok) return withDiagnosis(upstream, body, projectId);
   const out = new Headers();
   const type = upstream.headers.get('content-type');

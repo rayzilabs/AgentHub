@@ -12,11 +12,11 @@ export const env = {
   get vertexKey() { return required('VERTEX_API_EXPRESS_MODE_KEY'); },
   /** 測試時可指向假的 Vertex */
   get vertexBaseUrl() { return process.env.VERTEX_BASE_URL || 'https://aiplatform.googleapis.com/v1/publishers/google'; },
-  /** 未設定時不簽專案通行證（remote 型 MCP 無法使用，對話照常） */
+  /** 未設定時不簽專案通行證，對話與 runtime 呼叫平台的路由一律拒絕 */
   get runtimeTokenSecret() {
     const secret = process.env.RUNTIME_TOKEN_SECRET;
     if (!secret) return undefined;
-    // 太短的 HS256 密鑰可被離線暴力破解，寧可停用 remote 型 MCP
+    // 太短的 HS256 密鑰可被離線暴力破解，寧可視為未設定
     if (secret.length < 32) {
       console.error('[env] RUNTIME_TOKEN_SECRET 少於 32 個字元，視為未設定');
       return undefined;

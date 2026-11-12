@@ -40,7 +40,8 @@
 
 ```
 apps/web/                Next.js 16（App Router），部署到 Vercel，root directory = apps/web
-  app/api/**/route.ts    API：一律用 route() 包裝、requireUser(req)、readJson(req, schema)
+  app/api/**/route.ts    API：一律用 route() 包裝、requireUser(req)、readJson(req, schema)；runtime 呼叫的路由用 requireProjectToken
+  lib/services/run-control.ts  forwardToRuntime：轉送一輪對話給 runtime（附專案與資料庫通行證）的唯一入口
   lib/services/          商業邏輯（templates / projects / threads / files），第一個參數是 db
   lib/sprites.ts         建立 Sprite、安裝 runtime、轉送對話
   lib/schemas.ts         zod 表單 / API 驗證（template、MCP 設定）

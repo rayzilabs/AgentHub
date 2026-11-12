@@ -98,3 +98,5 @@ export const MemberPatchSchema = z.object({ role: z.enum(['admin', 'member']) })
 
 export const InvitationActionSchema = z.object({ action: z.enum(['approve', 'reject']) });
 export const MyInvitationActionSchema = z.object({ action: z.enum(['accept', 'decline']) });
+
+export const MessageTextSchema = z.string().trim().min(1, '請輸入訊息');

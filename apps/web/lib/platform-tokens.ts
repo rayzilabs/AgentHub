@@ -1,4 +1,5 @@
 import { createHash, createHmac, createPrivateKey, createPublicKey, type KeyObject, randomUUID, sign, timingSafeEqual } from 'node:crypto';
+import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 
 const PROJECT_TOKEN_TTL_MS = 20 * 60_000;
@@ -28,6 +29,16 @@ export function verifyProjectToken(token: string, secret: string, now = Date.now
   if (payload.exp * 1000 <= now) throw new HttpError(401, '通行證已過期');
   return payload.project_id;
 }
+
+/** runtime 呼叫平台的路由：驗證專案通行證，回傳專案 id */
+export function requireProjectToken(token: string | null | undefined): string {
+  const secret = env.runtimeTokenSecret;
+  if (!secret) throw new HttpError(503, '平台尚未設定專案通行證');
+  if (!token) throw new HttpError(401, '缺少專案通行證');
+  return verifyProjectToken(token, secret);
+}
+
+export const bearerToken = (req: Request) => req.headers.get('authorization')?.match(/^Bearer (.+)$/)?.[1];
 
 type PublicJwk = { kty?: string; crv?: string; x?: string; y?: string; kid: string; alg: 'ES256'; use: 'sig' };
 

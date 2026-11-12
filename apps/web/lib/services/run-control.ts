@@ -26,6 +26,22 @@ export async function stopThreadRun(db: Db, userId: string, threadId: string, as
 }
 
 /**
+ * 把一輪對話交給 runtime：附上專案通行證（呼叫模型代理與創作者 MCP，沒有它對話一定失敗）
+ * 與 runtime 帳號的資料庫通行證（權限由 RLS 限定在這個專案）。
+ */
+export async function forwardToRuntime(
+  db: Db,
+  project: Pick<ProjectRow, 'id'> & { sprite_url: string },
+  body: { thread_id: string; text?: string },
+  forward: typeof forwardChat = forwardChat,
+): Promise<Response> {
+  const secret = env.runtimeTokenSecret;
+  if (!secret) throw new HttpError(503, '平台尚未設定專案通行證，暫時無法對話');
+  const [, dbToken] = await Promise.all([assertConsultantsUsable(db, project.id), runtimeAccessToken(db, project.id)]);
+  return forward(project.sprite_url, body, { projectToken: signProjectToken(project.id, secret), dbToken });
+}
+
+/**
  * 這串對話沒有 run 在跑、又有排隊訊息時開下一輪。runtime 自己的通行證撐不到下一輪結束，所以由平台重新簽發。
  * 只等 runtime 收下這輪，不等它跑完；同時有兩邊來開時，one_running_run_per_thread 會讓其中一邊回 409。
  */
@@ -40,13 +56,7 @@ export async function startQueuedRun(
   if (error) throw error;
   if (data.length === 0 || !project.sprite_url) return;
 
-  await assertConsultantsUsable(db, project.id);
-  const secret = env.runtimeTokenSecret;
-  if (!secret) throw new HttpError(503, '平台尚未設定專案通行證，暫時無法對話');
-  const res = await forward(project.sprite_url, { thread_id: threadId }, {
-    projectToken: signProjectToken(project.id, secret),
-    dbToken: await runtimeAccessToken(db, project.id),
-  });
+  const res = await forwardToRuntime(db, { id: project.id, sprite_url: project.sprite_url }, { thread_id: threadId }, forward);
   await res.body?.cancel();
   if (!res.ok && res.status !== 409) throw new HttpError(502, `無法開始下一輪（HTTP ${res.status}）`);
 }

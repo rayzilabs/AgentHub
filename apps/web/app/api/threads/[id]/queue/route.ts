@@ -2,6 +2,7 @@ import { after } from 'next/server';
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth';
 import { readJson, route } from '@/lib/http';
+import { MessageTextSchema } from '@/lib/schemas';
 import { addQueued } from '@/lib/services/run-control';
 import { adminDb } from '@/lib/supabase/admin';
 
@@ -11,7 +12,7 @@ export const maxDuration = 300;
 export const POST = route(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
   const user = await requireUser(req);
   const { text, chatPending } = await readJson(req, z.object({
-    text: z.string().trim().min(1, '請輸入訊息'),
+    text: MessageTextSchema,
     chatPending: z.boolean().optional(),
   }));
   return addQueued(adminDb(), user.id, (await params).id, text, { chatPending, defer: after });

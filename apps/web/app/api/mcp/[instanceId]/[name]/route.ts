@@ -1,6 +1,6 @@
 import { env } from '@/lib/env';
-import { HttpError, route } from '@/lib/http';
-import { signCreatorToken, verifyProjectToken } from '@/lib/platform-tokens';
+import { route } from '@/lib/http';
+import { bearerToken, requireProjectToken, signCreatorToken } from '@/lib/platform-tokens';
 import { forwardToCreator, recordUsage, resolveRemoteTarget, toolCallName } from '@/lib/services/remote-mcp';
 import { adminDb } from '@/lib/supabase/admin';
 
@@ -10,11 +10,7 @@ type Ctx = { params: Promise<{ instanceId: string; name: string }> };
 
 async function handle(req: Request, { params }: Ctx): Promise<Response> {
   const { instanceId, name } = await params;
-  const secret = env.runtimeTokenSecret;
-  if (!secret) throw new HttpError(503, '平台尚未設定專案通行證');
-  const bearer = req.headers.get('authorization')?.match(/^Bearer (.+)$/)?.[1];
-  if (!bearer) throw new HttpError(401, '缺少專案通行證');
-  const projectId = verifyProjectToken(bearer, secret);
+  const projectId = requireProjectToken(bearerToken(req));
   const db = adminDb();
   const target = await resolveRemoteTarget(db, instanceId, name, projectId);
 
