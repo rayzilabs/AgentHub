@@ -3,10 +3,16 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
+import { createClient } from '@supabase/supabase-js';
 import { inject } from 'vitest';
 import type { Config } from '../src/config';
-import { createDb, createUserDb, type Db } from '../src/db';
+import { createUserDb, type Db } from '../src/db';
 import type { McpServerConfig, SkillMeta } from '../src/types';
+
+/** 測試直接用金鑰連資料庫；正式 runtime 只用 createUserDb（不持有平台金鑰） */
+function createDb(url: string, key: string): Db {
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 export function testDb(): Db {
   return createDb(inject('supabaseUrl'), inject('supabaseServiceKey'));

@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { tool } from 'ai';
 import { z } from 'zod';
-import type { Db } from '../db';
+import { type Db, PROJECT_FILES_BUCKET, projectFilePath } from '../db';
 import { errorText } from '../errors';
-import { runInSandbox, type Sandbox } from '../sandbox';
+import { readBounded, type Sandbox } from '../sandbox';
 import type { DeliveredFile } from '../ui-stream';
 import { DESCRIPTION_FIELD } from './bash';
 
@@ -46,9 +46,6 @@ function friendlyError(message: string): string {
   return `交付失敗：${message}`;
 }
 
-const sh = (sandbox: Sandbox, cwd: string, script: string, target: string, ...args: string[]) =>
-  runInSandbox(sandbox, ['bash', '-c', script, 'deliver_file', target, ...args], { cwd });
-
 const NAME_ERROR = '檔名不合法：不可為空、超過 100 字、含 / \\ 或控制字元，也不可是 . 或 ..';
 const FOLDER_ERROR = '資料夾名稱不合法：每一層都要是合法名稱，用 / 分層，不可有空的層級';
 
@@ -85,26 +82,22 @@ export function deliverFileTool(opts: {
       if (!isEntryName(displayName)) return { error: NAME_ERROR };
       if (subfolder && !subfolder.split('/').every(isEntryName)) return { error: FOLDER_ERROR };
 
-      // 以沙盒帳號讀取：權限與 bash 相同，讀不到的檔案交付不出去
-      if ((await sh(opts.sandbox, opts.cwd, 'test -f "$1"', target)).code !== 0) {
-        return { error: `找不到檔案或不是一般檔案：${p}` };
+      // 以沙盒帳號讀取：權限與 bash 相同，讀不到的檔案交付不出去。超過單檔或這次 run 剩下的額度就不讀內容
+      const read = await readBounded(opts.sandbox, opts.cwd, target, Math.min(limits.file, limits.run - opts.budget.used), 'deliver_file');
+      if ('error' in read) {
+        if (read.error === 'not-file') return { error: `找不到檔案或不是一般檔案：${p}` };
+        if (read.error === 'no-size') return { error: `無法讀取檔案大小：${p}` };
+        return { error: read.stderr.trim() || `無法讀取 ${p}` };
       }
-      // -L：symlink 要看指向的檔案大小
-      const stat = await sh(opts.sandbox, opts.cwd, 'stat -L -c %s -- "$1"', target);
-      const size = Number(stat.stdout.trim());
-      if (stat.code !== 0 || !stat.stdout.trim() || !Number.isFinite(size)) return { error: `無法讀取檔案大小：${p}` };
-      if (size > limits.file) return { error: '檔案超過 50 MB，無法交付' };
-      if (opts.budget.used + size > limits.run) return { error: '這次回覆交付的檔案合計超過 200 MB' };
-      // 最多讀上限 + 1 個位元組：檔案在 stat 之後變大也不會把整個檔案讀進記憶體
-      const read = await sh(opts.sandbox, opts.cwd, 'set -o pipefail; head -c "$2" -- "$1" | base64 -w0', target, String(limits.file + 1));
-      if (read.code !== 0) return { error: read.stderr.trim() || `無法讀取 ${p}` };
-      const bytes = new Uint8Array(Buffer.from(read.stdout, 'base64'));
+      if (read.size > limits.file) return { error: '檔案超過 50 MB，無法交付' };
+      if (!read.bytes || opts.budget.used + read.size > limits.run) return { error: '這次回覆交付的檔案合計超過 200 MB' };
+      const { bytes } = read;
       if (bytes.length > limits.file) return { error: '檔案超過 50 MB，無法交付' };
       if (opts.budget.used + bytes.length > limits.run) return { error: '這次回覆交付的檔案合計超過 200 MB' };
 
       const fileId = randomUUID();
       try {
-        const up = await opts.db.storage.from('project-files').upload(`${opts.projectId}/files/${fileId}`, bytes, {
+        const up = await opts.db.storage.from(PROJECT_FILES_BUCKET).upload(projectFilePath(opts.projectId, fileId), bytes, {
           contentType: contentTypeOf(displayName), upsert: false,
         });
         if (up.error) return { error: `上傳失敗：${up.error.message}` };

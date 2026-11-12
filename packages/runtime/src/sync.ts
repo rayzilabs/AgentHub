@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { type FileHandle, lstat, mkdir, open, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
-import type { Db } from './db';
+import { type Db, PROJECT_FILES_BUCKET, projectFilePath } from './db';
 import { errorText, SyncError } from './errors';
 import { runInSandbox, type Sandbox } from './sandbox';
 import type { AgentInstance } from './types';
@@ -254,7 +254,7 @@ export type SharedSyncIo = {
  */
 export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: string, io: SharedSyncIo): Promise<SharedFile[]> {
   await mkdir(sharedRoot, { recursive: true });
-  const bucket = db.storage.from('project-files');
+  const bucket = db.storage.from(PROJECT_FILES_BUCKET);
   const files = await listSharedFiles(db, projectId);
   const wanted = new Set(files.map((f) => f.path));
   const previous = await readSyncState(io.statePath);
@@ -285,7 +285,7 @@ export async function syncSharedFiles(db: Db, projectId: string, sharedRoot: str
         && (await isRealDirChain(sharedRoot, f.path))
         && (await lstat(local).catch(() => null))?.isFile();
       if (!unchanged) {
-        const { data: blob, error } = await bucket.download(`${projectId}/files/${f.fileId}`);
+        const { data: blob, error } = await bucket.download(projectFilePath(projectId, f.fileId));
         if (error || !blob) throw new SyncError(`無法下載：${error?.message ?? '空檔案'}`);
         await inShared(io.sandbox, sharedRoot, WRITE_SCRIPT, [f.path, ...ancestors(f.path)], deadline, new Uint8Array(await blob.arrayBuffer()));
       }

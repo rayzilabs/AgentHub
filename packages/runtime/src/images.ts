@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { Db } from './db';
+import { type Db, PROJECT_FILES_BUCKET, projectFilePath } from './db';
 import type { SharedFile } from './sync';
 
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
 export type ImageData = { mediaType: ImageMediaType; bytes: Uint8Array };
 
 export const SIGNED_URL_TTL_S = 3600;
-const BUCKET = 'project-files';
 
 const startsWith = (b: Uint8Array, sig: number[], at = 0) => sig.every((v, i) => b[at + i] === v);
 
@@ -42,7 +41,7 @@ export function createImageRegistry(db: Db, projectId: string, sharedRoot: strin
   const urls = new Map<string, string>();
   const images = new Map<string, ImageData>();
   let fileIds = new Map<string, string>();
-  const bucket = db.storage.from(BUCKET);
+  const bucket = db.storage.from(PROJECT_FILES_BUCKET);
   return {
     sharedRoot,
     useSharedFiles(files) {
@@ -54,7 +53,7 @@ export function createImageRegistry(db: Db, projectId: string, sharedRoot: strin
       if (known) return known;
       const fileId = fileIds.get(relPath);
       if (!fileId) return null;
-      const objectPath = `${projectId}/files/${fileId}`;
+      const objectPath = projectFilePath(projectId, fileId);
       const { data: blob, error } = await bucket.download(objectPath);
       if (error || !blob || sha256Hex(new Uint8Array(await blob.arrayBuffer())) !== hash) return null;
       const { data, error: signError } = await bucket.createSignedUrl(objectPath, SIGNED_URL_TTL_S);

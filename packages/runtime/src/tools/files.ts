@@ -2,16 +2,13 @@ import path from 'node:path';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { detectImage, type ImageRegistry } from '../images';
-import { runInSandbox, type Sandbox } from '../sandbox';
+import { readBounded, runInSandbox, type Sandbox } from '../sandbox';
 import { DESCRIPTION_FIELD, MAX_OUTPUT, truncate } from './bash';
 
 /** 多讀一些位元組再截斷，確保 20000 字元內不會切到多位元組字 */
 const READ_LIMIT_BYTES = MAX_OUTPUT * 4;
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
-
-const sh = (sandbox: Sandbox, cwd: string, script: string, target: string) =>
-  runInSandbox(sandbox, ['bash', '-c', script, 'read_file', target], { cwd });
 
 /** 共用資料夾底下的檔案才有 Storage 版本可比對：回傳相對 sharedRoot、以 / 連接的路徑 */
 function sharedName(images: ImageRegistry, target: string): string | null {
@@ -26,22 +23,16 @@ function sharedName(images: ImageRegistry, target: string): string | null {
  * 位元組經沙盒以 base64 取出（權限與 bash 相同）；可看的圖片交給 images 保管，由 toModelOutput 給模型。
  */
 async function readImage(sandbox: Sandbox, cwd: string, target: string, images: ImageRegistry | undefined, toolCallId: string): Promise<{ content: string } | null> {
-  const head = await sh(sandbox, cwd, 'head -c 16 -- "$1" | base64 -w0', target);
+  const head = await runInSandbox(sandbox, ['bash', '-c', 'head -c 16 -- "$1" | base64 -w0', 'read_file', target], { cwd });
   const mediaType = head.code === 0 ? detectImage(Buffer.from(head.stdout, 'base64')) : null;
   if (!mediaType) return null;
   const name = path.basename(target);
   const unviewable = { content: `這張圖不在共用資料夾（或與上傳的版本不同），無法檢視：${name}` };
   const sharedFile = images && sharedName(images, target);
   if (!images || !sharedFile) return unviewable;
-  // -L：symlink 要看指向的檔案大小；讀取最多 IMAGE_MAX_BYTES + 1，檔案變大也不會整個讀進記憶體
-  const stat = await sh(sandbox, cwd, 'stat -L -c %s -- "$1"', target);
-  const size = Number(stat.stdout.trim());
-  if (stat.code !== 0 || !(size > 0 && size <= IMAGE_MAX_BYTES)) return unviewable;
-  const full = await runInSandbox(
-    sandbox, ['bash', '-c', 'set -o pipefail; head -c "$2" -- "$1" | base64 -w0', 'read_file', target, String(IMAGE_MAX_BYTES + 1)], { cwd },
-  );
-  if (full.code !== 0) return unviewable;
-  const bytes = new Uint8Array(Buffer.from(full.stdout, 'base64'));
+  const read = await readBounded(sandbox, cwd, target, IMAGE_MAX_BYTES, 'read_file');
+  if ('error' in read || !read.bytes || read.size === 0) return unviewable;
+  const { bytes } = read;
   if (bytes.length > IMAGE_MAX_BYTES) return unviewable;
   if (!(await images.resolve(sharedFile, bytes))) return unviewable;
   images.keep(toolCallId, { mediaType, bytes });

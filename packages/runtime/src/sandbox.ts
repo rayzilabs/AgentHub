@@ -103,6 +103,33 @@ export function runInSandbox(
   });
 }
 
+export type BoundedRead =
+  | { error: 'not-file' | 'no-size' | 'read'; stderr: string }
+  | { size: number; bytes?: Uint8Array };
+
+/**
+ * 以沙盒帳號量檔案大小（-L：symlink 看指向的檔案），不超過 maxBytes 才讀出內容；只開一個子程序。
+ * 最多讀 maxBytes + 1：檔案在量完之後變大也不會整個讀進記憶體，呼叫端要再檢查 bytes.length。
+ */
+export async function readBounded(sandbox: Sandbox, cwd: string, target: string, maxBytes: number, label: string): Promise<BoundedRead> {
+  const script = [
+    'set -o pipefail',
+    '[ -f "$1" ] || exit 3',
+    'size=$(stat -L -c %s -- "$1") || exit 4',
+    'echo "$size"',
+    '[ "$size" -le "$2" ] || exit 0',
+    'head -c "$(($2 + 1))" -- "$1" | base64 -w0',
+  ].join('\n');
+  const r = await runInSandbox(sandbox, ['bash', '-c', script, label, target, String(maxBytes)], { cwd });
+  if (r.code === 3) return { error: 'not-file', stderr: r.stderr };
+  const newline = r.stdout.indexOf('\n');
+  const size = Number(r.stdout.slice(0, newline));
+  if (r.code === 4 || newline <= 0 || !Number.isFinite(size)) return { error: 'no-size', stderr: r.stderr };
+  if (r.code !== 0) return { error: 'read', stderr: r.stderr };
+  if (size > maxBytes) return { size };
+  return { size, bytes: new Uint8Array(Buffer.from(r.stdout.slice(newline + 1), 'base64')) };
+}
+
 /** 啟動時確認沙盒帳號真的能用，避免在沒有隔離的狀態下以為已隔離 */
 export async function checkSandboxUser(user: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const r = await runInSandbox(createSandbox(user), ['true'], { cwd: '/' });
