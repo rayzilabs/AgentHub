@@ -2,7 +2,7 @@ import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
 import { ConsultantStoppedError, errorText, isUserStop } from '../errors';
-import { TIME_UP } from '../run-clock';
+import { isPast, TIME_UP } from '../run-clock';
 import { SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
 import { deliveredFiles, textOf, textOnly, toolEvents, type DeliveredFile, type ToolEvent } from '../ui-stream';
@@ -19,9 +19,11 @@ export type DelegationOutput = {
   /** 顧問用 deliver_file 交付的檔案，前端顯示下載按鈕 */
   files?: DeliveredFile[];
   error?: string;
-  /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止。interrupted = 使用者按了停止，不算錯誤 */
-  cutoff?: 'wrap-up' | 'stopped' | 'interrupted';
+  cutoff?: Cutoff;
 };
+
+/** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止。interrupted = 使用者按了停止，不算錯誤 */
+export type Cutoff = 'wrap-up' | 'stopped' | 'interrupted';
 
 export const STOPPED_ERROR = '逾時，只交回部分結果';
 export const INTERRUPTED_REASON = '被使用者中斷';
@@ -30,11 +32,6 @@ export const INTERRUPTED_REASON = '被使用者中斷';
 export function partialSummary(name: string, tools: ToolEvent[], text: string, reason: string): string {
   const steps = tools.filter((t) => t.state === 'output-available').map((t) => t.description ?? t.tool);
   return `${name} ${reason}，只完成部分工作。已完成的步驟：${steps.length ? steps.join('；') : '無'}。已寫出的內容：${text || '無'}`;
-}
-
-/** 顧問被強制停止時交給主管的內容 */
-export function stoppedSummary(o: DelegationOutput): string {
-  return partialSummary(o.name, o.tools ?? [], textOf(o.message), '逾時');
 }
 
 type DelegationView = { message: UIMessage; tools: ToolEvent[]; warnings?: string[]; files?: DeliveredFile[] };
@@ -84,7 +81,7 @@ export function assignTaskTool(opts: {
         yield { consultant_id, name: consultant_id, status: 'failed', error: '找不到這位顧問' };
         return;
       }
-      if (opts.acceptUntil !== undefined && Date.now() >= opts.acceptUntil) {
+      if (isPast(opts.acceptUntil)) {
         yield { consultant_id, name: instance.name, status: 'failed', error: TIME_UP };
         return;
       }
@@ -121,11 +118,14 @@ export function assignTaskTool(opts: {
         return;
       }
       await save();
-      const wrappedUp = opts.acceptUntil !== undefined && Date.now() >= opts.acceptUntil;
+      const wrappedUp = isPast(opts.acceptUntil);
       yield { ...base, status: 'done', ...(wrappedUp ? { cutoff: 'wrap-up' as const } : {}), ...lastView() };
     },
     toModelOutput: ({ output }) => {
-      if (output.cutoff === 'stopped') return { type: 'text', value: stoppedSummary(output) };
+      // 顧問被強制停止時，把已完成的部分交給主管
+      if (output.cutoff === 'stopped') {
+        return { type: 'text', value: partialSummary(output.name, output.tools ?? [], textOf(output.message), '逾時') };
+      }
       return output.status === 'failed'
         ? { type: 'error-text', value: `${output.name} 執行失敗：${output.error}` }
         : { type: 'text', value: textOf(output.message) || '（顧問沒有回覆內容）' };

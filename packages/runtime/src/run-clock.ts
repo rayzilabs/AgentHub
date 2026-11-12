@@ -12,6 +12,9 @@ export type RunClock = {
 
 export const TIME_UP = '剩餘時間不足，請用已有的結果彙整';
 
+/** 有設時間點且已經到了 */
+export const isPast = (at: number | undefined, now = Date.now()) => at !== undefined && now >= at;
+
 export function createRunClock(startedAt: number, runTimeoutMs: number): RunClock {
   const at = (fraction: number) => startedAt + Math.round(runTimeoutMs * fraction);
   return {

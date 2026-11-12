@@ -2,11 +2,11 @@ import { tool, type UIMessage } from 'ai';
 import { z } from 'zod';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
 import { ConsultantStoppedError, errorText, isUserStop } from '../errors';
-import { TIME_UP } from '../run-clock';
+import { isPast, TIME_UP } from '../run-clock';
 import { DISCUSSION_SNAPSHOT_INTERVAL_MS, throttle } from '../throttle';
 import type { AgentInstance } from '../types';
 import { deliveredFiles, textOf, toolEvents, type DeliveredFile, type ToolEvent } from '../ui-stream';
-import { INTERRUPTED_REASON, partialSummary } from './delegate';
+import { type Cutoff, INTERRUPTED_REASON, partialSummary } from './delegate';
 
 export const MAX_ROUNDS = 3;
 export const TIME_UP_DISCUSSION = '時間不足，提前結束討論';
@@ -27,7 +27,7 @@ export type Speech = {
   files?: DeliveredFile[];
   error?: string;
   /** 時間預算：wrap-up = 過了收尾時間才完成；stopped = 逾時被強制停止。interrupted = 使用者按了停止，不算錯誤 */
-  cutoff?: 'wrap-up' | 'stopped' | 'interrupted';
+  cutoff?: Cutoff;
 };
 
 export type DiscussionState = { topic: string; round: number; finished: boolean; error?: string; speeches: Speech[] };
@@ -96,14 +96,13 @@ function changeFeed() {
   };
 }
 
+type SpeakOptions = { run: ConsultantRunner; record: RecordSpeech; abortSignal?: AbortSignal; acceptUntil?: number };
+
 async function* speakConcurrently(
   speakers: { instance: AgentInstance; prompt: string }[],
   round: number,
   state: DiscussionState,
-  run: ConsultantRunner,
-  record: RecordSpeech,
-  abortSignal?: AbortSignal,
-  acceptUntil?: number,
+  { run, record, abortSignal, acceptUntil }: SpeakOptions,
 ): AsyncGenerator<DiscussionState> {
   const feed = changeFeed();
   let pending = speakers.length;
@@ -128,7 +127,7 @@ async function* speakConcurrently(
       }
       speech.status = 'done';
       speech.stance = parseStance(speech.text);
-      if (acceptUntil !== undefined && Date.now() >= acceptUntil) speech.cutoff = 'wrap-up';
+      if (isPast(acceptUntil)) speech.cutoff = 'wrap-up';
     } catch (e) {
       speech.status = 'failed';
       if (isUserStop(abortSignal)) {
@@ -177,7 +176,7 @@ export async function* runDiscussion(opts: {
     return true;
   };
   const timeUp = () => {
-    if (opts.acceptUntil === undefined || Date.now() < opts.acceptUntil) return false;
+    if (!isPast(opts.acceptUntil)) return false;
     state.error ??= TIME_UP_DISCUSSION;
     return true;
   };
@@ -187,15 +186,12 @@ export async function* runDiscussion(opts: {
     state.round = round;
     if (round === 1) {
       const prompt = roundPrompt(opts.topic, 1, '');
-      yield* speakConcurrently(
-        opts.participants.map((instance) => ({ instance, prompt })),
-        1, state, opts.run, opts.record, opts.abortSignal, opts.acceptUntil,
-      );
+      yield* speakConcurrently(opts.participants.map((instance) => ({ instance, prompt })), 1, state, opts);
     } else {
       for (const instance of opts.participants) {
         if (stopIfAborted() || timeUp()) break;
         const prompt = roundPrompt(opts.topic, round, formatTranscript(state));
-        yield* speakConcurrently([{ instance, prompt }], round, state, opts.run, opts.record, opts.abortSignal, opts.acceptUntil);
+        yield* speakConcurrently([{ instance, prompt }], round, state, opts);
       }
       if (state.error) break;
     }
@@ -234,7 +230,7 @@ export function conveneDiscussionTool(opts: {
       max_rounds: z.number().int().min(1).max(MAX_ROUNDS).default(MAX_ROUNDS),
     }),
     async *execute({ topic, participant_ids, max_rounds }, { abortSignal }): AsyncGenerator<DiscussionState> {
-      if (opts.acceptUntil !== undefined && Date.now() >= opts.acceptUntil) {
+      if (isPast(opts.acceptUntil)) {
         yield { topic, round: 0, finished: true, error: TIME_UP, speeches: [] };
         return;
       }
