@@ -109,6 +109,6 @@ Google 商家檔案：已認領／未認領
 
 ## 來源
 
-- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) `skills/product-marketing/SKILL.md`（MIT）：脈絡文件的段落、顧客原話、Learnings 與變更紀錄的維護規則。
-- [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) `small-business/skills/smb-onboard/SKILL.md`、`small-business/shared/voice-profile.md`、`marketing/skills/brand-review/SKILL.md`（Apache-2.0）：一次問一段的訪談方式、從老闆的文字學語氣、品牌語氣「是什麼／不是什麼」的寫法。
+- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/product-marketing/SKILL.md`（MIT）：脈絡文件的段落、顧客原話、Learnings 與變更紀錄的維護規則。
+- [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins/tree/877a617)（commit `877a617`） `small-business/skills/smb-onboard/SKILL.md`、`small-business/shared/voice-profile.md`、`marketing/skills/brand-review/SKILL.md`（Apache-2.0）：一次問一段的訪談方式、從老闆的文字學語氣、品牌語氣「是什麼／不是什麼」的寫法。
 - 已翻譯並改寫為台灣情境：脈絡文件改存成 AgentHub 的專案記憶；通路、平台與金額改成台灣中小商家的情況。

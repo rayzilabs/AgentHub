@@ -87,6 +87,6 @@ B、C 兩種情況要尊重原稿的選擇：用詞是語氣的選擇（他寫�
 
 ## 來源
 
-- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) `skills/copywriting/SKILL.md`、`skills/copy-editing/SKILL.md` 與 `skills/copywriting/references/`（MIT）：三種情況判斷、拆開定稿、逐句三關、「改了是更好還是只是不一樣」、主張與證據、AI 腔清單與自我檢查。marketingskills 註明其中的情況判斷與逐句三關改寫自 Profound 的 `improved-copywriting` skill（MIT）。
-- [indranilbanerjee/digital-marketing-pro](https://github.com/indranilbanerjee/digital-marketing-pro) `skills/context-engine/multilingual-execution-guide.md`（MIT）：台灣繁體中文不是簡體字換字的觀念。
+- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/copywriting/SKILL.md`、`skills/copy-editing/SKILL.md` 與 `skills/copywriting/references/`（MIT）：三種情況判斷、拆開定稿、逐句三關、「改了是更好還是只是不一樣」、主張與證據、AI 腔清單與自我檢查。marketingskills 註明其中的情況判斷與逐句三關改寫自 Profound 的 `improved-copywriting` skill（MIT）。
+- [indranilbanerjee/digital-marketing-pro](https://github.com/indranilbanerjee/digital-marketing-pro/tree/be4142b)（commit `be4142b`） `skills/context-engine/multilingual-execution-guide.md`（MIT）：台灣繁體中文不是簡體字換字的觀念。
 - 已翻譯並改寫為台灣情境：例子改成台灣中小商家；SaaS 頁面（定價方案、試用）改成商品頁、活動頁；加入台灣用語對照、價格寫法，以及交給法務顧問的風險用語清單。

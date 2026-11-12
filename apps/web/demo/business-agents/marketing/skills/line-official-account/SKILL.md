@@ -86,8 +86,8 @@ description: 要開或經營 LINE 官方帳號時使用：選方案與估每月�
 ## 來源
 
 - LINE Biz-Solutions 官方頁面：[LINE 官方帳號](https://tw.linebiz.com/service/account-solutions/line-official-account/)、[2026 年方案價格調整公告](https://tw.linebiz.com/column/LINEOA-2026-Price-Plan/)（功能、方案、訊息費計算、帳號類型；整理在 `references/line-oa-plans.md`）。
-- [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents) `marketing/marketing-private-domain-operator.md`（MIT）：私域經營的分層、標籤與生命週期 SOP 結構，由微信改寫成 LINE 官方帳號。
-- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) `skills/emails/SKILL.md`（MIT）：歡迎、培養、喚回序列的設計與「每則一件事、一個行動」。
-- [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) `small-business/skills/reactivate/SKILL.md`（Apache-2.0）：依顧客自己的消費週期判斷沉睡、先關心再給優惠。
+- [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents/tree/8ae6164)（commit `8ae6164`） `marketing/marketing-private-domain-operator.md`（MIT）：私域經營的分層、標籤與生命週期 SOP 結構，由微信改寫成 LINE 官方帳號。
+- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/emails/SKILL.md`（MIT）：歡迎、培養、喚回序列的設計與「每則一件事、一個行動」。
+- [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins/tree/877a617)（commit `877a617`） `small-business/skills/reactivate/SKILL.md`（Apache-2.0）：依顧客自己的消費週期判斷沉睡、先關心再給優惠。
 - 台灣使用率：TWNIC《2025 台灣網路報告》。
 - 已翻譯並改寫為台灣情境：電子報序列改成 LINE 群發與自動回應；微信私域改成 LINE 官方帳號；價格與功能依 LINE 台灣官方說明。

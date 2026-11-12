@@ -95,7 +95,7 @@ description: 要決定經營哪些社群平台（FB、IG、Threads、YouTube、D
 
 ## 來源
 
-- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) `skills/social/SKILL.md` 與 `skills/social/references/`、`skills/content-strategy/SKILL.md`（MIT）：內容支柱、第一句公式、一份素材變多份、批次製作、成效指標。
-- [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents) `marketing/marketing-social-media-strategist.md`、`marketing/marketing-instagram-curator.md`（MIT）：平台分工與限動、精選限動的用法。
+- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/social/SKILL.md` 與 `skills/social/references/`、`skills/content-strategy/SKILL.md`（MIT）：內容支柱、第一句公式、一份素材變多份、批次製作、成效指標。
+- [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents/tree/8ae6164)（commit `8ae6164`） `marketing/marketing-social-media-strategist.md`、`marketing/marketing-instagram-curator.md`（MIT）：平台分工與限動、精選限動的用法。
 - 台灣平台資料：TWNIC《2025 台灣網路報告》（見 `references/platforms-tw.md`）；Dcard 官方公告（官方品牌合作標籤、非官方合作文只能發在個人看板）；PTT 各看板置頂板規。
 - 已翻譯並改寫為台灣情境：LinkedIn、X 的比重調低；加入 Threads、Dcard、PTT、FB 在地社團；例子改成台灣在地商家。

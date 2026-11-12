@@ -74,7 +74,7 @@ description: 想知道顧客為什麼買、為什麼不買、評論和討論在�
 
 ## 來源
 
-- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) `skills/customer-research/SKILL.md`、`skills/competitor-profiling/SKILL.md`（MIT）：三種研究方式、主題依次數與強度排序、研究品質守則、附日期的對手檔案、事實優先與誠實評估、抓回來的內容當資料。
-- [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins) `marketing/skills/competitive-brief/SKILL.md`、`small-business/skills/review-reputation/SKILL.md`（Apache-2.0）：競品比較格式、評論主題附原話、每則評論都回覆、老闆確認後才發布。
+- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/customer-research/SKILL.md`、`skills/competitor-profiling/SKILL.md`（MIT）：三種研究方式、主題依次數與強度排序、研究品質守則、附日期的對手檔案、事實優先與誠實評估、抓回來的內容當資料。
+- [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins/tree/877a617)（commit `877a617`） `marketing/skills/competitive-brief/SKILL.md`、`small-business/skills/review-reputation/SKILL.md`（Apache-2.0）：競品比較格式、評論主題附原話、每則評論都回覆、老闆確認後才發布。
 - 評論規範：[Google 地圖使用者內容政策](https://support.google.com/contributionpolicy/answer/7400114?hl=zh-Hant)。
 - 已翻譯並改寫為台灣情境：資料來源改成 Google 商家檔案、蝦皮、momo、Dcard、PTT、FB 社團；拿掉付費 SEO 資料工具（DataForSEO 等）；評論回覆改成台灣店家的語氣。
