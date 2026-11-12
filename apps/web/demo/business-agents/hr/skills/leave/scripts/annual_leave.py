@@ -14,7 +14,6 @@
 import argparse
 import calendar
 import json
-import sys
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -42,25 +41,27 @@ def days_for(months: int) -> int:
 
 
 def periods(onboard: date, until: date) -> list[dict]:
+    """每一期從年資滿 6 個月、1 年、2 年……開始，到下一個週年日前一天為止。"""
     out = []
-    start, months = add_months(onboard, 6), 6
+    months = 6
+    start = add_months(onboard, months)
     while start <= until:
-        end = add_months(onboard, 12) if months == 6 else add_months(start, 12)
+        nxt = 12 if months == 6 else months + 12
+        end = add_months(onboard, nxt)
         out.append({'start': start.isoformat(), 'end': (end - timedelta(days=1)).isoformat(),
                     'service_at_start': '滿 6 個月' if months == 6 else f'滿 {months // 12} 年', 'entitled_days': days_for(months)})
-        start, months = end, (12 if months == 6 else months + 12)
+        start, months = end, nxt
     return out
 
 
 def main() -> None:
-    sys.stdout.reconfigure(encoding='utf-8')  # Windows 主控台預設不是 UTF-8
     p = argparse.ArgumentParser(description='特別休假試算（週年制）')
     p.add_argument('--onboard', required=True, type=date.fromisoformat)
     p.add_argument('--leave', required=True, type=date.fromisoformat, help='契約終止日，或今天')
-    p.add_argument('--taken', type=float, default=0, help='當期已休日數')
+    p.add_argument('--taken', type=Decimal, default=Decimal(0), help='當期已休日數')
     g = p.add_mutually_exclusive_group()
-    g.add_argument('--monthly-wage', type=float, help='最近一個月正常工時工資')
-    g.add_argument('--daily-wage', type=float, help='一日工資')
+    g.add_argument('--monthly-wage', type=Decimal, help='最近一個月正常工時工資')
+    g.add_argument('--daily-wage', type=Decimal, help='一日工資')
     p.add_argument('--json', action='store_true')
     a = p.parse_args()
     if a.leave <= a.onboard:
@@ -73,10 +74,10 @@ def main() -> None:
     if current is None:
         r['note'] = '在職未滿 6 個月，還沒有特別休假（勞基法第 38 條第 1 項第 1 款）'
     else:
-        unused = Decimal(current['entitled_days']) - Decimal(str(a.taken))
+        unused = current['entitled_days'] - a.taken
         r['unused_days'] = float(unused)
         r['note'] = '特休在期間首日就取得全部天數；契約終止時未休日數全額折發工資，不按在職比例折算。'
-        daily = Decimal(str(a.daily_wage)) if a.daily_wage else (Decimal(str(a.monthly_wage)) / 30 if a.monthly_wage else None)
+        daily = a.daily_wage or (a.monthly_wage / 30 if a.monthly_wage else None)
         if daily is not None:
             r['daily_wage'] = float(daily.quantize(Decimal('0.01')))
             r['unused_wage'] = int((daily * unused).quantize(Decimal(1), rounding=ROUND_HALF_UP))
