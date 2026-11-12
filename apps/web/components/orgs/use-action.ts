@@ -13,7 +13,7 @@ export function useAction() {
     setBusy(true);
     setError(null);
     try {
-      const result = await api<T>(path, { method: init.method, body: init.body === undefined ? undefined : JSON.stringify(init.body) });
+      const result = await api<T>(path, { method: init.method, json: init.body });
       if (onDone) onDone(result);
       else router.refresh();
       setBusy(false);

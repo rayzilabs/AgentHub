@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { FileButton } from '@/components/file-button';
 import { HostedMcpPanel } from '@/components/hosted-mcp-panel';
-import { api } from '@/lib/client-api';
+import { api, uploadToSignedUrl } from '@/lib/client-api';
 import { emptyDraft, fromDraft, isSavedHosted, toDraft, type McpDraft } from '@/lib/mcp-draft';
 import type { TemplateRow } from '@/lib/services/templates';
 
@@ -43,10 +43,10 @@ export function TemplateEditor({ initial, orgName }: { initial: TemplateRow; org
     run('已儲存', () =>
       api<TemplateRow>(`/api/templates/${t.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({
+        json: {
           name: t.name, description: t.description, category: t.category, system_prompt: t.system_prompt,
           mcp_servers: mcp.map(fromDraft),
-        }),
+        },
       }),
       applyAll,
     );
@@ -55,9 +55,8 @@ export function TemplateEditor({ initial, orgName }: { initial: TemplateRow; org
     setUploading(true);
     await run(`已讀取 skill 檔案`, async () => {
       const { signedUrl } = await api<{ signedUrl: string }>(`/api/templates/${t.id}/upload-url`, { method: 'POST' });
-      const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'content-type': 'application/zip', 'x-upsert': 'true' } });
-      if (!res.ok) throw new Error(`上傳失敗（${res.status}），請再試一次`);
-      return api<TemplateRow>(`/api/templates/${t.id}`, { method: 'PATCH', body: JSON.stringify({ process_upload: true }) });
+      await uploadToSignedUrl(signedUrl, file, 'application/zip', '，請再試一次');
+      return api<TemplateRow>(`/api/templates/${t.id}`, { method: 'PATCH', json: { process_upload: true } });
     }, (updated) => setT((p) => ({ ...p, skills: updated.skills, skills_zip_path: updated.skills_zip_path })));
     setUploading(false);
   }

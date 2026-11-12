@@ -95,9 +95,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         if (typeof parsed.error === 'string') serverMessage = parsed.error;
       } catch { /* 不是 JSON：連線層級的錯誤 */ }
       if (serverMessage !== null) {
-        setMessages((prev) => (prev.at(-1)?.role === 'user' ? prev.slice(0, -1) : prev));
-        setInput(draft.current);
-        setNotice(serverMessage);
+        restoreDraft(serverMessage);
         // 這輪沒有開始，等著被它讀走的排隊訊息也放回輸入框
         void restoreQueued(queuedRef.current);
         return;
@@ -107,6 +105,17 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     },
   });
   useEffect(() => { localMessages.current = messages; }, [messages]);
+  // 換成伺服器上的訊息；這些不播進場動畫
+  const showServer = useCallback((list: UIMessage[]) => {
+    markKnown(list);
+    setMessages(list);
+  }, [markKnown, setMessages]);
+  // 這則沒有送到伺服器：拿掉畫面上的使用者訊息，草稿放回輸入框
+  const restoreDraft = useCallback((text: string) => {
+    setMessages((prev) => (prev.at(-1)?.role === 'user' ? prev.slice(0, -1) : prev));
+    setInput(draft.current);
+    setNotice(text);
+  }, [setMessages]);
   const statusRef = useRef(status);
   useEffect(() => { statusRef.current = status; }, [status]);
   // 串流中沒有輪詢，靠回覆裡的 data-interjection 知道哪些排隊訊息被讀走了
@@ -122,6 +131,8 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     let failures = 0;
     let queueDeadline: number | null = null;
     let reclaimed = false;
+    // 上次換上的伺服器進度時間；runtime 每 5 秒才存一次，沒變就不用整串重畫
+    let shownAt: string | null | undefined;
     try {
       while (alive.current) {
         let data: ThreadMessages;
@@ -152,10 +163,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           if (next === 'wait') {
             queueDeadline ??= Date.now() + QUEUE_WAIT_MS;
             if (Date.now() < queueDeadline) {
-              if (data.messages.length >= local.length) {
-                markKnown(data.messages);
-                setMessages(data.messages);
-              }
+              if (data.messages.length >= local.length) showServer(data.messages);
               await sleep(POLL_INTERVAL_MS);
               continue;
             }
@@ -163,12 +171,9 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           const replyStarted = local.at(-1)?.role === 'assistant';
           if (!replyStarted && data.messages.length < local.length) {
             // 伺服器沒有收到這則訊息：還原草稿，請使用者重送
-            setMessages((prev) => (prev.at(-1)?.role === 'user' ? prev.slice(0, -1) : prev));
-            setInput(draft.current);
-            setNotice('送出失敗，請再試一次');
+            restoreDraft('送出失敗，請再試一次');
           } else {
-            markKnown(data.messages);
-            setMessages(data.messages);
+            showServer(data.messages);
             setNotice(data.error ? `這次回覆沒有完成：${data.error}` : next === 'wait' ? '排隊訊息沒有送出，已放回輸入框' : null);
             settled.current?.();
           }
@@ -182,9 +187,10 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
         setUpdatedAt(data.updatedAt);
         // runtime 每 5 秒把進度存進 final：伺服器上已經有這次的回覆就直接顯示；
         // 伺服器自己開的下一輪還沒有回覆，但使用者訊息要先出現
-        if (data.messages.at(-1)?.role === 'assistant' || data.messages.length > localMessages.current.length) {
-          markKnown(data.messages);
-          setMessages(data.messages);
+        const grew = data.messages.length > localMessages.current.length;
+        if ((data.messages.at(-1)?.role === 'assistant' && data.updatedAt !== shownAt) || grew) {
+          shownAt = data.updatedAt;
+          showServer(data.messages);
         }
         await sleep(POLL_INTERVAL_MS);
       }
@@ -192,7 +198,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
       polling.current = false;
       if (alive.current) setWaiting(false);
     }
-  }, [threadId, setMessages, markKnown, restoreQueued]);
+  }, [threadId, showServer, restoreDraft, restoreQueued]);
   useEffect(() => { pollUntilDoneRef.current = pollUntilDone; }, [pollUntilDone]);
 
   useEffect(() => {
@@ -200,8 +206,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     api<ThreadMessages>(`/api/threads/${threadId}/messages`)
       .then((data) => {
         if (!alive.current) return;
-        markKnown(data.messages);
-        setMessages(data.messages);
+        showServer(data.messages);
         setQueued(data.queued);
         const next = afterRun(data);
         if (data.running || next === 'wait') {
@@ -214,7 +219,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
       })
       .catch((e) => { if (alive.current) setNotice((e as Error).message); });
     return () => { alive.current = false; };
-  }, [threadId, setMessages, pollUntilDone, markKnown, restoreQueued]);
+  }, [threadId, showServer, pollUntilDone, restoreQueued]);
 
   // 使用者往上捲就停止跟到最新；捲回底部附近再恢復。只看「往上」才停，避免平滑捲動途中被誤判
   useEffect(() => {
@@ -244,11 +249,8 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     el.style.height = `${el.scrollHeight}px`;
   }, [input]);
 
-  const busy = status === 'submitted' || status === 'streaming' || waiting;
-  const now = useNow(busy);
+  const busy = chatInFlight(status) || waiting;
   const reply = messages.at(-1)?.role === 'assistant' ? messages.at(-1) : undefined;
-  // 串流連線還在就表示 runtime 活著；只有輪詢時才用更新時間判斷是否卡住
-  const stalled = waiting && isStalled(updatedAt, now);
   useEffect(() => {
     if (busy) return;
     stopWanted.current = false;
@@ -261,7 +263,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
     try {
       const item = await api<QueuedView>(`/api/threads/${threadId}/queue`, {
         method: 'POST',
-        body: JSON.stringify({ text, chatPending: status === 'submitted' }),
+        json: { text, chatPending: status === 'submitted' },
       });
       if (!alive.current) return;
       // 上一則在這個請求途中被拒絕：那時 onError 還看不到這則，這裡補放回輸入框；這輪沒開始，不會有人讀它
@@ -283,7 +285,7 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
 
   async function editQueued(id: string, text: string) {
     try {
-      await api(`/api/threads/${threadId}/queue/${id}`, { method: 'PATCH', body: JSON.stringify({ text }) });
+      await api(`/api/threads/${threadId}/queue/${id}`, { method: 'PATCH', json: { text } });
       setQueued((prev) => prev.map((q) => (q.id === id ? { ...q, text } : q)));
     } catch (e) {
       setNotice((e as Error).message);
@@ -356,17 +358,9 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           <MessageView key={m.id} message={m} speaker={speaker} speakerColor={speakerColor} colorOf={colorOf} animateIn={!known.has(m.id)}
             live={busy && i === messages.length - 1} />
         ))}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted empty:hidden">
-          {busy && (
-            <>
-              <span className="dot-busy" aria-hidden />
-              <span>{speaker}處理中</span>
-              {startedAt !== null && <span aria-hidden className="tabular-nums">· {formatElapsed(now - startedAt)}</span>}
-              <span role="status">· {currentActivity(reply)}</span>
-            </>
-          )}
-          {stalled && <span role="alert" className="text-ochre">已經 1 分鐘沒有新進度，可能卡住了</span>}
-        </div>
+        <RunStatus busy={busy} speaker={speaker} startedAt={startedAt} activity={currentActivity(reply)}
+          // 串流連線還在就表示 runtime 活著；只有輪詢時才用更新時間判斷是否卡住
+          stallSince={waiting ? updatedAt : null} />
         {notice && <p role="alert" className="notice notice-error">{notice}</p>}
         <div ref={bottom} className="scroll-mb-32" />
       </div>
@@ -407,6 +401,26 @@ export function Chat({ threadId, ready, speaker, speakerColor, hasManager, color
           )}
         </div>
       </form>
+    </div>
+  );
+}
+
+/** 經過時間每秒更新；放在自己的元件裡，整串對話不必跟著每秒重畫 */
+function RunStatus({ busy, speaker, startedAt, activity, stallSince }: {
+  busy: boolean; speaker: string; startedAt: number | null; activity: string; stallSince: string | null;
+}) {
+  const now = useNow(busy);
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted empty:hidden">
+      {busy && (
+        <>
+          <span className="dot-busy" aria-hidden />
+          <span>{speaker}處理中</span>
+          {startedAt !== null && <span aria-hidden className="tabular-nums">· {formatElapsed(now - startedAt)}</span>}
+          <span role="status">· {activity}</span>
+        </>
+      )}
+      {busy && isStalled(stallSince, now) && <span role="alert" className="text-ochre">已經 1 分鐘沒有新進度，可能卡住了</span>}
     </div>
   );
 }

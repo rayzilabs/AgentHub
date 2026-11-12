@@ -65,7 +65,7 @@ export function Workspace({ initial }: { initial: ProjectDetail }) {
 
   async function newThread() {
     try {
-      const t = await api<{ id: string }>(`/api/projects/${project.id}/threads`, { method: 'POST', body: JSON.stringify({}) });
+      const t = await api<{ id: string }>(`/api/projects/${project.id}/threads`, { method: 'POST', });
       await reload();
       setThreadId(t.id);
       setError(null);

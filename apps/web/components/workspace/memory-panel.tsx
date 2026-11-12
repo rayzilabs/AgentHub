@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/client-api';
-
-type Memory = {
-  id: string; instance_id: string | null; agent_name: string | null;
-  name: string; description: string; type: string; content: string; updated_at: string;
-};
+import type { MemoryView as Memory } from '@/lib/services/threads';
 
 const TYPE_LABELS: Record<string, string> = { user: '使用者', feedback: '工作方式', project: '專案', reference: '參考資料' };
 
@@ -24,7 +20,7 @@ export function MemoryPanel({ projectId, refreshKey }: { projectId: string; refr
   async function save() {
     if (!editing) return;
     try {
-      await api(`/api/projects/${projectId}/memories`, { method: 'PATCH', body: JSON.stringify(editing) });
+      await api(`/api/projects/${projectId}/memories`, { method: 'PATCH', json: editing });
       setEditing(null);
       await load();
     } catch (e) {

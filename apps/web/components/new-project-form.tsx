@@ -14,7 +14,7 @@ export function NewProjectForm() {
     setBusy(true);
     setError(null);
     try {
-      const p = await api<{ id: string }>('/api/projects', { method: 'POST', body: JSON.stringify({ name }) });
+      const p = await api<{ id: string }>('/api/projects', { method: 'POST', json: { name } });
       router.push(`/projects/${p.id}`);
     } catch (err) {
       setError((err as Error).message);

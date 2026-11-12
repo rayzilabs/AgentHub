@@ -8,6 +8,7 @@ import { FileCards } from '@/components/files/file-card';
 import { filesInMessage, type DelegationOutput, type DeliveredFile, type DiscussionState } from '@/lib/agent-output';
 import { DelegationCard } from './delegation-card';
 import { DiscussionView } from './discussion-view';
+import { textOf } from '@/lib/text';
 import { isRunningPart, isToolPart, settleStep, stepOf, toolNameOf, type ToolPartLike } from '@/lib/progress';
 import { ToolStep } from './tool-steps';
 import { useNow } from './use-now';
@@ -36,7 +37,7 @@ export function MessageView({ message, speaker, speakerColor, colorOf, animateIn
 }) {
   const now = useNow(live && message.parts.some((p) => isToolPart(p) && isRunningPart(p as unknown as ToolPartLike)));
   if (message.role === 'user') {
-    return <UserBubble text={message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')} animateIn={animateIn} />;
+    return <UserBubble text={textOf(message)} animateIn={animateIn} />;
   }
   const delivered = filesInMessage(message);
   return (

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -13,7 +14,8 @@ const components: Components = {
   },
 };
 
-export function Markdown({ text, compact = false }: { text: string; compact?: boolean }) {
+/** memo：對話每次更新都會重畫整串，內容沒變的訊息不必重新解析 Markdown */
+export const Markdown = memo(function Markdown({ text, compact = false }: { text: string; compact?: boolean }) {
   return (
     <div className={[
       'prose max-w-none break-words',
@@ -30,4 +32,4 @@ export function Markdown({ text, compact = false }: { text: string; compact?: bo
       </ReactMarkdown>
     </div>
   );
-}
+});

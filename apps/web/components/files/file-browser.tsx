@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { FileButton } from '@/components/file-button';
-import { api } from '@/lib/client-api';
+import { api, uploadToSignedUrl } from '@/lib/client-api';
 import { ancestorFolderIds, buildTree, descendantFolderIds, folderPath, formatSize, UPLOAD_FOLDER_NAME, type TreeNode } from '@/lib/file-tree';
 import type { FileRow, ProjectTree } from '@/lib/services/files';
 
@@ -97,28 +97,26 @@ export function FileBrowser({ projectId, title = '專案資料' }: { projectId: 
     }
   }
 
-  const json = (method: string, body?: unknown) => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const upload = async (file: File, folderId: string | null) => {
     setUploading(true);
     await run(async () => {
       const { fileId, signedUrl } = await api<{ fileId: string; signedUrl: string }>(`${base}/files/upload-url`, { method: 'POST' });
-      const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'content-type': file.type || 'application/octet-stream', 'x-upsert': 'true' } });
-      if (!res.ok) throw new Error(`上傳失敗（${res.status}）`);
-      const row = await api<FileRow>(`${base}/files`, json('POST', { fileId, folderId, name: file.name }));
+      await uploadToSignedUrl(signedUrl, file, file.type || 'application/octet-stream');
+      const row = await api<FileRow>(`${base}/files`, { method: 'POST', json: { fileId, folderId, name: file.name } });
       reveal(row.folder_id);
       setFlash(row.id);
     });
     setUploading(false);
   };
   const createFolder = (name: string, parentId: string | null) => run(async () => {
-    const row = await api<{ id: string }>(`${base}/folders`, json('POST', { name, parentId }));
+    const row = await api<{ id: string }>(`${base}/folders`, { method: 'POST', json: { name, parentId } });
     reveal(parentId);
     setFlash(row.id);
   });
-  const rename = (t: Target, name: string) => run(() => api(`${base}/${t.kind === 'file' ? 'files' : 'folders'}/${t.id}`, json('PATCH', { name })));
+  const rename = (t: Target, name: string) => run(() => api(`${base}/${t.kind === 'file' ? 'files' : 'folders'}/${t.id}`, { method: 'PATCH', json: { name } }));
   const move = (t: Target, dest: string) => run(async () => {
     await api(`${base}/${t.kind === 'file' ? 'files' : 'folders'}/${t.id}`,
-      json('PATCH', t.kind === 'file' ? { folderId: dest } : { parentId: dest || null }));
+      { method: 'PATCH', json: t.kind === 'file' ? { folderId: dest } : { parentId: dest || null } });
     reveal(dest || null);
     setFlash(t.id);
   });

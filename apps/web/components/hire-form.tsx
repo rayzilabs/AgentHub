@@ -32,7 +32,7 @@ export function HireForm({ templateId, mcpServers, projects }: { templateId: str
     setBusy(true);
     setError(null);
     try {
-      await api(`/api/projects/${projectId}/agents`, { method: 'POST', body: JSON.stringify({ template_id: templateId, secrets }) });
+      await api(`/api/projects/${projectId}/agents`, { method: 'POST', json: { template_id: templateId, secrets } });
       router.push(`/projects/${projectId}`);
     } catch (err) {
       setError((err as Error).message);

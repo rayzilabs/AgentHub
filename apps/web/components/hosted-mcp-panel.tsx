@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileButton } from '@/components/file-button';
-import { api } from '@/lib/client-api';
+import { api, uploadToSignedUrl } from '@/lib/client-api';
 import {
   canPublish, canRetire, POLL_MS, pollOnce, pollingIds, secretRowsToSave, statusChip, statusLabel, visibleVersions, zipProblem,
 } from '@/lib/hosted-ui';
@@ -76,7 +76,7 @@ export function HostedMcpPanel({ templateId, mcpName }: { templateId: string; mc
       return;
     }
     void act('金鑰已儲存，執行中的版本會重新啟動', async () => {
-      await api(`${base}/secrets`, { method: 'PUT', body: JSON.stringify({ secrets }) });
+      await api(`${base}/secrets`, { method: 'PUT', json: { secrets } });
       setRows([{ key: '', value: '' }]);
     });
   };
@@ -90,8 +90,7 @@ export function HostedMcpPanel({ templateId, mcpName }: { templateId: string; mc
     setUploading(true);
     await act('已開始部署，大約需要 1 分鐘', async () => {
       const { version, signedUrl } = await api<{ version: HostedVersionView; signedUrl: string }>(`${base}/versions`, { method: 'POST' });
-      const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'content-type': 'application/zip', 'x-upsert': 'true' } });
-      if (!res.ok) throw new Error(`上傳失敗（${res.status}），請下架這個等待上傳的版本後再試一次`);
+      await uploadToSignedUrl(signedUrl, file, 'application/zip', '，請下架這個等待上傳的版本後再試一次');
       await api(`${base}/versions/${version.id}/deploy`, { method: 'POST' });
     });
     setUploading(false);
