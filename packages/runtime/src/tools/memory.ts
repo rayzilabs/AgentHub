@@ -12,7 +12,6 @@ export type MemoryRow = {
   name: string;
   description: string;
   type: MemoryType;
-  content: string;
   updated_at: string;
 };
 export type MemoryIndex = { rows: MemoryRow[]; omitted: number };
@@ -26,7 +25,7 @@ const scopeOf = (row: { instance_id: string | null }): Scope => (row.instance_id
 export async function loadMemoryIndex(db: Db, projectId: string, instanceId: string, limit = MEMORY_INDEX_LIMIT): Promise<MemoryIndex> {
   const { data, error, count } = await db
     .from('memories')
-    .select('id, instance_id, name, description, type, content, updated_at', { count: 'exact' })
+    .select('id, instance_id, name, description, type, updated_at', { count: 'exact' })
     .eq('project_id', projectId)
     .or(visibleTo(instanceId))
     .order('updated_at', { ascending: false })

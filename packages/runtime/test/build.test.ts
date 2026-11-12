@@ -46,7 +46,7 @@ describe('buildConsultantInstructions', () => {
       workDir: '/agents/x',
       sharedRoot: '/shared',
       sharedFiles: [{ path: '資料/財報.pdf', fileId: 'f1' }],
-      memories: { rows: [{ id: '1', instance_id: null, name: 'risk', description: '客戶偏好保守', type: 'user', content: '保守型', updated_at: '' }], omitted: 0 },
+      memories: { rows: [{ id: '1', instance_id: null, name: 'risk', description: '客戶偏好保守', type: 'user', updated_at: '' }], omitted: 0 },
       mcpWarnings: ['MCP「finmind」目前無法使用：timeout'],
     });
     expect(text).toContain('你是法務顧問。');

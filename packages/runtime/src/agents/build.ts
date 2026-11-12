@@ -18,7 +18,7 @@ import { loadMemoryIndex, memoryTools } from '../tools/memory';
 import { skillTool } from '../tools/skill';
 import type { ImageRegistry } from '../images';
 import type { EnvResult } from '../requirements';
-import type { RunClock } from '../run-clock';
+import { isPast, type RunClock } from '../run-clock';
 import type { AgentInstance } from '../types';
 import type { StepLike } from '../usage';
 import type { ConsultantRunner, RecordSpeech } from '../consultant';
@@ -55,7 +55,7 @@ export function wrapUpStep(at: number | undefined, instructions: string, notes: 
 ${note}`,
   });
   return ({ stepNumber }: { stepNumber: number }) => {
-    if (at !== undefined && Date.now() >= at) return wrapped(notes.time);
+    if (isPast(at)) return wrapped(notes.time);
     if (stepNumber >= MAX_STEPS - 1) return wrapped(notes.steps);
     return {};
   };
@@ -149,9 +149,12 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
   await mkdir(workDir, { recursive: true });
 
   const gateway = ctx.gateway && { ...ctx.gateway, instanceId: ctx.instance.id };
-  const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir, sandbox, undefined, undefined, gateway);
+  // 記憶索引和 MCP 連線互不相關，一起做；索引的錯誤留到下面 await 時處理（那時 MCP 已連上，失敗要關掉）
+  const pendingMemories = loadMemoryIndex(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
+  pendingMemories.catch(() => undefined);
+  const mcp = await connectMcpServers(ctx.instance.mcp_servers, ctx.secrets, workDir, sandbox, { gateway });
   try {
-    const memories = await loadMemoryIndex(ctx.db, ctx.config.PROJECT_ID, ctx.instance.id);
+    const memories = await pendingMemories;
     const instructions = buildConsultantInstructions({
       instance: ctx.instance,
       workDir,

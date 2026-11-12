@@ -18,7 +18,7 @@ const entry = (name: string, scope: 'private' | 'project', content: string) =>
   ({ name, scope, type: 'user' as const, summary: `${name} 的說明`, content });
 
 function row(fields: Partial<MemoryRow>): MemoryRow {
-  return { id: '1', instance_id: null, name: 'n', description: 'd', type: 'user', content: 'c', updated_at: '', ...fields };
+  return { id: '1', instance_id: null, name: 'n', description: 'd', type: 'user', updated_at: '', ...fields };
 }
 
 describe('記憶工具', () => {
@@ -36,7 +36,9 @@ describe('記憶工具', () => {
     expect(await t.memory_write.execute!({ ...entry('risk', 'project', '積極'), type: 'feedback' }, opts))
       .toEqual({ ok: true, action: 'updated' });
     const { rows } = await loadMemoryIndex(db, projectId, a);
-    expect(rows.map((r) => [r.name, r.type, r.content])).toEqual([['risk', 'feedback', '積極']]);
+    expect(rows.map((r) => [r.name, r.type])).toEqual([['risk', 'feedback']]);
+    const read = (await t.memory_read.execute!({ names: ['risk'] }, opts)) as { memories: { content: string }[] };
+    expect(read.memories.map((m) => m.content)).toEqual(['積極']);
   });
 
   it('私有記憶互相隔離：同名時各自一筆，讀、改、刪都只動到自己的', async () => {
@@ -52,9 +54,10 @@ describe('記憶工具', () => {
 
     await ta.memory_write.execute!(entry('note', 'private', 'A 改過'), opts);
     await ta.memory_delete.execute!({ name: 'note', scope: 'private' }, opts);
-    const seenByB = (await loadMemoryIndex(db, projectId, b)).rows.map((r) => r.content).sort();
-    expect(seenByB).toEqual(['B 的私事', '大家的事']);
-    expect((await loadMemoryIndex(db, projectId, a)).rows.map((r) => r.content)).toEqual(['大家的事']);
+    const seenByB = (await tb.memory_read.execute!({ names: ['note'] }, opts)) as { memories: { content: string }[] };
+    expect(seenByB.memories.map((m) => m.content).sort()).toEqual(['B 的私事', '大家的事']);
+    expect((await loadMemoryIndex(db, projectId, b)).rows.map((r) => r.instance_id).sort()).toEqual([b, null].sort());
+    expect((await loadMemoryIndex(db, projectId, a)).rows.map((r) => r.instance_id)).toEqual([null]);
   });
 
   it('專案記憶任何一位顧問都能更新與刪除', async () => {

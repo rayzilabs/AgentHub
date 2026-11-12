@@ -54,37 +54,43 @@ function transportFor(server: McpServerConfig, secrets: Record<string, string>, 
   return new Experimental_StdioMCPTransport({ command, args, env, cwd });
 }
 
+/** connect、timeoutMs 只給測試替換 */
+export type McpConnectOptions = { gateway?: McpGateway; connect?: typeof createMCPClient; timeoutMs?: number };
+
+/** 各 MCP 同時連線；工具與警告仍依 servers 的順序排列 */
 export async function connectMcpServers(
   servers: McpServerConfig[],
   secretsByServer: Record<string, Record<string, string>>,
   cwd: string,
   sandbox: Sandbox,
-  connect: typeof createMCPClient = createMCPClient,
-  timeoutMs = MCP_CONNECT_TIMEOUT_MS,
-  gateway?: McpGateway,
+  { gateway, connect = createMCPClient, timeoutMs = MCP_CONNECT_TIMEOUT_MS }: McpConnectOptions = {},
 ): Promise<McpHandle> {
-  const clients: McpClient[] = [];
-  const warnings: string[] = [];
-  const tools: ToolSet = {};
-
-  for (const server of servers) {
+  const results = await Promise.all(servers.map(async (server) => {
+    let client: McpClient | undefined;
     try {
       const transport = transportFor(server, secretsByServer[server.name] ?? {}, cwd, sandbox, gateway);
       const pending = connect({ transport });
-      const client = await withTimeout(pending, timeoutMs, `MCP「${server.name}」`).catch((e: unknown) => {
+      client = await withTimeout(pending, timeoutMs, `MCP「${server.name}」`).catch((e: unknown) => {
         // 逾時後才連上的 client 已經沒人管，連上時直接關掉
         pending.then((c) => c.close()).catch(() => undefined);
         throw e;
       });
-      clients.push(client);
-      const serverTools = await withTimeout(client.tools(), timeoutMs, `MCP「${server.name}」`);
-      for (const [name, definition] of Object.entries(serverTools)) {
-        tools[sanitizeToolName(`${server.name}__${name}`)] = definition as ToolSet[string];
-      }
+      return { client, tools: await withTimeout(client.tools(), timeoutMs, `MCP「${server.name}」`) };
     } catch (e) {
-      warnings.push(`MCP「${server.name}」目前無法使用：${errorText(e)}`);
+      return { client, warning: `MCP「${server.name}」目前無法使用：${errorText(e)}` };
     }
-  }
+  }));
+
+  const clients: McpClient[] = [];
+  const warnings: string[] = [];
+  const tools: ToolSet = {};
+  results.forEach((r, i) => {
+    if (r.client) clients.push(r.client);
+    if (r.warning) warnings.push(r.warning);
+    for (const [name, definition] of Object.entries(r.tools ?? {})) {
+      tools[sanitizeToolName(`${servers[i].name}__${name}`)] = definition as ToolSet[string];
+    }
+  });
 
   return {
     tools,

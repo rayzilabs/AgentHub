@@ -52,7 +52,7 @@ describe('connectMcpServers', () => {
       { remote: { API_KEY: 'secret-1' } },
       '/tmp',
       createSandbox(),
-      fakeConnect,
+      { connect: fakeConnect },
     );
     expect(seen[0]).toEqual({ type: 'http', url: 'https://mcp.example.com', headers: { Authorization: 'Bearer secret-1' } });
   });
@@ -68,9 +68,7 @@ describe('connectMcpServers', () => {
       {},
       '/tmp',
       createSandbox(),
-      fakeConnect,
-      undefined,
-      { baseUrl: 'https://p.example', token: 'tok', instanceId: 'i1' },
+      { connect: fakeConnect, gateway: { baseUrl: 'https://p.example', token: 'tok', instanceId: 'i1' } },
     );
     expect(seen[0]).toEqual({ type: 'http', url: 'https://p.example/api/mcp/i1/fin%2Fx', headers: { Authorization: 'Bearer tok' } });
   });
@@ -91,7 +89,7 @@ describe('connectMcpServers', () => {
       { local: { API_KEY: 'secret-1' } },
       '/tmp',
       createSandbox('agent'),
-      fakeConnect,
+      { connect: fakeConnect },
     );
     const params = (seen[0] as { serverParams: { command: string; args: string[]; env: Record<string, string> } }).serverParams;
     expect(params.command).toBe('sudo');
@@ -129,7 +127,7 @@ describe('connectMcpServers', () => {
       return { tools: async () => ({}), close: async () => { closed = true; } };
     }) as unknown as typeof createMCPClient;
     const handle = await connectMcpServers(
-      [{ name: 'slow', transport: 'http', url: 'https://mcp.example.com' }], {}, '/tmp', createSandbox(), slowConnect, 20,
+      [{ name: 'slow', transport: 'http', url: 'https://mcp.example.com' }], {}, '/tmp', createSandbox(), { connect: slowConnect, timeoutMs: 20 },
     );
     expect(handle.warnings[0]).toContain('MCP「slow」目前無法使用');
     expect(handle.warnings[0]).toContain('沒有回應');
