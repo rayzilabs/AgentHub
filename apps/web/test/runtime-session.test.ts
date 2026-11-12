@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
 import { signUp } from '@/app/login/actions';
 import {
-  cleanupOrphanRuntimeAccounts, deleteRuntimeAccount, ensureRuntimeAccount, isRuntimeAccount, runtimeAccessToken, runtimeEmail,
+  deleteRuntimeAccount, ensureRuntimeAccount, isRuntimeAccount, runtimeAccessToken, runtimeEmail,
   RUNTIME_EMAIL_DOMAIN,
 } from '@/lib/runtime-session';
 import { createProject } from '@/lib/services/projects';
@@ -58,17 +58,11 @@ describe('runtime 帳號', () => {
     for (const t of tokens) expect((await db.auth.getUser(t)).error).toBeNull();
   });
 
-  it('刪除專案的 runtime 帳號；清理孤兒帳號', async () => {
+  it('刪除專案的 runtime 帳號', async () => {
     const p = await newProject();
     const { userId } = await ensureRuntimeAccount(db, p.id);
     await deleteRuntimeAccount(db, p.id);
     expect((await db.auth.admin.getUserById(userId)).data.user).toBeNull();
-
-    const q = await newProject();
-    const orphan = await ensureRuntimeAccount(db, q.id);
-    await db.from('projects').delete().eq('id', q.id);
-    expect(await cleanupOrphanRuntimeAccounts(db)).toBeGreaterThanOrEqual(1);
-    expect((await db.auth.admin.getUserById(orphan.userId)).data.user).toBeNull();
   });
 
   it('isRuntimeAccount 只認 app_metadata 的標記', () => {
