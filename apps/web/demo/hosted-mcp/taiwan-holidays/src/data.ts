@@ -6,10 +6,7 @@ import type { Calendar } from './engine/types';
 const dataDir = fileURLToPath(new URL('../data/', import.meta.url));
 
 export function loadCalendars(): Record<number, Calendar> {
-  const years = readdirSync(dataDir)
-    .map((name) => /^(\d{4})\.json$/.exec(name)?.[1])
-    .filter((y): y is string => !!y)
-    .map(Number)
-    .sort((a, b) => a - b);
+  // 年份當物件鍵時本來就由小到大排列
+  const years = readdirSync(dataDir).flatMap((name) => /^(\d{4})\.json$/.exec(name)?.[1] ?? []);
   return Object.fromEntries(years.map((y) => [y, JSON.parse(readFileSync(`${dataDir}${y}.json`, 'utf8')) as Calendar]));
 }

@@ -5,6 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const DATASET_API = 'https://data.gov.tw/api/v2/rest/dataset/14718';
+const HEADERS = { 'user-agent': 'Mozilla/5.0' };
 
 /** 每個民國年只取最新一份（依下載網址裡的 dgpa/files/<年月> 判斷），不要 Google 行事曆專用版。回傳 { 西元年: 網址 } */
 export function pickLatestCsv(distributions) {
@@ -20,7 +21,7 @@ export function pickLatestCsv(distributions) {
   return Object.fromEntries(Object.entries(best).map(([y, v]) => [y, v.url]));
 }
 
-/** 官方 CSV（欄位：西元日期,星期,是否放假,備註；2 是放假、0 是上班）。舊年度是 Big5，新年度是 UTF-8 BOM */
+/** 官方 CSV（欄位：西元日期,星期,是否放假,備註；2 是放假、0 是上班）。舊年度是 Big5，新年度是 UTF-8 BOM（TextDecoder 會去掉 BOM） */
 export function parseCalendarCsv(bytes) {
   let text;
   try {
@@ -29,10 +30,8 @@ export function parseCalendarCsv(bytes) {
     text = new TextDecoder('big5').decode(bytes);
   }
   return text
-    .replace(/^﻿/, '')
     .split(/\r?\n/)
-    .slice(1)
-    .filter((line) => /^\d{8},/.test(line))
+    .filter((line) => /^\d{8},/.test(line)) // 只留資料列，標題列與空行都會被濾掉
     .map((line) => {
       const [date, week, off, ...note] = line.split(',');
       return { date, week, isHoliday: off.trim() === '2', description: note.join(',').trim() };
@@ -40,11 +39,11 @@ export function parseCalendarCsv(bytes) {
 }
 
 async function main() {
-  const res = await fetch(DATASET_API, { headers: { 'user-agent': 'Mozilla/5.0' } });
+  const res = await fetch(DATASET_API, { headers: HEADERS });
   if (!res.ok) throw new Error(`資料集 API 回 ${res.status}`);
   const urls = pickLatestCsv((await res.json()).result.distribution);
   for (const [year, url] of Object.entries(urls)) {
-    const csv = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0' } });
+    const csv = await fetch(url, { headers: HEADERS });
     if (!csv.ok) throw new Error(`${year} 年 CSV 回 ${csv.status}：${url}`);
     const days = parseCalendarCsv(new Uint8Array(await csv.arrayBuffer()));
     const expected = new Date(Number(year), 1, 29).getMonth() === 1 ? 366 : 365;

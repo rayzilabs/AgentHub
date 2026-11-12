@@ -6,9 +6,7 @@ import { addWorkdays, countWorkdays, nextMakeupWorkday, optimizeLeave } from './
 import { loadCalendars } from './data';
 
 const calendarsByYear = loadCalendars();
-const allDays = Object.values(calendarsByYear)
-  .flat()
-  .sort((a, b) => a.date.localeCompare(b.date));
+const allDays = Object.values(calendarsByYear).flat();
 
 const rangeShape = z.object({ start: z.string(), end: z.string() }).optional().describe('Optional inclusive date range, YYYY-MM-DD');
 
