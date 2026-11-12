@@ -6,15 +6,14 @@ process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('../lib/supabase/admin');
 const { env } = await import('../lib/env');
 const { apiHostedClient, BUSINESS_AGENTS_ROOT, loadDemoAgents, publishDemoAgents } = await import('../lib/demo');
+const { findUserIdByEmail } = await import('../lib/runtime-session');
 
 // 非金融顧問只上架到市集，不建專案、不租用；用既有的 Demo 創作者帳號，不動它的密碼
 const CREATOR = 'creator@demo.agenthub.app';
 const db = adminDb();
 
-const { data, error } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
-if (error) throw error;
-const creator = data.users.find((u) => u.email === CREATOR);
-if (!creator) {
+const creatorId = await findUserIdByEmail(db, CREATOR);
+if (!creatorId) {
   console.error(`找不到 Demo 創作者帳號 ${CREATOR}。請先執行 scripts/seed-demo.ts 建立 Demo 帳號，再重跑這支腳本。`);
   process.exit(1);
 }
@@ -29,7 +28,7 @@ if (otpError || !session.session) throw otpError ?? new Error('取不到創作�
 const hosted = apiHostedClient(env.platformUrl, session.session.access_token);
 console.log(`代管 MCP 由 ${env.platformUrl} 部署`);
 
-for (const p of await publishDemoAgents(db, creator.id, await loadDemoAgents(BUSINESS_AGENTS_ROOT), hosted)) {
+for (const p of await publishDemoAgents(db, creatorId, await loadDemoAgents(BUSINESS_AGENTS_ROOT), hosted)) {
   const deployed = p.deployed.length ? `；部署新版代管 MCP：${p.deployed.join('、')}` : '';
   console.log(`${p.created ? '已建立' : '已更新'}並上架：${p.name}${deployed}`);
 }

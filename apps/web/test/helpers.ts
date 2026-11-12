@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 import type { HostedClient } from '@/lib/demo';
@@ -14,6 +14,11 @@ export function testDb(): Db {
   return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+/** 測試用的平台簽章私鑰（ES256，PEM） */
+export function testSigningKey(): string {
+  return generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 }
 
 export async function seedUser(db: Db): Promise<{ id: string; email: string; password: string }> {
@@ -33,8 +38,8 @@ export function fakeSprites(state: DeployState = { phase: 'installing', log: 'pi
     state,
     tools: [{ name: 'rate', description: '匯率' }],
     provisionDelayMs: 0,
-    provisionError: null as Error | null,
-    listToolsError: null as Error | null,
+    provisionError: null,
+    listToolsError: null,
     async provision(v: HostedVersion, env: Record<string, string>, bundleUrl: string) {
       calls.push({ fn: 'provision', args: [v.id, env, bundleUrl] });
       if (ops.provisionDelayMs) await new Promise((r) => setTimeout(r, ops.provisionDelayMs));

@@ -43,7 +43,7 @@ async function readRow(db: Db, projectId: string): Promise<Row | null> {
   return data as Row | null;
 }
 
-async function findUserIdByEmail(db: Db, email: string): Promise<string | null> {
+export async function findUserIdByEmail(db: Db, email: string): Promise<string | null> {
   for (let page = 1; ; page++) {
     const { data, error } = await db.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw error;

@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync, zipSync } from 'fflate';
-import { RETIRABLE } from '@/lib/hosted-ui';
+import { canRetire, POLL_MS } from '@/lib/hosted-ui';
 import { HttpError } from '@/lib/http';
 import { TemplateInputSchema, type TemplateInput } from '@/lib/schemas';
 import { HOSTED_BUCKET, type HostedVersion, type HostedVersionView } from '@/lib/services/hosted-mcp';
@@ -124,7 +124,7 @@ async function deployHosted(db: Db, client: HostedClient, templateId: string, na
     let current = await client.deploy(templateId, name, version.id);
     // 部署靠讀取推進；超過 10 分鐘會自己標成失敗
     while (current.status === 'deploying') {
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, POLL_MS));
       current = await client.get(templateId, name, version.id);
     }
     if (current.status !== 'ready') throw new Error(`代管 MCP「${name}」部署失敗：\n${current.log_tail}`);
@@ -132,7 +132,7 @@ async function deployHosted(db: Db, client: HostedClient, templateId: string, na
     keep = version.id;
   }
   for (const old of await client.list(templateId, name)) {
-    if (old.id === keep || old.projects > 0 || !RETIRABLE.includes(old.status)) continue;
+    if (old.id === keep || !canRetire(old)) continue;
     // 狀態可能剛好被別人改了或有專案剛租用，跳過即可，下次重跑再清
     await client.retire(templateId, name, old.id).catch((e) => { if (!(e instanceof HttpError && e.status === 409)) throw e; });
   }

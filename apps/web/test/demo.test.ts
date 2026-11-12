@@ -1,16 +1,16 @@
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiHostedClient, BUSINESS_AGENTS_ROOT, loadDemoAgents, publishDemoAgents, type DemoAgent } from '@/lib/demo';
 import { HttpError } from '@/lib/http';
 import { TemplateInputSchema } from '@/lib/schemas';
 import { listVersions } from '@/lib/services/hosted-mcp';
 import { listMyTemplates, listPublishedTemplates } from '@/lib/services/templates';
 import { parseSkillsZip } from '@/lib/skills-zip';
-import { fakeSprites, seedUser, serviceHostedClient, testDb } from './helpers';
+import { fakeSprites, seedUser, serviceHostedClient, testDb, testSigningKey } from './helpers';
 
 const SKILLS: Record<string, string[]> = {
   credit: ['credit-5p', 'ratio-check'],
@@ -93,6 +93,11 @@ async function writeFiles(root: string, files: Record<string, string>) {
 
 describe('平台代管 MCP 套件', () => {
   const db = testDb();
+  // 部署檢查會簽創作者通行證
+  beforeEach(() => {
+    vi.stubEnv('PLATFORM_URL', 'https://platform.test');
+    vi.stubEnv('MCP_SIGNING_KEY', testSigningKey());
+  });
   const agentJson = (name: string) => JSON.stringify({
     name, system_prompt: '你是法務顧問', mcp_servers: [{ name: 'law', transport: 'remote', hosted: true }],
   });
@@ -122,9 +127,6 @@ describe('平台代管 MCP 套件', () => {
   });
 
   it('第一次部署並發布；內容沒變不建新版本；內容變了建新版本並下架沒人用的舊版本', async () => {
-    // 部署檢查會簽創作者通行證
-    vi.stubEnv('PLATFORM_URL', 'https://platform.test');
-    vi.stubEnv('MCP_SIGNING_KEY', generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());
     const creator = await seedUser(db);
     const { agents, hosted } = await fixture();
     const { ops, calls } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
@@ -146,8 +148,6 @@ describe('平台代管 MCP 套件', () => {
   });
 
   it('內容沒變時，也會下架上次中斷留下的失敗版本', async () => {
-    vi.stubEnv('PLATFORM_URL', 'https://platform.test');
-    vi.stubEnv('MCP_SIGNING_KEY', generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());
     const creator = await seedUser(db);
     const { agents, hosted } = await fixture();
     const { ops } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
