@@ -1,10 +1,10 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it, vi } from 'vitest';
-import { apiHostedClient, loadDemoAgents, publishDemoAgents, type DemoAgent } from '@/lib/demo';
+import { apiHostedClient, BUSINESS_AGENTS_ROOT, loadDemoAgents, publishDemoAgents, type DemoAgent } from '@/lib/demo';
 import { HttpError } from '@/lib/http';
 import { TemplateInputSchema } from '@/lib/schemas';
 import { listVersions } from '@/lib/services/hosted-mcp';
@@ -28,6 +28,32 @@ describe('loadDemoAgents', () => {
       expect(a.input.system_prompt).toContain('以下為一般性分析，不構成正式法律、財務或授信意見');
       expect(parseSkillsZip(a.skillsZip)).toHaveLength(2);
       expect(parseSkillsZip(a.skillsZip).map((k) => k.name).sort()).toEqual(SKILLS[a.slug]);
+    }
+  });
+});
+
+describe('非金融顧問（只上架到市集）', () => {
+  const LEGAL_SKILLS = ['ad-claims-review', 'contract-review', 'legal-letter', 'legal-risk-triage', 'legal-setup', 'nda-review', 'online-terms-review', 'privacy-check'];
+
+  it('企業法務顧問：格式正確、兩句標示都在、8 個 skill、用平台代管的 taiwan-law', async () => {
+    const agents = await loadDemoAgents(BUSINESS_AGENTS_ROOT);
+    const legal = agents.find((a) => a.slug === 'legal');
+    expect(legal).toBeDefined();
+    const a = legal!;
+    expect(TemplateInputSchema.parse(a.input)).toEqual(a.input);
+    expect(a.input.description).toContain('（示範內容，正式版本將由執業專業人士提供）');
+    expect(a.input.system_prompt).toContain('以下為一般性分析，不構成正式法律、財務或授信意見');
+    expect(a.input.mcp_servers).toEqual([{ name: 'taiwan-law', transport: 'remote', hosted: true, required_secrets: [] }]);
+    expect(Object.keys(a.hosted)).toEqual(['taiwan-law']);
+    expect(parseSkillsZip(a.skillsZip).map((k) => k.name).sort()).toEqual(LEGAL_SKILLS);
+  });
+
+  it('企業法務顧問：每個 skill 結尾有來源段落，資料夾有 NOTICE.md', async () => {
+    const dir = path.join(BUSINESS_AGENTS_ROOT, 'legal');
+    expect(await readFile(path.join(dir, 'NOTICE.md'), 'utf8')).toContain('Apache License 2.0');
+    for (const name of LEGAL_SKILLS) {
+      const md = await readFile(path.join(dir, 'skills', name, 'SKILL.md'), 'utf8');
+      expect(md, name).toMatch(/\n## 來源\n/);
     }
   });
 });
