@@ -48,7 +48,8 @@ apps/web/                Next.js 16（App Router），部署到 Vercel，root di
   lib/schemas.ts         zod 表單 / API 驗證（template、MCP 設定）
   components/workspace/  對話、派工卡片、討論畫面
   demo/agents/           Demo 三位金融顧問（agent.json + skills/）
-  scripts/               seed-demo、smoke、redeploy-runtime
+  demo/business-agents/  只上架到市集的非金融顧問（不租進 Demo 專案）
+  scripts/               seed-demo、seed-business-agents、smoke、redeploy-runtime
 packages/runtime/        agent runtime，esbuild 打包成單一 dist/main.js
   src/agents/            主管 / 顧問的 prompt 與組裝
   src/tools/             bash、files、skill（載入 skill）、memory（記憶索引與讀寫刪）、delegate（派工）、discuss（討論）

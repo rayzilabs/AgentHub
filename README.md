@@ -60,6 +60,7 @@ apps/web/              Next.js 網站與 API（部署到 Vercel）
   components/          工作區 UI（對話、派工卡片、討論畫面）
   lib/                 服務層、Supabase、Sprite 管理、表單驗證
   demo/agents/         Demo 用的三位金融顧問
+  demo/business-agents/ 只上架到市集的非金融顧問（法務、人資、行銷）
   scripts/             seed、冒煙測試、更新所有 Sprite 的 runtime、平台代管 MCP 的驗收與營運
 packages/runtime/      跑在 Sprite 裡的 agent runtime（打包成單一 main.js）
 supabase/
@@ -191,6 +192,8 @@ DEMO_PASSWORD=<密碼> pnpm exec tsx scripts/seed-demo.ts
 ```
 
 會建立（或更新）兩個帳號、上架 `apps/web/demo/agents/` 的三位金融顧問，並建好「金融科技展 Demo」專案。可以重複執行。
+
+`pnpm exec tsx scripts/seed-business-agents.ts` 以同一個創作者帳號上架 `apps/web/demo/business-agents/` 的非金融顧問（同名就更新），只上架到市集、不建專案；要先跑過 `seed-demo.ts`。
 
 | 帳號 | 角色 |
 |---|---|

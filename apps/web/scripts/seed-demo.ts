@@ -4,8 +4,7 @@ import { fileURLToPath } from 'node:url';
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 
 const { adminDb } = await import('../lib/supabase/admin');
-const { loadDemoAgents } = await import('../lib/demo');
-const templates = await import('../lib/services/templates');
+const { loadDemoAgents, publishDemoAgents } = await import('../lib/demo');
 const projects = await import('../lib/services/projects');
 const { provisionProject } = await import('../lib/sprites');
 
@@ -44,19 +43,9 @@ const password = demoPassword ?? randomBytes(9).toString('base64url');
 const creatorId = await ensureUser('creator@demo.agenthub.app', password);
 const demoUserId = await ensureUser('demo@demo.agenthub.app', password);
 
-const existing = await templates.listMyTemplates(db, creatorId);
-const templateIds: string[] = [];
-for (const agent of await loadDemoAgents()) {
-  const current = existing.find((t) => t.name === agent.input.name);
-  const t = current ?? (await templates.createTemplate(db, creatorId, agent.input));
-  const { signedUrl } = await templates.createSkillsUploadUrl(db, creatorId, t.id);
-  const put = await fetch(signedUrl, { method: 'PUT', body: new Blob([new Uint8Array(agent.skillsZip)], { type: 'application/zip' }), headers: { 'content-type': 'application/zip', 'x-upsert': 'true' } });
-  if (!put.ok) throw new Error(`上傳 ${agent.slug} skill 失敗：${put.status}`);
-  await templates.updateTemplate(db, creatorId, t.id, { ...agent.input, process_upload: true });
-  await templates.publishTemplate(db, creatorId, t.id);
-  templateIds.push(t.id);
-  console.log(`${current ? '已更新' : '已建立'}並上架：${agent.input.name}`);
-}
+const published = await publishDemoAgents(db, creatorId, await loadDemoAgents());
+for (const p of published) console.log(`${p.created ? '已建立' : '已更新'}並上架：${p.name}`);
+const templateIds = published.map((p) => p.id);
 
 let project = (await projects.listProjects(db, demoUserId)).find((p) => p.name === DEMO_PROJECT);
 if (!project) {
