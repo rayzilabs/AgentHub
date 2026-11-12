@@ -8,7 +8,7 @@ import { getEditableTemplate, publishedVersionCount } from './templates';
 
 export const HOSTED_LIMITS = { publishedPerMcp: 3, spritesPerCreator: 10, bundleBytes: MAX_ZIP_BYTES, deployMs: 10 * 60_000 };
 
-const BUCKET = 'mcp-bundles';
+export const HOSTED_BUCKET = 'mcp-bundles';
 /** Supabase 簽名上傳網址的有效期；超過還沒上傳的版本視為放棄 */
 const UPLOAD_TTL_MS = 2 * 3600_000;
 /** 失敗的版本保留 Sprite 這麼久，方便創作者查看 */
@@ -184,7 +184,7 @@ export async function createVersion(
     .select('*').single();
   if (insertError?.code === '23505') throw new HttpError(409, '已有版本正在部署');
   if (insertError) throw insertError;
-  const { data: upload, error: uploadError } = await db.storage.from(BUCKET).createSignedUploadUrl(bundlePath, { upsert: true });
+  const { data: upload, error: uploadError } = await db.storage.from(HOSTED_BUCKET).createSignedUploadUrl(bundlePath, { upsert: true });
   if (uploadError) throw uploadError;
   return { version: data as HostedVersion, signedUrl: upload.signedUrl };
 }
@@ -194,7 +194,7 @@ export async function startDeploy(db: Db, userId: string, versionId: string): Pr
   const version = await ownVersion(db, userId, versionId);
   if (version.status !== 'pending') throw new HttpError(409, '這個版本已經開始部署');
   const file = `${version.version}.zip`;
-  const { data: files, error } = await db.storage.from(BUCKET).list(`${version.template_id}/${version.mcp_name}`, { search: file });
+  const { data: files, error } = await db.storage.from(HOSTED_BUCKET).list(`${version.template_id}/${version.mcp_name}`, { search: file });
   if (error) throw error;
   const uploaded = files?.find((f) => f.name === file);
   if (!uploaded) throw new HttpError(400, '還沒有上傳套件');
@@ -223,7 +223,7 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
     if (!claimed) return loadVersion(db, version.id);
     version = claimed as HostedVersion;
     try {
-      const { data: signed, error } = await db.storage.from(BUCKET).createSignedUrl(version.bundle_path, 900);
+      const { data: signed, error } = await db.storage.from(HOSTED_BUCKET).createSignedUrl(version.bundle_path, 900);
       if (error) throw error;
       const vars = await hostedEnv(db, version.template_id, version.mcp_name);
       const { spriteUrl } = await sprites.provision(version, vars, signed.signedUrl);
@@ -342,7 +342,7 @@ export async function cleanupFailed(
 
 /** 範本刪除時版本會跟著刪，但 Storage 裡的套件不會；刪掉範本已不存在的套件 */
 export async function removeOrphanBundles(db: Db): Promise<string[]> {
-  const bucket = db.storage.from(BUCKET);
+  const bucket = db.storage.from(HOSTED_BUCKET);
   const { data: top, error } = await bucket.list('', { limit: 1000 });
   if (error) throw error;
   const folders = (top ?? []).map((f) => f.name).filter((n) => /^[0-9a-f-]{36}$/i.test(n));

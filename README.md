@@ -193,7 +193,7 @@ DEMO_PASSWORD=<密碼> pnpm exec tsx scripts/seed-demo.ts
 
 會建立（或更新）兩個帳號、上架 `apps/web/demo/agents/` 的三位金融顧問，並建好「金融科技展 Demo」專案。可以重複執行。
 
-`pnpm exec tsx scripts/seed-business-agents.ts` 以同一個創作者帳號上架 `apps/web/demo/business-agents/` 的非金融顧問（同名就更新），只上架到市集、不建專案；要先跑過 `seed-demo.ts`。
+`pnpm exec tsx scripts/seed-business-agents.ts` 以同一個創作者帳號上架 `apps/web/demo/business-agents/` 的非金融顧問（同名就更新），連同 `apps/web/demo/hosted-mcp/<名稱>/` 的平台代管 MCP（內容沒變就不建新版本，發布新版後下架沒人用的舊版），只上架到市集、不建專案；要先跑過 `seed-demo.ts`。
 
 | 帳號 | 角色 |
 |---|---|

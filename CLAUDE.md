@@ -49,6 +49,7 @@ apps/web/                Next.js 16（App Router），部署到 Vercel，root di
   components/workspace/  對話、派工卡片、討論畫面
   demo/agents/           Demo 三位金融顧問（agent.json + skills/）
   demo/business-agents/  只上架到市集的非金融顧問（不租進 Demo 專案）
+  demo/hosted-mcp/       上架腳本部署的平台代管 MCP 套件（依 MCP 名稱，可多位顧問共用）
   scripts/               seed-demo、seed-business-agents、smoke、redeploy-runtime
 packages/runtime/        agent runtime，esbuild 打包成單一 dist/main.js
   src/agents/            主管 / 顧問的 prompt 與組裝
