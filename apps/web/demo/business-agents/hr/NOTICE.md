@@ -18,7 +18,7 @@
 | 專案 | 用到的檔案 | 修改 |
 |---|---|---|
 | [hikari5014/Labor-Pixie](https://github.com/hikari5014/Labor-Pixie)（Copyright (c) 2026 hikari5014） | `data/checklists/contract-terms.json`、`company-audit.json`；`data/forms/probation-review.json`；`data/rules/` 的 `overtime-rates`、`wage-basis`、`national-holidays`、`annual-leave`、`sick-leave-rules`、`marriage-leave`、`separation-obligations`、`notice-period`、`severance-rules`、`bullying-deadlines`；`data/topics/` 的 `probation`、`overtime-records`、`worker-status`、`workplace-bullying`、`sexual-harassment`、`sick-leave-2026`；`data/cases/separation.json` | 從 JSON 改寫成 Markdown 說明與表格，並依法務部全國法規資料庫現行條文重新核對、補充 |
-| [law24tw/tw-legal-calc](https://github.com/law24tw/tw-legal-calc) | `calc/labor.py`（`severance`、`annual_leave`）、`calc/dates.py` | 改寫成 `termination/scripts/severance.py`、`leave/scripts/annual_leave.py`：新制資遣費年資改用勞動部試算表的算法；特休改成只結算當期；加上命令列介面 |
+| [law24tw/tw-legal-calc](https://github.com/law24tw/tw-legal-calc) | `calc/labor.py`（`severance`、`annual_leave`）、`calc/dates.py` | 改寫成 `termination/scripts/severance.py`、`leave/scripts/annual_leave.py`：平均工資與新舊制資遣費公式改依勞動部官方算例，加上改選新制日期與各項期限；特休改成只結算當期並支援遞延天數；加上命令列介面 |
 | [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents) | `specialized/recruitment-specialist.md`、`specialized/hr-onboarding.md` | 參考面試評分表與到職安排的寫法，翻譯並改寫 |
 | [wshobson/agents](https://github.com/wshobson/agents) | `plugins/hr-legal-compliance/agents/hr-pro.md`、`plugins/hr-legal-compliance/skills/employment-contract-templates` | 參考 system prompt 原則與契約條款清單，改寫為台灣勞動契約 |
 | [mohitagw15856/pm-claude-skills](https://github.com/mohitagw15856/pm-claude-skills) | `skills/tw-labour-standards` | 參考申訴管道與證據保存的提醒 |
