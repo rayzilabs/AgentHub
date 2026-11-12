@@ -1,0 +1,439 @@
+{
+ "payroll": [
+  {
+   "name": "list_years",
+   "args": {},
+   "isError": false,
+   "structured": {
+    "years": [
+     {
+      "year": 2024,
+      "dataVersion": "2024.1.0",
+      "minimumWage": {
+       "monthly": 27470,
+       "hourly": 183
+      }
+     },
+     {
+      "year": 2025,
+      "dataVersion": "2025.1.0",
+      "minimumWage": {
+       "monthly": 28590,
+       "hourly": 190
+      }
+     },
+     {
+      "year": 2026,
+      "dataVersion": "2026.1.0",
+      "minimumWage": {
+       "monthly": 29500,
+       "hourly": 196
+      }
+     }
+    ]
+   },
+   "text": "可用年度：2024、2025、2026。\n{\n  \"years\": [\n    {\n      \"year\": 2024,\n      \"dataVersion\": \"2024.1.0\",\n      \"minimumWage\": {\n        \"monthly\": 27470,\n        \"hourly\": 183\n      }\n    },\n    {\n      \"year\": 2025,\n      \"dataVersion\": \"2025.1.0\",\n      \"minimumWage\": {\n        \"monthly\": 28590,\n        \"hourly\": 190\n      }\n    },\n    {\n      \"year\": 2026,\n      \"dataVersion\": \"2026.1.0\",\n      \"minimumWage\": {\n        \"monthly\": 29500,\n        \"hourly\": 196\n      }\n    }\n  ]\n}"
+  },
+  {
+   "name": "calculate_payroll",
+   "args": {
+    "year": 2026,
+    "monthlySalary": 36000,
+    "dependents": 1
+   },
+   "isError": false,
+   "structured": {
+    "brackets": {
+     "labor": 36300,
+     "health": 36300,
+     "pension": 36300,
+     "occupational": 36300
+    },
+    "employee": {
+     "labor": 908,
+     "health": 1126,
+     "pensionSelf": 0,
+     "total": 2034
+    },
+    "employer": {
+     "labor": 3176,
+     "health": 1757,
+     "pension": 2178,
+     "occupational": 76,
+     "total": 7187
+    },
+    "government": {
+     "labor": 454,
+     "health": 293
+    },
+    "meta": {
+     "year": 2026,
+     "dataVersion": "2026.1.0"
+    }
+   },
+   "text": "2026 年：員工自付合計 2034 元、雇主負擔 7187 元。\n{\n  \"brackets\": {\n    \"labor\": 36300,\n    \"health\": 36300,\n    \"pension\": 36300,\n    \"occupational\": 36300\n  },\n  \"employee\": {\n    \"labor\": 908,\n    \"health\": 1126,\n    \"pensionSelf\": 0,\n    \"total\": 2034\n  },\n  \"employer\": {\n    \"labor\": 3176,\n    \"health\": 1757,\n    \"pension\": 2178,\n    \"occupational\": 76,\n    \"total\": 7187\n  },\n  \"government\": {\n    \"labor\": 454,\n    \"health\": 293\n  },\n  \"meta\": {\n    \"year\": 2026,\n    \"dataVersion\": \"2026.1.0\"\n  }\n}"
+  },
+  {
+   "name": "calculate_payroll",
+   "args": {
+    "year": 2026,
+    "monthlySalary": 29500
+   },
+   "isError": false,
+   "structured": {
+    "brackets": {
+     "labor": 29500,
+     "health": 29500,
+     "pension": 29500,
+     "occupational": 29500
+    },
+    "employee": {
+     "labor": 738,
+     "health": 458,
+     "pensionSelf": 0,
+     "total": 1196
+    },
+    "employer": {
+     "labor": 2581,
+     "health": 1428,
+     "pension": 1770,
+     "occupational": 62,
+     "total": 5841
+    },
+    "government": {
+     "labor": 369,
+     "health": 238
+    },
+    "meta": {
+     "year": 2026,
+     "dataVersion": "2026.1.0"
+    }
+   },
+   "text": "2026 年：員工自付合計 1196 元、雇主負擔 5841 元。\n{\n  \"brackets\": {\n    \"labor\": 29500,\n    \"health\": 29500,\n    \"pension\": 29500,\n    \"occupational\": 29500\n  },\n  \"employee\": {\n    \"labor\": 738,\n    \"health\": 458,\n    \"pensionSelf\": 0,\n    \"total\": 1196\n  },\n  \"employer\": {\n    \"labor\": 2581,\n    \"health\": 1428,\n    \"pension\": 1770,\n    \"occupational\": 62,\n    \"total\": 5841\n  },\n  \"government\": {\n    \"labor\": 369,\n    \"health\": 238\n  },\n  \"meta\": {\n    \"year\": 2026,\n    \"dataVersion\": \"2026.1.0\"\n  }\n}"
+  },
+  {
+   "name": "calculate_payroll",
+   "args": {
+    "year": 2026,
+    "monthlySalary": 320000,
+    "dependents": 3,
+    "pensionSelfContribution": 0.06
+   },
+   "isError": false,
+   "structured": {
+    "brackets": {
+     "labor": 45800,
+     "health": 313000,
+     "pension": 150000,
+     "occupational": 72800
+    },
+    "employee": {
+     "labor": 1145,
+     "health": 19420,
+     "pensionSelf": 9000,
+     "total": 29565
+    },
+    "employer": {
+     "labor": 4008,
+     "health": 15146,
+     "pension": 9000,
+     "occupational": 153,
+     "total": 28307
+    },
+    "government": {
+     "labor": 573,
+     "health": 2524
+    },
+    "meta": {
+     "year": 2026,
+     "dataVersion": "2026.1.0"
+    }
+   },
+   "text": "2026 年：員工自付合計 29565 元、雇主負擔 28307 元。\n{\n  \"brackets\": {\n    \"labor\": 45800,\n    \"health\": 313000,\n    \"pension\": 150000,\n    \"occupational\": 72800\n  },\n  \"employee\": {\n    \"labor\": 1145,\n    \"health\": 19420,\n    \"pensionSelf\": 9000,\n    \"total\": 29565\n  },\n  \"employer\": {\n    \"labor\": 4008,\n    \"health\": 15146,\n    \"pension\": 9000,\n    \"occupational\": 153,\n    \"total\": 28307\n  },\n  \"government\": {\n    \"labor\": 573,\n    \"health\": 2524\n  },\n  \"meta\": {\n    \"year\": 2026,\n    \"dataVersion\": \"2026.1.0\"\n  }\n}"
+  },
+  {
+   "name": "calculate_payroll",
+   "args": {
+    "year": 2025,
+    "monthlySalary": 45000,
+    "identity": "migrantGeneral"
+   },
+   "isError": false,
+   "structured": {
+    "brackets": {
+     "labor": 45800,
+     "health": 45800,
+     "pension": 0,
+     "occupational": 45800
+    },
+    "employee": {
+     "labor": 1053,
+     "health": 710,
+     "pensionSelf": 0,
+     "total": 1763
+    },
+    "employer": {
+     "labor": 3687,
+     "health": 2216,
+     "pension": 0,
+     "occupational": 96,
+     "total": 5999
+    },
+    "government": {
+     "labor": 527,
+     "health": 369
+    },
+    "meta": {
+     "year": 2025,
+     "dataVersion": "2025.1.0"
+    }
+   },
+   "text": "2025 年：員工自付合計 1763 元、雇主負擔 5999 元。\n{\n  \"brackets\": {\n    \"labor\": 45800,\n    \"health\": 45800,\n    \"pension\": 0,\n    \"occupational\": 45800\n  },\n  \"employee\": {\n    \"labor\": 1053,\n    \"health\": 710,\n    \"pensionSelf\": 0,\n    \"total\": 1763\n  },\n  \"employer\": {\n    \"labor\": 3687,\n    \"health\": 2216,\n    \"pension\": 0,\n    \"occupational\": 96,\n    \"total\": 5999\n  },\n  \"government\": {\n    \"labor\": 527,\n    \"health\": 369\n  },\n  \"meta\": {\n    \"year\": 2025,\n    \"dataVersion\": \"2025.1.0\"\n  }\n}"
+  },
+  {
+   "name": "calculate_payroll",
+   "args": {
+    "monthlySalary": 15000
+   },
+   "isError": false,
+   "structured": {
+    "brackets": {
+     "labor": 29500,
+     "health": 29500,
+     "pension": 15840,
+     "occupational": 29500
+    },
+    "employee": {
+     "labor": 738,
+     "health": 458,
+     "pensionSelf": 0,
+     "total": 1196
+    },
+    "employer": {
+     "labor": 2581,
+     "health": 1428,
+     "pension": 950,
+     "occupational": 62,
+     "total": 5021
+    },
+    "government": {
+     "labor": 369,
+     "health": 238
+    },
+    "meta": {
+     "year": 2026,
+     "dataVersion": "2026.1.0"
+    }
+   },
+   "text": "2026 年：員工自付合計 1196 元、雇主負擔 5021 元。\n{\n  \"brackets\": {\n    \"labor\": 29500,\n    \"health\": 29500,\n    \"pension\": 15840,\n    \"occupational\": 29500\n  },\n  \"employee\": {\n    \"labor\": 738,\n    \"health\": 458,\n    \"pensionSelf\": 0,\n    \"total\": 1196\n  },\n  \"employer\": {\n    \"labor\": 2581,\n    \"health\": 1428,\n    \"pension\": 950,\n    \"occupational\": 62,\n    \"total\": 5021\n  },\n  \"government\": {\n    \"labor\": 369,\n    \"health\": 238\n  },\n  \"meta\": {\n    \"year\": 2026,\n    \"dataVersion\": \"2026.1.0\"\n  }\n}"
+  },
+  {
+   "name": "calculate_prorated",
+   "args": {
+    "year": 2026,
+    "monthlySalary": 40000,
+    "startDate": "2026-03-16"
+   },
+   "isError": false,
+   "structured": {
+    "brackets": {
+     "labor": 40100,
+     "health": 40100,
+     "pension": 40100,
+     "occupational": 40100
+    },
+    "employee": {
+     "labor": 501,
+     "health": 622,
+     "pensionSelf": 0,
+     "total": 1123
+    },
+    "employer": {
+     "labor": 1754,
+     "health": 1940,
+     "pension": 1203,
+     "occupational": 42,
+     "total": 4939
+    },
+    "government": {
+     "labor": 251,
+     "health": 323
+    },
+    "meta": {
+     "year": 2026,
+     "dataVersion": "2026.1.0"
+    },
+    "days": {
+     "insured": 15
+    },
+    "healthCharged": true
+   },
+   "text": "投保 15 日；健保當月計收整月。員工自付合計 1123 元。\n{\n  \"brackets\": {\n    \"labor\": 40100,\n    \"health\": 40100,\n    \"pension\": 40100,\n    \"occupational\": 40100\n  },\n  \"employee\": {\n    \"labor\": 501,\n    \"health\": 622,\n    \"pensionSelf\": 0,\n    \"total\": 1123\n  },\n  \"employer\": {\n    \"labor\": 1754,\n    \"health\": 1940,\n    \"pension\": 1203,\n    \"occupational\": 42,\n    \"total\": 4939\n  },\n  \"government\": {\n    \"labor\": 251,\n    \"health\": 323\n  },\n  \"meta\": {\n    \"year\": 2026,\n    \"dataVersion\": \"2026.1.0\"\n  },\n  \"days\": {\n    \"insured\": 15\n  },\n  \"healthCharged\": true\n}"
+  },
+  {
+   "name": "calculate_income_tax_withholding",
+   "args": {
+    "type": "resident",
+    "monthlySalary": 90000,
+    "dependents": 1
+   },
+   "isError": false,
+   "structured": {
+    "withholding": 1579,
+    "rate": "0.05",
+    "taxableAnnual": 379000
+   },
+   "text": "應扣繳稅額 1579 元（稅率 0.05）。\n{\n  \"withholding\": 1579,\n  \"rate\": \"0.05\",\n  \"taxableAnnual\": 379000\n}"
+  },
+  {
+   "name": "calculate_income_tax_withholding",
+   "args": {
+    "type": "residentBonus",
+    "amount": 100000
+   },
+   "isError": false,
+   "structured": {
+    "withholding": 5000,
+    "rate": "0.05"
+   },
+   "text": "應扣繳稅額 5000 元（稅率 0.05）。\n{\n  \"withholding\": 5000,\n  \"rate\": \"0.05\"\n}"
+  },
+  {
+   "name": "calculate_income_tax_withholding",
+   "args": {
+    "type": "nonResident",
+    "monthlySalary": 40000
+   },
+   "isError": false,
+   "structured": {
+    "withholding": 2400,
+    "rate": "0.06"
+   },
+   "text": "應扣繳稅額 2400 元（稅率 0.06）。\n{\n  \"withholding\": 2400,\n  \"rate\": \"0.06\"\n}"
+  },
+  {
+   "name": "calculate_supplementary_premium",
+   "args": {
+    "type": "bonus",
+    "amount": 200000,
+    "monthlyInsuredSalary": 36300,
+    "ytdBonus": 50000
+   },
+   "isError": false,
+   "structured": {
+    "type": "bonus",
+    "chargeable": 104800,
+    "rate": "0.0211",
+    "premium": 2211
+   },
+   "text": "補充保費：應計 104800 元 × 0.0211 = 2211 元。\n{\n  \"type\": \"bonus\",\n  \"chargeable\": 104800,\n  \"rate\": \"0.0211\",\n  \"premium\": 2211\n}"
+  },
+  {
+   "name": "calculate_employer_supplementary_premium",
+   "args": {
+    "monthlyPaidTotal": 1000000,
+    "monthlyInsuredTotal": 900000
+   },
+   "isError": false,
+   "structured": {
+    "base": 100000,
+    "rate": "0.0211",
+    "premium": 2110
+   },
+   "text": "投保單位補充保費：差額 100000 元 × 0.0211 = 2110 元。\n{\n  \"base\": 100000,\n  \"rate\": \"0.0211\",\n  \"premium\": 2110\n}"
+  },
+  {
+   "name": "calculate_payroll",
+   "args": {
+    "year": 2030,
+    "monthlySalary": 36000
+   },
+   "isError": true,
+   "structured": null,
+   "text": "No data for year 2030. Available: 2024, 2025, 2026"
+  }
+ ],
+ "holidays": [
+  {
+   "name": "count_workdays",
+   "args": {
+    "start": "2027-01-01",
+    "end": "2027-02-28"
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"workdays\":35,\"holidays\":24,\"makeupWorkdays\":0}"
+  },
+  {
+   "name": "count_workdays",
+   "args": {
+    "start": "2026-01-01",
+    "end": "2026-12-31"
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"workdays\":245,\"holidays\":120,\"makeupWorkdays\":0}"
+  },
+  {
+   "name": "add_workdays",
+   "args": {
+    "from": "2026-12-28",
+    "workdays": 10
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"date\":\"2027-01-12\"}"
+  },
+  {
+   "name": "add_workdays",
+   "args": {
+    "from": "2027-02-10",
+    "workdays": -5
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"date\":\"2027-01-28\"}"
+  },
+  {
+   "name": "next_makeup_workday",
+   "args": {
+    "from": "2026-01-01"
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"next\":null}"
+  },
+  {
+   "name": "next_makeup_workday",
+   "args": {
+    "range": {
+     "start": "2025-01-01",
+     "end": "2025-12-31"
+    }
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"next\":\"2025-02-08\",\"all\":[\"2025-02-08\"]}"
+  },
+  {
+   "name": "optimize_leave",
+   "args": {
+    "year": 2027,
+    "annualLeaveDays": 3
+   },
+   "isError": false,
+   "structured": null,
+   "text": "[{\"leaveDates\":[\"2027-02-11\",\"2027-02-12\"],\"offRange\":{\"start\":\"2027-02-04\",\"end\":\"2027-02-14\"},\"totalDaysOff\":11,\"leaveSpent\":2,\"efficiency\":5.5},{\"leaveDates\":[\"2027-02-01\",\"2027-02-02\",\"2027-02-03\"],\"offRange\":{\"start\":\"2027-01-30\",\"end\":\"2027-02-10\"},\"totalDaysOff\":12,\"leaveSpent\":3,\"efficiency\":4},{\"leaveDates\":[\"2027-09-27\"],\"offRange\":{\"start\":\"2027-09-25\",\"end\":\"2027-09-28\"},\"totalDaysOff\":4,\"leaveSpent\":1,\"efficiency\":4},{\"leaveDates\":[\"2027-04-07\",\"2027-04-08\",\"2027-04-09\"],\"offRange\":{\"start\":\"2027-04-03\",\"end\":\"2027-04-11\"},\"totalDaysOff\":9,\"leaveSpent\":3,\"efficiency\":3},{\"leaveDates\":[\"2027-06-07\",\"2027-06-08\"],\"offRange\":{\"start\":\"2027-06-05\",\"end\":\"2027-06-09\"},\"totalDaysOff\":5,\"leaveSpent\":2,\"efficiency\":2.5},{\"leaveDates\":[\"2027-06-10\",\"2027-06-11\"],\"offRange\":{\"start\":\"2027-06-09\",\"end\":\"2027-06-13\"},\"totalDaysOff\":5,\"leaveSpent\":2,\"efficiency\":2.5},{\"leaveDates\":[\"2027-09-13\",\"2027-09-14\"],\"offRange\":{\"start\":\"2027-09-11\",\"end\":\"2027-09-15\"},\"totalDaysOff\":5,\"leaveSpent\":2,\"efficiency\":2.5},{\"leaveDates\":[\"2027-09-16\",\"2027-09-17\"],\"offRange\":{\"start\":\"2027-09-15\",\"end\":\"2027-09-19\"},\"totalDaysOff\":5,\"leaveSpent\":2,\"efficiency\":2.5},{\"leaveDates\":[\"2027-09-29\",\"2027-09-30\",\"2027-10-01\"],\"offRange\":{\"start\":\"2027-09-28\",\"end\":\"2027-10-03\"},\"totalDaysOff\":6,\"leaveSpent\":3,\"efficiency\":2}]"
+  },
+  {
+   "name": "count_workdays",
+   "args": {
+    "start": "2031-01-01",
+    "end": "2031-01-31"
+   },
+   "isError": false,
+   "structured": null,
+   "text": "{\"error\":\"year_unavailable\",\"availableYears\":[2017,2018,2019,2020,2021,2022,2023,2024,2025,2026,2027]}"
+  }
+ ]
+}
