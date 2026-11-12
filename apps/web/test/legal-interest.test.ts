@@ -22,6 +22,11 @@ describe('legal-letter：遲延利息試算腳本', () => {
     expect(json).toMatchObject({ rate: 0.1, amount: 1000, basis_years: { full: 0, remainder_days: 10, denominator: 365 } });
   });
 
+  it('年息一律以百分比解讀：--rate 1 是 1%', () => {
+    const { json } = run(['--principal', '100000', '--rate', '1', '--start', '1150101', '--end', '1151231']);
+    expect(json).toMatchObject({ rate: 0.01, amount: 1000 });
+  });
+
   it('日期錯誤時回傳錯誤訊息與非零結束碼', () => {
     const { code, err } = run(['--principal', '1', '--start', '1151301', '--end', '1151231']);
     expect(code).not.toBe(0);

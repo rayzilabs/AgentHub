@@ -10,7 +10,7 @@ Copyright (c) law24tw contributors。AgentHub 改為單檔命令列工具，只�
 
 用法：
   python3 interest.py --principal 100000 --start 1150101 --end 1151112 [--rate 5]
-日期可用民國 YYYMMDD（1150101）或西元 YYYY-MM-DD／YYYYMMDD。輸出 JSON。
+日期可用民國 YYYMMDD（1150101）或西元 YYYY-MM-DD／YYYYMMDD；--rate 是年息百分比（5 代表 5%）。輸出 JSON。
 """
 import argparse
 import json
@@ -29,8 +29,6 @@ def to_date(v):
         raise CalcError(f'日期格式不合：{v}（需 民國YYYMMDD 或 西元YYYYMMDD）')
     if len(s) == 7:
         y, m, d = int(s[:3]) + 1911, int(s[3:5]), int(s[5:7])
-    elif len(s) == 6:
-        y, m, d = int(s[:2]) + 1911, int(s[2:4]), int(s[4:6])
     elif len(s) == 8:
         y, m, d = int(s[:4]), int(s[4:6]), int(s[6:8])
     else:
@@ -60,17 +58,16 @@ def year_basis(start, end):
     while add_years(start, n + 1) - timedelta(days=1) <= end:
         n += 1
     rem_start = add_years(start, n)
-    rem = max((end - rem_start).days + 1, 0)
+    rem = (end - rem_start).days + 1
     denom = (add_years(rem_start, 1) - rem_start).days
-    basis = Decimal(n) + (Decimal(rem) / Decimal(denom) if rem else Decimal(0))
+    basis = Decimal(n) + Decimal(rem) / Decimal(denom)
     return n, rem, denom, basis
 
 
 def interest(principal, start, end, rate=5):
     s, e = to_date(start), to_date(end)
     n, rem, denom, basis = year_basis(s, e)
-    r = Decimal(str(rate))
-    r = r / 100 if r > 1 else r  # 5 與 0.05 同義
+    r = Decimal(str(rate)) / 100  # 年息以百分比輸入
     amount = Decimal(str(principal)) * basis * r
     return {
         'principal': float(Decimal(str(principal))),

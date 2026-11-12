@@ -51,7 +51,7 @@ description: 第一次使用、公司狀況改變，或其他 skill 發現沒有
 
 ## 寫進記憶
 
-訪談結束，整理成下列格式，用 `memory_write` 寫入：`name: legal-playbook`、`scope: project`、`type: project`、`summary: 公司法務設定：行業、合約立場、個資與廣告情況、合作律師`。內容上限 5000 字，寫重點、不寫逐字稿。
+訪談結束，先用 bash 執行 `date +%F` 取得今天日期（不要自己猜），整理成下列格式，用 `memory_write` 寫入：`name: legal-playbook`、`scope: project`、`type: project`、`summary: 公司法務設定：行業、合約立場、個資與廣告情況、合作律師`。內容上限 5000 字，寫重點、不寫逐字稿。
 
 ```markdown
 # 公司法務設定（更新：YYYY-MM-DD）
