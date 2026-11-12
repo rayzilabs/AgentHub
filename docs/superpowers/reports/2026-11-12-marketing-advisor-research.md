@@ -127,7 +127,8 @@
 - `marketing-council` 不做（和主管的 `convene_discussion` 重疊）。
 - MCP 採用平台代管的 `tw-marketing`（`site_audit`、`tw_calendar`），套件放在 `apps/web/demo/hosted-mcp/tw-marketing/`，`agent.json` 寫 `{ "name": "tw-marketing", "transport": "remote", "hosted": true }`。
 - TWNIC 報告可以用：數字以快照存在 repo，附出處與更新方式；註明它是財團法人、不是政府機關。
-- 開頭聲明的行銷版寫法（第 7 節）尚待確認。
+- 開頭聲明採用第 7 節的行銷版：保留與金融 Demo 相同的第一句，後面加「行銷成效會因產業、預算與執行而不同；涉及廣告法規的內容請另請法務確認。」
+- `tw-marketing` 套件的 Python 測試不加進 `pnpm test`，跑法寫在套件的 README。
 
 ## 5. 資料來源與更新方式
 
@@ -171,7 +172,7 @@
 - small-business `seo-ai-visibility`：「沒有人能讓 AI 推薦你，賣這個的都在騙」，拒絕隱藏文字、假評論。
 - 台灣：回答開頭的聲明，見下方「待確認」。
 
-**待確認：開頭聲明要不要改成行銷版**。單子允許行銷顧問改用適合行銷的聲明。我的建議：保留和金融 Demo 相同的第一句（`demo.test.ts` 的檢查方式可以直接沿用），後面補一句行銷專屬提醒：
+**開頭聲明（已確認採用）**：保留和金融 Demo 相同的第一句（`demo.test.ts` 的檢查方式可以直接沿用），後面補一句行銷專屬提醒：
 
 > 以下為一般性分析，不構成正式法律、財務或授信意見。行銷成效會因產業、預算與執行而不同；涉及廣告法規的內容請另請法務確認。
 
