@@ -129,6 +129,8 @@
 
 **法規條文的決定**（主工作區判斷）：不另外打包，也不由 KAN-15 另寫 MCP，共用 KAN-14 的代管 `taiwan-law`。法務部 API 只能整包下載（實測法律 6.1 MB／3 秒、命令 25.8 MB／7 秒，資料日期 2026/10/30）。
 
+**代管 MCP 套件放置規則**（KAN-14 定的）：套件放在 `apps/web/demo/hosted-mcp/<MCP 名稱>/`；`agent.json` 的 `mcp_servers` 寫 `{ "name": "<MCP 名稱>", "transport": "remote", "hosted": true }`，`seed-business-agents.ts` 會依名稱去找套件。內容雜湊沒變就不建新版本；發布新版後，沒有專案使用的舊版會被下架。MCP 名稱全專案唯一。人資要新增 `demo/hosted-mcp/taiwan-payroll/`、`demo/hosted-mcp/taiwan-holidays/`；`taiwan-law` 直接共用 KAN-14 的套件。
+
 **代管名額**：人資 3 台（payroll、holidays、taiwan-law）、法務 1 台、行銷 1 台，平常合計 5 台，上限 10 台。更新時要把舊版本下架。
 
 **法院判決的備案：司法院開放資料 API 的限制**（暫不申請帳號）（[裁判書開放 API 規格說明 114.08.22](https://opendata.judicial.gov.tw/api/Newses/42/file)）：
