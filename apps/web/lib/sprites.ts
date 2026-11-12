@@ -148,9 +148,6 @@ export function sandboxSetupScript(base: string): string {
     'getent group workspace >/dev/null || sudo groupadd workspace',
     `sudo usermod -aG workspace ${SANDBOX_USER}`,
     `sudo mkdir -p ${WORKSPACE}/agents ${WORKSPACE}/skills ${WORKSPACE}/shared`,
-    // 舊版的工作區在 runtime 目錄底下；搬過來，顧問寫出的檔案不會遺失
-    `if [ -d ${q(`${base}/agents`)} ]; then sudo cp -a ${q(`${base}/agents/.`)} ${WORKSPACE}/agents/ && sudo rm -rf ${q(`${base}/agents`)}; fi`,
-    `if [ -d ${q(`${base}/shared`)} ]; then sudo cp -a ${q(`${base}/shared/.`)} ${WORKSPACE}/shared/ && sudo rm -rf ${q(`${base}/shared`)}; fi`,
     `sudo chown "$(id -un)":workspace ${WORKSPACE} ${WORKSPACE}/agents ${WORKSPACE}/skills`,
     `sudo chown -R "$(id -un)":workspace ${WORKSPACE}/shared`,
     `sudo chmod -R g+rwX,o-rwx ${WORKSPACE}/shared`,
@@ -158,8 +155,6 @@ export function sandboxSetupScript(base: string): string {
     `sudo chmod 2770 ${WORKSPACE}/shared`,
     // 只有 runtime 能在這裡建立項目；各顧問目錄的擁有者與群組由 agenthub-sandbox-adduser 處理（不在這裡遞迴改回去）
     `sudo chmod 0711 ${WORKSPACE}/agents ${WORKSPACE}/skills`,
-    // 已移出專案的顧問不會再經過 adduser；1-A 時期留下的 workspace 群組目錄收成只有 runtime 能進（只看最上層，不遞迴）
-    `sudo find ${WORKSPACE}/agents -mindepth 1 -maxdepth 1 -type d -group workspace -exec chmod 0700 {} +`,
     `sudo chmod 755 ${WORKSPACE}`,
     // 私人 /tmp 的實體位置：父目錄只有 root 能寫，不能被搶先建立或換成 symlink
     'sudo install -d -m 711 -o root -g root /var/lib/agenthub /var/lib/agenthub/tmp',

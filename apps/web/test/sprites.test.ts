@@ -200,12 +200,11 @@ describe('startRuntimeService', () => {
 });
 
 describe('sandboxSetupScript', () => {
-  it('建立沒有 sudo 的 agent 帳號與工作區，收緊 runtime 目錄，搬移舊工作區', () => {
+  it('建立沒有 sudo 的 agent 帳號與工作區，收緊 runtime 目錄', () => {
     const s = sandboxSetupScript('/home/sprite/agenthub');
     expect(s.startsWith('set -euo pipefail')).toBe(true);
     expect(s).toContain('useradd --create-home --shell /bin/bash agent');
     expect(s).not.toMatch(/usermod -aG sudo/);
-    expect(s).toContain("cp -a '/home/sprite/agenthub/agents/.' /workspace/agents/");
     expect(s).toContain('chown -R "$(id -un)":workspace /workspace');
     expect(s).toContain('sudo chmod 2770 /workspace/shared');
     // 子專案 2：只有 runtime 能在 /workspace/agents 建立項目；私人 /tmp 的父目錄只有 root 能寫
@@ -262,12 +261,6 @@ describe('sandboxSetupScript', () => {
     expect(s).toContain(`printf '%s' ${shellQuote(RUNTIME_SUPERVISOR_SCRIPT)} | sudo tee /usr/local/bin/agenthub-runtime >/dev/null`);
     expect(s).toContain('sudo chown root:root /usr/local/bin/agenthub-sandbox /usr/local/bin/agenthub-sandbox-adduser /usr/local/bin/agenthub-runtime');
     expect(s).toContain('sudo chmod 755 /usr/local/bin/agenthub-sandbox /usr/local/bin/agenthub-sandbox-adduser /usr/local/bin/agenthub-runtime');
-  });
-
-  it('把仍是 workspace 群組的舊顧問目錄（已移出專案、adduser 不會再處理）收成只有 runtime 能進', () => {
-    expect(sandboxSetupScript('/home/sprite/agenthub')).toContain(
-      'sudo find /workspace/agents -mindepth 1 -maxdepth 1 -type d -group workspace -exec chmod 0700 {} +',
-    );
   });
 });
 

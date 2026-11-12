@@ -53,8 +53,6 @@ try {
   // 家目錄單獨一行輸出，不會跟 .bashrc 的警告黏在同一行
   const base = `${(await sh(sprite, 'printf "%s\\n" "$HOME"')).out.split('\n')[0]}/agenthub`;
 
-  // 模擬舊版佈建留下的工作區，確認重新佈建時檔案會搬到 /workspace
-  await sh(sprite, `mkdir -p '${base}/agents/legacy' '${base}/shared' && echo kept > '${base}/agents/legacy/report.md'`);
   await installRuntime(adminDb(), sprite, projectId, runtimeObject);
 
   const leak = /SUPABASE|VERTEX|sb_secret/;
@@ -88,8 +86,6 @@ try {
 
   const tools = await sh(sprite, asAgent('command -v node && command -v python3'));
   record('沙盒裡找得到 node 與 python3', tools.code === 0, tools.out);
-  const legacy = await sh(sprite, asAgent(`cat ${WORKSPACE}/agents/legacy/report.md`));
-  record('舊工作區的檔案搬到 /workspace 且 agent 讀得到', legacy.code === 0 && legacy.out.trim() === 'kept', JSON.stringify(legacy));
   const write = await sh(sprite, [
     // runtime 程序的 umask 是 002（main.ts），這裡比照
     `umask 002 && echo r > ${WORKSPACE}/shared/from-runtime`,
