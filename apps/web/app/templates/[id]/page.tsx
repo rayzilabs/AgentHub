@@ -1,8 +1,7 @@
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 import { HireForm } from '@/components/hire-form';
 import { currentUser } from '@/lib/auth';
-import { HttpError } from '@/lib/http';
+import { orNotFound } from '@/lib/page-guards';
 import { listProjects } from '@/lib/services/projects';
 import { getTemplate } from '@/lib/services/templates';
 import { adminDb } from '@/lib/supabase/admin';
@@ -12,11 +11,10 @@ export const dynamic = 'force-dynamic';
 export default async function TemplatePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await currentUser();
-  const template = await getTemplate(adminDb(), id, user?.id ?? null).catch((e) => {
-    if (e instanceof HttpError && e.status === 404) notFound();
-    throw e;
-  });
-  const projects = user ? await listProjects(adminDb(), user.id) : [];
+  const [template, projects] = await Promise.all([
+    orNotFound(getTemplate(adminDb(), id, user?.id ?? null)),
+    user ? listProjects(adminDb(), user.id) : [],
+  ]);
 
   return (
     <div className="grid gap-8 py-10 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-12 lg:py-14">

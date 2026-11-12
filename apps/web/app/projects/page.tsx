@@ -1,8 +1,7 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { Chevron } from '@/components/chevron';
 import { NewProjectForm } from '@/components/new-project-form';
-import { currentUser } from '@/lib/auth';
+import { requirePageUser } from '@/lib/page-guards';
 import { listProjects } from '@/lib/services/projects';
 import { adminDb } from '@/lib/supabase/admin';
 
@@ -11,8 +10,7 @@ export const dynamic = 'force-dynamic';
 const STATUS = { provisioning: '準備中', ready: '可以使用', error: '準備失敗' } as const;
 
 export default async function ProjectsPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=/projects');
+  const user = await requirePageUser('/projects');
   const projects = await listProjects(adminDb(), user.id);
   return (
     <div className="mx-auto max-w-3xl py-10 sm:py-14">

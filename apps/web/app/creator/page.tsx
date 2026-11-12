@@ -1,8 +1,7 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { Chevron } from '@/components/chevron';
 import { NewTemplateButton } from '@/components/new-template-button';
-import { currentUser } from '@/lib/auth';
+import { requirePageUser } from '@/lib/page-guards';
 import { listMyTemplates } from '@/lib/services/templates';
 import { adminDb } from '@/lib/supabase/admin';
 
@@ -11,8 +10,7 @@ const STATUS_LABEL = { draft: '草稿', pending: '待核准', published: '已上
 export const dynamic = 'force-dynamic';
 
 export default async function CreatorPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=/creator');
+  const user = await requirePageUser('/creator');
   const templates = await listMyTemplates(adminDb(), user.id);
   return (
     <div className="mx-auto max-w-3xl py-10 sm:py-14">

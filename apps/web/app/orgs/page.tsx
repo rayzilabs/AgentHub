@@ -1,17 +1,15 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { Chevron } from '@/components/chevron';
 import { InvitationList } from '@/components/orgs/invitation-list';
 import { NewOrgForm } from '@/components/orgs/new-org-form';
-import { currentUser } from '@/lib/auth';
+import { requirePageUser } from '@/lib/page-guards';
 import { listMyInvitations, listMyOrgs } from '@/lib/services/orgs';
 import { adminDb } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
 
 export default async function OrgsPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=/orgs');
+  const user = await requirePageUser('/orgs');
   const db = adminDb();
   const [orgs, invitations] = await Promise.all([listMyOrgs(db, user.id), listMyInvitations(db, user.email ?? '')]);
   return (

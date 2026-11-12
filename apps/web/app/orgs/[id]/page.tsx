@@ -1,10 +1,8 @@
-import { notFound, redirect } from 'next/navigation';
 import { InviteForm } from '@/components/orgs/invite-form';
 import { MemberList } from '@/components/orgs/member-list';
 import { OrgSettings } from '@/components/orgs/org-settings';
 import { OrgTemplates } from '@/components/orgs/org-templates';
-import { currentUser } from '@/lib/auth';
-import { HttpError } from '@/lib/http';
+import { orNotFound, requirePageUser } from '@/lib/page-guards';
 import { getOrgDetail } from '@/lib/services/orgs';
 import { listOrgTemplates } from '@/lib/services/templates';
 import { adminDb } from '@/lib/supabase/admin';
@@ -13,14 +11,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function OrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const user = await currentUser();
-  if (!user) redirect(`/login?next=/orgs/${id}`);
+  const user = await requirePageUser(`/orgs/${id}`);
   const db = adminDb();
-  const detail = await getOrgDetail(db, user.id, id).catch((e) => {
-    if (e instanceof HttpError && e.status === 404) notFound();
-    throw e;
-  });
-  const templates = await listOrgTemplates(db, user.id, id);
+  // 兩者都先確認是成員，不是成員時都丟 404
+  const [detail, templates] = await orNotFound(Promise.all([getOrgDetail(db, user.id, id), listOrgTemplates(db, user.id, id)]));
   const { org, role, members, invitations } = detail;
   const isAdmin = role === 'admin';
   return (

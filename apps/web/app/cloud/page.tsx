@@ -1,15 +1,13 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { CloudProject } from '@/components/files/cloud-project';
-import { currentUser } from '@/lib/auth';
+import { requirePageUser } from '@/lib/page-guards';
 import { listProjects } from '@/lib/services/projects';
 import { adminDb } from '@/lib/supabase/admin';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CloudPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=/cloud');
+  const user = await requirePageUser('/cloud');
   const projects = await listProjects(adminDb(), user.id);
   return (
     <div className="mx-auto max-w-3xl py-10 sm:py-14">

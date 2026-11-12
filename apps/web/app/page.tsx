@@ -15,8 +15,7 @@ const STEPS = [
 
 export default async function Marketplace() {
   const db = adminDb();
-  const user = await currentUser();
-  const templates = await listPublishedTemplates(db);
+  const [user, templates] = await Promise.all([currentUser(), listPublishedTemplates(db)]);
   const orgGroups = user
     ? (await Promise.all((await listMyOrgs(db, user.id)).map(async (org) => ({
         org,
