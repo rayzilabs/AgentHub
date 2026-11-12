@@ -97,13 +97,25 @@
 - 第 9、10 個可選。不做的話，績效的部分併進 `termination` 的「不能勝任」段落；申訴只在 `hr-setup` 提醒法定義務，詳細處理請使用者找律師或勞工局。
 - 我傾向**做第 10 個**：10 人以上就有法定義務，115/7/1 的霸凌新制也才剛上路，小老闆最容易不知道。
 
-### 推薦的 MCP
+### MCP（使用者已決定）
 
-| name | transport | url |
+三個 MCP 的提供者都是個人或民間單位：taiwan-payroll 是個人帳號 `supra126`，taiwan-holidays 是個人帳號 `imsyuan`（gooliya.com），taiwan-law 是 2026-08 才建立的組織 `legaltechtw`。使用者決定薪資和行事曆改由平台代管，免得依賴第三方伺服器，薪資數字也不會送出平台。
+
+| name | 做法 | 說明 |
 |---|---|---|
-| `taiwan-payroll` | `remote` | `https://taiwan-payroll.simoko.workers.dev/mcp` |
-| `taiwan-holidays` | `remote` | `https://mcp.tw-holidays.gooliya.com/mcp` |
-| `taiwan-law` | `remote` | `https://legaltech.org.tw/mcp` |
+| `taiwan-payroll` | `{ transport: 'remote', hosted: true }` | 從 `packages/mcp`（MIT）改用平台 Node 範本：沿用它的 `handleMcpRequest`（Web 標準、無狀態），外面包 `0.0.0.0:8080/mcp` 和平台通行證驗證 |
+| `taiwan-holidays` | `{ transport: 'remote', hosted: true }` | 計算核心 `mcp/src/engine`（MIT）原樣使用；Cloudflare 專用的 `McpAgent` 外殼改寫成 Node 版（官方 SDK + streamable HTTP）。行事曆資料（`data/<年>.json`，政府資料開放授權）在建置時打包 |
+| `taiwan-law` | `remote`，`https://legaltech.org.tw/mcp` | 沒有公開伺服器程式，沒辦法代管；使用者決定繼續用。送出去的是法律問題的關鍵字 |
+
+**代管之後要承擔的維護**：
+- 勞健保費率每年 1 月要更新，下一年的行事曆約 6 月公布後要更新，每次都要發布新版本。
+- 既有專案留在租用當時的版本，所以 skill 要檢查 MCP 回傳的資料年度。不是當年時，要提醒使用者「重新加入顧問才會拿到新年度的數字」。
+- 每個版本佔 Demo 創作者帳號一台代管機器，上限 10 台，和法務、行銷顧問共用。
+- 116 年分級表公告後（預計 115 年 11–12 月），要先更新 taiwan-payroll 的資料再發布；在那之前用 115 年的資料，並說明 116/1/1 起最低工資是 30,900 元。
+
+### Skill（使用者已決定）
+
+做 9 個：`hr-setup`、`hiring`、`onboarding-contract`、`payroll-insurance`、`working-hours`、`leave`、`termination`、`worker-classification`、`harassment-bullying`。`performance` 不做，績效考核紀錄與改善機會併進 `termination` 的「不能勝任」段落。
 
 ### `scripts/`
 
