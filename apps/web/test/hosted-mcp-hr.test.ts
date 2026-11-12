@@ -171,9 +171,12 @@ describe.each([
     return { status: res.status, body: await res.json() };
   }
 
-  it('沒有通行證或 aud 不符都回 401', async () => {
+  it('沒有通行證、aud 或 iss 不符、通行證過期都回 401', async () => {
     expect((await rpc('tools/list', {}, null)).status).toBe(401);
     expect((await rpc('tools/list', {}, token('http://other/mcp'))).status).toBe(401);
+    const claims = { aud: mcpUrl, sub: 'test', project_id: 'test', template_id: null };
+    expect((await rpc('tools/list', {}, signCreatorToken({ ...claims, iss: 'http://other-platform' }, pem))).status).toBe(401);
+    expect((await rpc('tools/list', {}, signCreatorToken({ ...claims, iss: platformUrl }, pem, Date.now() - 10 * 60_000))).status).toBe(401);
   });
 
   it('平台部署檢查讀得到工具清單', async () => {

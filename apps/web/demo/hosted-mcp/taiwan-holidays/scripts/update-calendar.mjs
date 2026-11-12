@@ -11,7 +11,7 @@ const HEADERS = { 'user-agent': 'Mozilla/5.0' };
 export function pickLatestCsv(distributions) {
   const best = {};
   for (const d of distributions) {
-    if (d.resourceFormat?.toUpperCase() !== 'CSV' || d.resourceDescription.includes('Google')) continue;
+    if (d.resourceFormat?.toUpperCase() !== 'CSV' || d.resourceDescription?.includes('Google')) continue;
     const roc = /(\d{3})年/.exec(d.resourceDescription);
     if (!roc) continue;
     const year = Number(roc[1]) + 1911;
