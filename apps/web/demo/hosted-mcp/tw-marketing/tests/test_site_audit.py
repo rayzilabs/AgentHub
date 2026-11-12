@@ -25,8 +25,10 @@ SITEMAP_FOUND = {"type": "sitemap", "url_count": 12, "urls": [{"loc": URL}], "er
 SITEMAP_NONE = {"type": None, "url_count": 0, "urls": [], "errors": []}
 
 
-def audit(html=GOOD_HTML, fetch=OK_FETCH, robots=ROBOTS_ALLOW, robots_status=200, sitemap=SITEMAP_FOUND, page_ok=True):
-    return sa.audit_from_responses(URL, html, fetch, page_ok, robots, robots_status, sitemap)
+def audit(html=GOOD_HTML, fetch=OK_FETCH, robots=ROBOTS_ALLOW, robots_status=200, sitemap=SITEMAP_FOUND, page_ok=True,
+          robots_error=None):
+    parsed = sa.robots.RobotsTxt.parse(robots, URL + "robots.txt", robots_status, robots_error)
+    return sa.audit_from_responses(URL, html, fetch, page_ok, parsed, sitemap)
 
 
 def issues(result):
@@ -89,6 +91,10 @@ class BlockedFromSearch(unittest.TestCase):
 
     def test_unreadable_robots_is_high(self):
         self.assertEqual(issues(audit(robots="", robots_status=503))["robots_unreachable"]["severity"], "高")
+
+    def test_unreadable_robots_shows_error_detail(self):
+        r = audit(robots="", robots_status=0, robots_error="timed out")
+        self.assertIn("timed out", issues(r)["robots_unreachable"]["issue"])
 
     def test_missing_robots_file_means_allow_all(self):
         r = audit(robots="", robots_status=404)

@@ -2,6 +2,7 @@
 抓取與解析用 aaron-marketing-skills 的標準庫程式（vendor/aaron_connectors，Apache-2.0）。"""
 import datetime as dt
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -85,35 +86,31 @@ def _page_findings(page, fetch, schema):
     return out
 
 
-def _crawlers(parsed, path):
-    rows = []
-    for bot, purpose, doc in CRAWLERS:
-        allowed, _ = parsed.can_fetch(bot, path)
-        rows.append({"bot": bot, "purpose": purpose, "allowed": allowed, "doc": doc})
-    return rows
-
-
-def audit_from_responses(url, html, fetch, page_ok, robots_text, robots_status, sitemap_result):
-    path = urlsplit(fetch.get("final_url") or url).path or "/"
-    parsed = robots.RobotsTxt.parse(robots_text or "", robots.normalize_robots_url(url), robots_status, None)
-    crawlers = _crawlers(parsed, path)
+def audit_from_responses(url, html, fetch, page_ok, parsed_robots, sitemap_result):
+    """parsed_robots：robots.RobotsTxt（4xx 時傳空規則，代表沒有限制）。"""
+    final_url = fetch.get("final_url") or url
+    path = urlsplit(final_url).path or "/"
+    crawlers = [{"bot": bot, "purpose": purpose, "allowed": parsed_robots.can_fetch(bot, path)[0], "doc": doc}
+                for bot, purpose, doc in CRAWLERS]
     findings = []
 
-    if robots.status_unreliable(robots_status):
+    if robots.status_unreliable(parsed_robots.status):
+        detail = f"，{parsed_robots.error}" if parsed_robots.error else ""
         findings.append(_finding("robots_unreachable", "高",
-                                 f"robots.txt 讀不到（HTTP {robots_status or '連線失敗'}），Google 可能暫停或整站不爬。",
+                                 f"robots.txt 讀不到（HTTP {parsed_robots.status or '連線失敗'}{detail}），Google 可能暫停或整站不爬。",
                                  "確認 /robots.txt 能正常開啟；沒有要限制就回 404 或放一個允許全部的檔案。",
                                  G + "crawling-indexing/robots/robots_txt?hl=zh-tw"))
-    elif not next(c for c in crawlers if c["bot"] == "Googlebot")["allowed"]:
-        findings.append(_finding("googlebot_blocked", "嚴重", "robots.txt 禁止 Googlebot 爬這頁，Google 搜尋幾乎找不到它。",
-                                 "移除對 Googlebot（或 User-agent: *）的 Disallow 規則。",
-                                 G + "crawling-indexing/robots/intro?hl=zh-tw"))
-    blocked_ai = [c["bot"] for c in crawlers if not c["allowed"] and c["bot"] not in ("Googlebot", "bingbot")]
-    if blocked_ai and not robots.status_unreliable(robots_status):
-        findings.append(_finding("ai_crawlers_blocked", "提醒", "robots.txt 擋了這些 AI 爬蟲：" + "、".join(blocked_ai) + "。",
-                                 "這是商家自己的選擇：擋搜尋類（例如 OAI-SearchBot、Claude-SearchBot）就不會被該服務引用；"
-                                 "只擋訓練類（GPTBot、ClaudeBot、Google-Extended）不影響搜尋。",
-                                 GOOGLE_CRAWLERS_DOC))
+    else:
+        if not crawlers[0]["allowed"]:  # CRAWLERS 第一個是 Googlebot
+            findings.append(_finding("googlebot_blocked", "嚴重", "robots.txt 禁止 Googlebot 爬這頁，Google 搜尋幾乎找不到它。",
+                                     "移除對 Googlebot（或 User-agent: *）的 Disallow 規則。",
+                                     G + "crawling-indexing/robots/intro?hl=zh-tw"))
+        blocked_ai = [c["bot"] for c in crawlers if not c["allowed"] and c["bot"] not in ("Googlebot", "bingbot")]
+        if blocked_ai:
+            findings.append(_finding("ai_crawlers_blocked", "提醒", "robots.txt 擋了這些 AI 爬蟲：" + "、".join(blocked_ai) + "。",
+                                     "這是商家自己的選擇：擋搜尋類（例如 OAI-SearchBot、Claude-SearchBot）就不會被該服務引用；"
+                                     "只擋訓練類（GPTBot、ClaudeBot、Google-Extended）不影響搜尋。",
+                                     GOOGLE_CRAWLERS_DOC))
 
     page = None
     if not page_ok:
@@ -136,8 +133,7 @@ def audit_from_responses(url, html, fetch, page_ok, robots_text, robots_status, 
             "open_graph": record["open_graph"],
         }
 
-    sitemaps = parsed.sitemaps
-    if not sitemaps and not sitemap_result.get("url_count"):
+    if not parsed_robots.sitemaps and not sitemap_result.get("url_count"):
         findings.append(_finding("sitemap_missing", "低", "找不到 Sitemap（robots.txt 沒寫，/sitemap.xml 也沒有）。",
                                  "大多數架站平台（Shopline、Cyberbiz、WordPress、Wix）都能自動產生，在 robots.txt 加一行 Sitemap: 網址。",
                                  G + "crawling-indexing/sitemaps/overview?hl=zh-tw"))
@@ -145,25 +141,33 @@ def audit_from_responses(url, html, fetch, page_ok, robots_text, robots_status, 
     findings.sort(key=lambda f: SEVERITY_ORDER.index(f["severity"]))
     return {
         "url": url,
-        "final_url": fetch.get("final_url") or url,
+        "final_url": final_url,
         "status": fetch.get("status"),
         "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "notice": NOTICE,
         "page": page,
         "crawlers": crawlers,
-        "sitemap": {"declared_in_robots": sitemaps, "type": sitemap_result.get("type"),
+        "sitemap": {"declared_in_robots": parsed_robots.sitemaps, "type": sitemap_result.get("type"),
                     "url_count": sitemap_result.get("url_count", 0)},
         "findings": findings,
     }
 
 
+def _fetch_robots(url):
+    parsed = robots.fetch(url)
+    if 400 <= parsed.status < 500:  # 4xx＝沒有限制，不解析錯誤頁的內容
+        return robots.RobotsTxt.parse("", parsed.url, parsed.status, parsed.error, fetched_url=parsed.fetched_url)
+    return parsed
+
+
 def site_audit(url: str) -> dict:
     if "://" not in url:
         url = "https://" + url
-    html, fetch, page_ok = onpage.fetch_page(url)
-    r = robots._http.get_text(robots.normalize_robots_url(url))
-    robots_status = r.get("status", 0)
-    robots_text = (r.get("text") or "") if robots_status == 200 else ""  # 4xx＝沒有限制，不解析錯誤頁內容
+    with ThreadPoolExecutor(2) as pool:  # 網頁與 robots.txt 互不相依，同時抓
+        page_job, robots_job = pool.submit(onpage.fetch_page, url), pool.submit(_fetch_robots, url)
+        (html, fetch, page_ok), parsed_robots = page_job.result(), robots_job.result()
     parts = urlsplit(fetch.get("final_url") or url)
-    found = sitemap.collect(f"{parts.scheme}://{parts.netloc}/", limit=5, max_fetches=3, max_seconds=20)
-    return audit_from_responses(url, html or "", fetch, page_ok, robots_text, robots_status, found)
+    # 有宣告就直接用，避免 collect 再抓一次 robots.txt
+    entry = parsed_robots.sitemaps[0] if parsed_robots.sitemaps else f"{parts.scheme}://{parts.netloc}/sitemap.xml"
+    found = sitemap.collect(entry, limit=5, max_fetches=2, max_seconds=20)
+    return audit_from_responses(url, html or "", fetch, page_ok, parsed_robots, found)

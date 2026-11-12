@@ -22,7 +22,7 @@ QIXI = {int(k): dt.date.fromisoformat(v) for k, v in
 WEEKDAYS = "一二三四五六日"
 USER_AGENT = "AgentHub-tw-marketing/1.0"
 CACHE_SECONDS = 24 * 3600
-_cache: dict[int, tuple[float, dict | None]] = {}
+_cache: dict[int | str, tuple[float, dict | None]] = {}
 
 
 def parse_office_calendar(data: str | bytes) -> dict[dt.date, dict]:
@@ -31,11 +31,9 @@ def parse_office_calendar(data: str | bytes) -> dict[dt.date, dict]:
             data = data.decode("utf-8-sig")
         except UnicodeDecodeError:
             data = data.decode("cp950")
-    rows = csv.reader(io.StringIO(data.lstrip("﻿")))
-    next(rows)
     days = {}
-    for r in rows:
-        if len(r) < 3 or not r[0].strip().isdigit():
+    for r in csv.reader(io.StringIO(data)):
+        if len(r) < 3 or not r[0].strip().isdigit():  # 也會跳過標題列
             continue
         d = dt.datetime.strptime(r[0].strip(), "%Y%m%d").date()
         days[d] = {"off": r[2].strip() == "2", "note": (r[3] if len(r) > 3 else "").strip()}
@@ -45,16 +43,15 @@ def parse_office_calendar(data: str | bytes) -> dict[dt.date, dict]:
 def pick_calendar_url(dataset: dict, year: int) -> str | None:
     """找出該年度辦公日曆表的下載網址；同年有更新版時取最新的，略過 Google 行事曆專用版。"""
     prefix = f"{year - 1911}年中華民國政府行政機關辦公日曆表"
-    best, best_stamp = None, -1
-    for item in dataset["result"]["distribution"]:
-        title = item.get("resourceDescription", "")
-        if not title.startswith(prefix) or "Google" in title:
-            continue
-        m = re.search(r"\((\d+)更新\)", title)
-        stamp = int(m.group(1)) if m else 0
-        if stamp > best_stamp:
-            best, best_stamp = item.get("resourceDownloadUrl"), stamp
-    return best
+    candidates = [item for item in dataset["result"]["distribution"]
+                  if item.get("resourceDescription", "").startswith(prefix) and "Google" not in item["resourceDescription"]]
+
+    def stamp(item):
+        m = re.search(r"\((\d+)更新\)", item["resourceDescription"])
+        return int(m.group(1)) if m else 0
+
+    best = max(candidates, key=stamp, default=None)
+    return best.get("resourceDownloadUrl") if best else None
 
 
 def _get(url: str) -> bytes:
@@ -63,15 +60,21 @@ def _get(url: str) -> bytes:
         return resp.read()
 
 
-def fetch_office_calendar(year: int) -> dict[dt.date, dict] | None:
-    """從政府資料開放平臺找到該年度 CSV 並下載；人事總處還沒公布就回傳 None。結果快取一天。"""
-    hit = _cache.get(year)
+def _cached(key, load):
+    hit = _cache.get(key)
     if hit and time.time() - hit[0] < CACHE_SECONDS:
         return hit[1]
-    url = pick_calendar_url(json.loads(_get(DATASET_API)), year)
-    days = parse_office_calendar(_get(url)) if url else None
-    _cache[year] = (time.time(), days)
-    return days
+    value = load()
+    _cache[key] = (time.time(), value)
+    return value
+
+
+def fetch_office_calendar(year: int) -> dict[dt.date, dict] | None:
+    """從政府資料開放平臺找到該年度 CSV 並下載；人事總處還沒公布就回傳 None。資料集清單與各年度結果都快取一天。"""
+    def load():
+        url = pick_calendar_url(_cached("dataset", lambda: json.loads(_get(DATASET_API))), year)
+        return parse_office_calendar(_get(url)) if url else None
+    return _cached(year, load)
 
 
 def _nth_weekday(year: int, month: int, weekday: int, n: int) -> dt.date:
@@ -80,19 +83,19 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> dt.date:
 
 
 def _shopping_events(year: int, days: dict[dt.date, dict]) -> tuple[list[dict], list[str]]:
-    events = [
-        (dt.date(year, 2, 14), "西洋情人節", SOURCE_RULE),
-        (_nth_weekday(year, 5, 6, 2), "母親節", SOURCE_RULE),
-        (dt.date(year, 6, 18), "618 購物節", SOURCE_RULE),
-        (dt.date(year, 8, 8), "父親節", SOURCE_RULE),
-        (dt.date(year, 11, 11), "雙 11", SOURCE_RULE),
-        (dt.date(year, 12, 12), "雙 12", SOURCE_RULE),
-        (dt.date(year, 12, 25), "聖誕節", SOURCE_RULE),
-    ]
+    events = [(d, name, SOURCE_RULE) for d, name in [
+        (dt.date(year, 2, 14), "西洋情人節"),
+        (_nth_weekday(year, 5, 6, 2), "母親節"),
+        (dt.date(year, 6, 18), "618 購物節"),
+        (dt.date(year, 8, 8), "父親節"),
+        (dt.date(year, 11, 11), "雙 11"),
+        (dt.date(year, 12, 12), "雙 12"),
+        (dt.date(year, 12, 25), "聖誕節"),
+    ]]
     notes = []
-    spring = sorted(d for d, v in days.items() if v["note"] == "春節")
-    if spring:
-        events.append((spring[0] + dt.timedelta(days=14), "元宵節", SOURCE_DERIVED))
+    first_spring = min((d for d, v in days.items() if v["note"] == "春節"), default=None)
+    if first_spring:
+        events.append((first_spring + dt.timedelta(days=14), "元宵節", SOURCE_DERIVED))
     if year in QIXI:
         events.append((QIXI[year], "七夕情人節", SOURCE_CWA))
         events.append((QIXI[year] + dt.timedelta(days=8), "中元節", SOURCE_CWA))
@@ -102,23 +105,15 @@ def _shopping_events(year: int, days: dict[dt.date, dict]) -> tuple[list[dict], 
 
 
 def _long_weekends(days: dict[dt.date, dict], start: dt.date, end: dt.date) -> list[dict]:
-    runs, current = [], []
-    for d in sorted(days):
-        if days[d]["off"] and (not current or d - current[-1] == dt.timedelta(days=1)):
-            current.append(d)
-            continue
-        if len(current) >= 3:
-            runs.append(current)
-        current = [d] if days[d]["off"] else []
-    if len(current) >= 3:
-        runs.append(current)
-    out = []
-    for run in runs:
-        if run[-1] < start or run[0] > end:
-            continue
-        names = list(dict.fromkeys(days[d]["note"] for d in run if days[d]["note"]))
-        out.append({"start": run[0].isoformat(), "end": run[-1].isoformat(), "days": len(run), "includes": names})
-    return out
+    runs = []
+    for d in sorted(d for d, v in days.items() if v["off"]):
+        if runs and d - runs[-1][-1] == dt.timedelta(days=1):
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+    return [{"start": run[0].isoformat(), "end": run[-1].isoformat(), "days": len(run),
+             "includes": list(dict.fromkeys(days[d]["note"] for d in run if days[d]["note"]))}
+            for run in runs if len(run) >= 3 and run[-1] >= start and run[0] <= end]
 
 
 def calendar_for(start: str, end: str, fetch=fetch_office_calendar) -> dict:
