@@ -2,6 +2,8 @@ import type { HostedVersionView } from '@/lib/services/hosted-mcp';
 
 export const POLL_MS = 5000;
 export const MAX_ZIP_BYTES = 50 * 1024 * 1024;
+/** 可以下架的版本狀態（伺服器端也用這份） */
+export const RETIRABLE = ['pending', 'ready', 'failed', 'published'];
 
 const LABELS: Record<string, string> = {
   pending: '等待上傳',
@@ -29,7 +31,7 @@ export function canPublish(v: Pick<HostedVersionView, 'status'>): boolean {
 }
 
 export function canRetire(v: Pick<HostedVersionView, 'status' | 'projects'>): boolean {
-  return ['pending', 'ready', 'failed', 'published'].includes(v.status) && v.projects === 0;
+  return RETIRABLE.includes(v.status) && v.projects === 0;
 }
 
 /** 需要每 5 秒更新的版本 id（部署中） */

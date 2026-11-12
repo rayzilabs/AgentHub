@@ -2,9 +2,9 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  createHostedSpriteOps, deployScript, envScript, HOSTED_RUN, HOSTED_RUN_SCRIPT, HOSTED_SETUP_SCRIPT, hostedSpriteName, listToolsOver,
+  createHostedSpriteOps, deployScript, envScript, HOSTED_RUN, HOSTED_RUN_SCRIPT, HOSTED_SETUP_SCRIPT, listToolsOver,
 } from '@/lib/hosted-sprite';
-import type { HostedVersion } from '@/lib/services/hosted-mcp';
+import { hostedSpriteName, type HostedVersion } from '@/lib/services/hosted-mcp';
 
 const SANDBOXED = `sudo -n unshare --mount --propagation private -- ${HOSTED_RUN}`;
 

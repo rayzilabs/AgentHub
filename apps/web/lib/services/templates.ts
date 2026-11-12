@@ -170,18 +170,22 @@ async function processSkillsUpload(db: Db, id: string): Promise<{ skills_zip_pat
   return { skills_zip_path: finalPath, skills };
 }
 
-/** 上架中的範本，每個平台代管 MCP 都要有已發布的版本（否則市集上看得到、卻租用不了） */
-async function assertHostedPublished(db: Db, id: string, servers: McpServer[]): Promise<void> {
-  for (const s of servers) {
-    if (s.transport !== 'remote' || !s.hosted) continue;
-    const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
-      .eq('template_id', id).eq('mcp_name', s.name).eq('status', 'published');
-    if (error) throw error;
-    if (!count) throw new HttpError(400, `MCP「${s.name}」還沒有已發布的版本`);
-  }
+/** 平台代管 MCP 已發布的版本數 */
+export async function publishedVersionCount(db: Db, templateId: string, mcpName: string): Promise<number> {
+  const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
+    .eq('template_id', templateId).eq('mcp_name', mcpName).eq('status', 'published');
+  if (error) throw error;
+  return count ?? 0;
 }
 
 const isHosted = (s: McpServer) => s.transport === 'remote' && s.hosted === true;
+
+/** 上架中的範本，每個平台代管 MCP 都要有已發布的版本（否則市集上看得到、卻租用不了） */
+async function assertHostedPublished(db: Db, id: string, servers: McpServer[]): Promise<void> {
+  for (const s of servers.filter(isHosted)) {
+    if (!(await publishedVersionCount(db, id, s.name))) throw new HttpError(400, `MCP「${s.name}」還沒有已發布的版本`);
+  }
+}
 
 /** 改名、移除或改連線方式會讓既有版本、金鑰與 Sprite 在頁面上消失（仍佔名額）；要先下架所有版本 */
 async function assertNoOrphanedVersions(db: Db, id: string, saved: McpServer[], next: McpServer[]): Promise<void> {

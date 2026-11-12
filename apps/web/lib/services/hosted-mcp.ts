@@ -1,10 +1,12 @@
 import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import { signCreatorToken } from '@/lib/platform-tokens';
+import { MAX_ZIP_BYTES, RETIRABLE } from '@/lib/hosted-ui';
+import { errorText } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
-import { getEditableTemplate } from './templates';
+import { getEditableTemplate, publishedVersionCount } from './templates';
 
-export const HOSTED_LIMITS = { publishedPerMcp: 3, spritesPerCreator: 10, bundleBytes: 50 * 1024 * 1024, deployMs: 10 * 60_000 };
+export const HOSTED_LIMITS = { publishedPerMcp: 3, spritesPerCreator: 10, bundleBytes: MAX_ZIP_BYTES, deployMs: 10 * 60_000 };
 
 const BUCKET = 'mcp-bundles';
 /** Supabase 簽名上傳網址的有效期；超過還沒上傳的版本視為放棄 */
@@ -38,12 +40,12 @@ export type HostedSpriteOps = {
   destroy(spriteName: string): Promise<void>;
 };
 
-/** 套件大小檢查；超過 50 MB 丟 HttpError(400) */
 /** 名稱固定：先寫進資料庫認領，再建立 Sprite，不會重複建立或留下沒有紀錄的 Sprite */
 export function hostedSpriteName(versionId: string): string {
   return `agenthub-mcp-${versionId.replace(/-/g, '').slice(0, 12)}`;
 }
 
+/** 套件大小檢查；超過 50 MB 丟 HttpError(400) */
 export function checkBundle(size: number | undefined): void {
   if (typeof size !== 'number') throw new HttpError(400, '讀不到套件大小，請重新上傳');
   if (size > HOSTED_LIMITS.bundleBytes) throw new HttpError(400, '套件超過 50 MB');
@@ -96,14 +98,13 @@ async function updateVersion(db: Db, id: string, from: string, patch: Partial<Ho
   return data as HostedVersion;
 }
 
-async function hostedEnv(db: Db, templateId: string, mcpName: string, spriteUrl: string | null): Promise<Record<string, string>> {
+/** 不含 AGENTHUB_MCP_URL：各台 Sprite 的網址不同，由呼叫端補上（建立 Sprite 前還不知道網址，由 provision 補） */
+async function hostedEnv(db: Db, templateId: string, mcpName: string): Promise<Record<string, string>> {
   const { data, error } = await db.rpc('get_hosted_mcp_secrets', { p_template_id: templateId, p_mcp_name: mcpName });
   if (error) throw error;
   const out: Record<string, string> = {};
   for (const row of (data ?? []) as { key: string; value: string }[]) out[row.key] = row.value;
   out.PORT = '8080';
-  // 建立 Sprite 前還不知道網址，由 provision 補上
-  if (spriteUrl) out.AGENTHUB_MCP_URL = `${spriteUrl}/mcp`;
   out.AGENTHUB_PLATFORM_URL = env.platformUrl;
   return out;
 }
@@ -224,12 +225,12 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
     try {
       const { data: signed, error } = await db.storage.from(BUCKET).createSignedUrl(version.bundle_path, 900);
       if (error) throw error;
-      const vars = await hostedEnv(db, version.template_id, version.mcp_name, null);
+      const vars = await hostedEnv(db, version.template_id, version.mcp_name);
       const { spriteUrl } = await sprites.provision(version, vars, signed.signedUrl);
       version = await updateVersion(db, version.id, 'deploying', { sprite_url: spriteUrl });
     } catch (e) {
       // sprite_name 留著：Sprite 可能已建立一半，清理腳本找得到它
-      return fail(`建立代管環境失敗：${e instanceof Error ? e.message : String(e)}`, '');
+      return fail(`建立代管環境失敗：${errorText(e)}`, '');
     }
   }
   // 另一個請求正在建立
@@ -252,7 +253,7 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
     tools = await sprites.listTools(spriteUrl, token);
   } catch (e) {
     // 程式可能還在啟動；下次讀取再試，超過 10 分鐘會標成逾時
-    const reason = e instanceof Error ? e.message : String(e);
+    const reason = errorText(e);
     const program = await sprites.serviceLog(spriteName).catch(() => '');
     const log = `${state.log}\n== 程式輸出\n${program}\n等待程式回應：${reason}`;
     return timedOut ? fail(TIMEOUT, log) : updateVersion(db, version.id, 'deploying', { log_tail: tail(log) });
@@ -264,16 +265,12 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
 export async function publishVersion(db: Db, userId: string, versionId: string): Promise<HostedVersion> {
   const version = await ownVersion(db, userId, versionId);
   if (version.status !== 'ready') throw new HttpError(409, '只有部署成功的版本可以發布');
-  const { count, error } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
-    .eq('template_id', version.template_id).eq('mcp_name', version.mcp_name).eq('status', 'published');
-  if (error) throw error;
-  if ((count ?? 0) >= HOSTED_LIMITS.publishedPerMcp) {
+  const count = await publishedVersionCount(db, version.template_id, version.mcp_name);
+  if (count >= HOSTED_LIMITS.publishedPerMcp) {
     throw new HttpError(409, `已發布 ${count} 個版本，請先下架沒有專案使用的舊版本`);
   }
   return updateVersion(db, version.id, 'ready', { status: 'published', published_at: new Date().toISOString() });
 }
-
-const RETIRABLE = ['pending', 'ready', 'failed', 'published'];
 
 export async function retireVersion(db: Db, userId: string, versionId: string, sprites: HostedSpriteOps): Promise<HostedVersion> {
   const version = await ownVersion(db, userId, versionId);
@@ -296,10 +293,7 @@ async function assertNotLastPublished(db: Db, version: HostedVersion): Promise<v
   const { data: template, error } = await db.from('agent_templates').select('status').eq('id', version.template_id).single();
   if (error) throw error;
   if (template.status !== 'published') return;
-  const { count, error: countError } = await db.from('hosted_mcp_versions').select('id', { count: 'exact', head: true })
-    .eq('template_id', version.template_id).eq('mcp_name', version.mcp_name).eq('status', 'published');
-  if (countError) throw countError;
-  if ((count ?? 0) <= 1) throw new HttpError(409, '這是已上架範本唯一的已發布版本，請先發布新版本');
+  if ((await publishedVersionCount(db, version.template_id, version.mcp_name)) <= 1) throw new HttpError(409, '這是已上架範本唯一的已發布版本，請先發布新版本');
 }
 
 export async function setHostedSecrets(
@@ -319,9 +313,10 @@ export async function setHostedSecrets(
     .eq('template_id', templateId).eq('mcp_name', mcpName).in('status', ['deploying', 'ready', 'published'])
     .not('sprite_name', 'is', null).not('sprite_url', 'is', null);
   if (error) throw error;
-  for (const v of running as { sprite_name: string; sprite_url: string }[]) {
-    await sprites.applyEnv(v.sprite_name, await hostedEnv(db, templateId, mcpName, v.sprite_url));
-  }
+  const rows = running as { sprite_name: string; sprite_url: string }[];
+  if (rows.length === 0) return;
+  const vars = await hostedEnv(db, templateId, mcpName);
+  for (const v of rows) await sprites.applyEnv(v.sprite_name, { ...vars, AGENTHUB_MCP_URL: `${v.sprite_url}/mcp` });
 }
 
 /** opts.templateId 只給測試用：測試打正式資料庫，不能碰到真實版本 */

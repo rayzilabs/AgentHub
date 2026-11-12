@@ -1,7 +1,7 @@
 import { SpritesClient, type Sprite } from '@fly/sprites';
 import { env } from '@/lib/env';
 import { hostedSpriteName, type DeployState, type HostedSpriteOps, type HostedVersion } from '@/lib/services/hosted-mcp';
-import { isNotFound, retryTransient, shellQuote } from '@/lib/sprites';
+import { deleteSpriteIfExists, findService, getOrCreateSprite, retryTransient, shellQuote } from '@/lib/sprites';
 
 const ROOT = '/srv/agenthub-mcp';
 const APP = `${ROOT}/app`;
@@ -11,8 +11,6 @@ const LOG_MARK = '---agenthub-log---';
 export const HOSTED_RUN = '/usr/local/bin/agenthub-mcp-run';
 /** 創作者的檔案與程式一律經過這裡：獨立掛載命名空間 + 降權成 mcp */
 const SANDBOXED = `sudo -n unshare --mount --propagation private -- ${HOSTED_RUN}`;
-
-export { hostedSpriteName };
 
 /**
  * 以 root 在獨立掛載命名空間執行：遮住 Sprite 內部 API 的 socket，降權成 mcp，清空環境後才載入金鑰。
@@ -207,10 +205,8 @@ export async function listToolsOver(
   return tools.map((t) => (t.description === undefined ? { name: t.name } : { name: t.name, description: t.description }));
 }
 
-type SpritesLike = Pick<SpritesClient, 'getSprite' | 'createSprite' | 'deleteSprite'>;
-
 export function createHostedSpriteOps(
-  deps: { client?: SpritesLike; spritesToken?: string; fetchImpl?: typeof fetch } = {},
+  deps: { client?: Pick<SpritesClient, 'getSprite' | 'createSprite' | 'deleteSprite'>; spritesToken?: string; fetchImpl?: typeof fetch } = {},
 ): HostedSpriteOps {
   const client = () => deps.client ?? new SpritesClient(env.spritesToken);
   const token = () => deps.spritesToken ?? env.spritesToken;
@@ -219,14 +215,7 @@ export function createHostedSpriteOps(
   return {
     async provision(version: HostedVersion, vars: Record<string, string>, bundleUrl: string) {
       const name = hostedSpriteName(version.id);
-      const s = await retryTransient(async () => {
-        try {
-          return await client().getSprite(name);
-        } catch (e) {
-          if (!isNotFound(e)) throw e;
-        }
-        return client().createSprite(name, { urlSettings: { auth: 'sprite' } });
-      });
+      const s = await retryTransient(() => getOrCreateSprite(client(), name));
       if (!s.url) throw new Error('代管 Sprite 沒有對外網址');
       await s.execFile('bash', ['-lc', HOSTED_SETUP_SCRIPT]);
       await s.execFile('bash', ['-lc', writeEnvCommand({ ...vars, AGENTHUB_MCP_URL: `${s.url}/mcp` })]);
@@ -246,12 +235,7 @@ export function createHostedSpriteOps(
     /** 可重複呼叫：服務已存在就不重建（重建會重啟正在啟動的程式） */
     async startService(name: string, start: string) {
       const s = await sprite(name);
-      try {
-        await s.getService('mcp');
-        return;
-      } catch (e) {
-        if (!isNotFound(e)) throw e;
-      }
+      if (await findService(s, 'mcp')) return;
       const logs = await s.createService('mcp', {
         cmd: 'sudo',
         args: ['-n', 'unshare', '--mount', '--propagation', 'private', '--', HOSTED_RUN, '/bin/bash', '-c', `cd ${APP} && exec ${start}`],
@@ -282,21 +266,13 @@ export function createHostedSpriteOps(
       const s = await sprite(name);
       await s.execFile('bash', ['-lc', writeEnvCommand(vars)]);
       // 部署中還沒有 mcp 服務：寫好 env.sh 就夠了，啟動時會讀到
-      try {
-        await s.getService('mcp');
-      } catch (e) {
-        if (isNotFound(e)) return;
-        throw e;
-      }
+      if (!(await findService(s, 'mcp'))) return;
       const logs = await s.restartService('mcp', '5s');
       await logs.processAll(() => {});
     },
 
     async destroy(name: string) {
-      if (!name.startsWith('agenthub-mcp-')) throw new Error(`拒絕刪除非代管 MCP 的 Sprite：${name}`);
-      await client().deleteSprite(name).catch((e) => {
-        if (!isNotFound(e)) throw e;
-      });
+      await deleteSpriteIfExists(client(), name, 'agenthub-mcp-');
     },
   };
 }

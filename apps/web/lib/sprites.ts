@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { APIError, SpritesClient, type Sprite } from '@fly/sprites';
 import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
@@ -97,7 +98,6 @@ const SERVICE = 'runtime';
 const HEALTH_TIMEOUT_MS = 90_000;
 const RETRYABLE = new Set([502, 503, 504]);
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** SDK 的 APIError 會把 API 回傳的錯誤物件當成 message（變成 "[object Object]"），改取裡面的訊息與狀態碼。 */
 export function errorText(e: unknown): string {
@@ -197,14 +197,32 @@ function client() {
   return new SpritesClient(env.spritesToken);
 }
 
-async function getOrCreateSprite(name: string): Promise<Sprite> {
-  const c = client();
+type SpritesLike = Pick<SpritesClient, 'getSprite' | 'createSprite' | 'deleteSprite'>;
+
+/** 已存在就沿用，否則建立（網址要通過 Fly 驗證） */
+export async function getOrCreateSprite(c: SpritesLike, name: string): Promise<Sprite> {
   try {
     return await c.getSprite(name);
   } catch (e) {
     if (!isNotFound(e)) throw e;
   }
   return c.createSprite(name, { urlSettings: { auth: 'sprite' } });
+}
+
+/** 只刪名稱以 prefix 開頭的 Sprite；已經不在就算成功 */
+export async function deleteSpriteIfExists(c: SpritesLike, name: string, prefix: string): Promise<void> {
+  if (!name.startsWith(prefix)) throw new Error(`拒絕刪除不是 ${prefix} 開頭的 Sprite：${name}`);
+  await c.deleteSprite(name).catch((e) => {
+    if (!isNotFound(e)) throw e;
+  });
+}
+
+/** 服務不存在時回傳 null */
+export async function findService(sprite: Sprite, name: string) {
+  return sprite.getService(name).catch((e: unknown) => {
+    if (isNotFound(e)) return null;
+    throw e;
+  });
 }
 
 export async function installRuntime(db: Db, sprite: Sprite, projectId: string, runtimeObject = RUNTIME_OBJECT): Promise<string> {
@@ -230,10 +248,7 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string, 
 
 export async function startRuntimeService(sprite: Sprite, base: string): Promise<void> {
   const config = { cmd: RUNTIME_SUPERVISOR, args: [base], httpPort: 8080 };
-  const existing = await sprite.getService(SERVICE).catch((e: unknown) => {
-    if (isNotFound(e)) return null;
-    throw e;
-  });
+  const existing = await findService(sprite, SERVICE);
   // Sprites API 不准用 PUT 改既有服務的設定（409）；舊版服務直接執行 node，要先刪掉
   if (existing && (existing.cmd !== config.cmd || existing.args.join('\0') !== config.args.join('\0'))) {
     await sprite.deleteService(SERVICE);
@@ -273,7 +288,7 @@ export async function provisionProject(db: Db, projectId: string): Promise<void>
   const name = spriteName(projectId);
   try {
     await setSpriteState(db, projectId, { sprite_status: 'provisioning', sprite_error: null, sprite_name: name });
-    const sprite = await retryTransient(() => getOrCreateSprite(name));
+    const sprite = await retryTransient(() => getOrCreateSprite(client(), name));
     if (!sprite.url) throw new Error('agent 環境沒有對外網址');
     await installRuntime(db, sprite, projectId);
     await waitForHealth(sprite.url, projectId);
@@ -285,10 +300,7 @@ export async function provisionProject(db: Db, projectId: string): Promise<void>
 }
 
 export async function destroyProjectSprite(name: string): Promise<void> {
-  if (!name.startsWith('agenthub-')) throw new Error(`拒絕刪除非 AgentHub 的 Sprite：${name}`);
-  await client().deleteSprite(name).catch((e) => {
-    if (!isNotFound(e)) throw e;
-  });
+  await deleteSpriteIfExists(client(), name, 'agenthub-');
 }
 
 export async function forwardChat(
