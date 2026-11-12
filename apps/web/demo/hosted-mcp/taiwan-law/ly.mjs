@@ -25,20 +25,6 @@ export function lyFetch(url) {
   });
 }
 
-const caches = new WeakMap();
-async function getJson(url, fetchFn) {
-  if (!caches.has(fetchFn)) caches.set(fetchFn, new Map());
-  const cache = caches.get(fetchFn);
-  const hit = cache.get(url);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
-  const res = await fetchFn(url);
-  if (!res.ok) throw new Error(`立法院開放資料平台回應 ${res.status}`);
-  // 平台在 JSON 前面會多送空白行
-  const value = JSON.parse((await res.text()).trim());
-  cache.set(url, { at: Date.now(), value });
-  return value;
-}
-
 /** 第 11 屆自 2024-02-01 起，每屆四年 */
 export function currentTerm(date = new Date()) {
   const tw = new Date(date.getTime() + 8 * 3600_000);
@@ -46,6 +32,8 @@ export function currentTerm(date = new Date()) {
   return 11 + Math.floor(months / 48);
 }
 
+const BILLS_SOURCE = '立法院開放資料平台（議案提案，資料集 20）';
+const THIRD_READING_URL = `${LY}/openDatasetJson.action?id=373&selectTerm=all&page=1`;
 const billsUrl = (term) =>
   `${LY}/ID20Action.action?term=${term}&sessionPeriod=&sessionTimes=&meetingTimes=&billName=&billOrg=&billProposer=&billCosignatory=&fileType=json`;
 const names = (s) => (s ?? '').split(/[\s　]+/).filter(Boolean);
@@ -62,72 +50,107 @@ const toBill = (b) => ({
   document_pdf: b.pdfUrl ?? '',
   document_doc: b.docUrl ?? '',
 });
+// 議案編號是等長數字字串，直接比較即可；新的在前
+const newestFirst = (a, b) => (a.bill_no < b.bill_no ? 1 : a.bill_no > b.bill_no ? -1 : 0);
 
-/** 沒指定屆別時查本屆與上一屆 */
-async function loadBills(term, now, fetchFn) {
-  const terms = term ? [term] : [currentTerm(now), currentTerm(now) - 1];
-  const lists = await Promise.all(terms.map((t) => getJson(billsUrl(t), fetchFn).then((d) => d.dataList ?? [])));
-  return { terms, bills: lists.flat().sort((a, b) => String(b.billNo).localeCompare(String(a.billNo))) };
+/**
+ * 只快取本屆、上一屆與三讀資料集（整理成回傳用的欄位、排好序），過期就清掉；
+ * 同時進來的請求共用同一次下載。查更早的屆別不快取。
+ */
+export function createLy(fetchFn = lyFetch, now = () => new Date()) {
+  const cache = new Map();
+
+  async function fetchJson(url) {
+    const res = await fetchFn(url);
+    if (!res.ok) throw new Error(`立法院開放資料平台回應 ${res.status}`);
+    // 平台在 JSON 前面會多送空白行
+    return JSON.parse((await res.text()).trim());
+  }
+
+  function cached(url, load) {
+    for (const [key, entry] of cache) if (Date.now() - entry.at >= TTL_MS) cache.delete(key);
+    const hit = cache.get(url);
+    if (hit) return hit.value;
+    const value = fetchJson(url).then(load);
+    cache.set(url, { at: Date.now(), value });
+    value.catch(() => cache.delete(url));
+    return value;
+  }
+
+  const loadBills = (d) => (d.dataList ?? []).map(toBill).sort(newestFirst);
+  const billsOf = (term) => (term >= currentTerm(now()) - 1 ? cached(billsUrl(term), loadBills) : fetchJson(billsUrl(term)).then(loadBills));
+
+  /** 沒指定屆別時查本屆與上一屆 */
+  async function recentBills(term) {
+    const terms = term ? [term] : [currentTerm(now()), currentTerm(now()) - 1];
+    const lists = await Promise.all(terms.map(billsOf));
+    return { terms, bills: lists.flat() };
+  }
+
+  /** @param {{ keyword?: string, proposer?: string, term?: number, billStatus?: string, limit?: number }} opts */
+  async function searchBills({ keyword = '', proposer = '', term, billStatus = '', limit = 10 }) {
+    const { terms, bills } = await recentBills(term);
+    const kw = keyword.trim();
+    const who = proposer.trim();
+    const matched = bills.filter((b) =>
+      (!kw || b.title.includes(kw))
+      && (!who || b.proposers.some((n) => n.includes(who)) || b.proposing_unit.includes(who))
+      && (!billStatus || b.status === billStatus));
+    const max = Math.min(limit, 50);
+    return {
+      success: true,
+      terms_searched: terms,
+      total: matched.length,
+      bills: matched.slice(0, max),
+      truncated: matched.length > max,
+      source: BILLS_SOURCE,
+      source_url: billsUrl(terms[0]),
+      attribution: attribution(),
+    };
+  }
+
+  async function getLawProgress(law, maxBills = 10) {
+    const name = law.trim();
+    const { terms, bills } = await recentBills();
+    const matched = bills.filter((b) => b.title.includes(name));
+    const status_summary = {};
+    for (const b of matched) status_summary[b.status || '未標示'] = (status_summary[b.status || '未標示'] ?? 0) + 1;
+    return {
+      success: true,
+      law_name: name,
+      terms_searched: terms,
+      total_bills: matched.length,
+      status_summary,
+      bills: matched.slice(0, maxBills),
+      truncated: matched.length > maxBills,
+      source: BILLS_SOURCE,
+      source_url: billsUrl(terms[0]),
+      attribution: attribution(),
+      note: '只查本屆與上一屆、名稱含這部法律的議案；關係文書連結為立法院官方文件（ppg.ly.gov.tw），引用前請開啟核對。',
+    };
+  }
+
+  async function getLawVersions(law, limit = 30) {
+    const name = law.trim();
+    const rows = await cached(THIRD_READING_URL, (d) => (d.jsonList ?? []).map((r) => ({
+      title: r.title ?? '', third_reading_meeting: r.thirdReading ?? '', document_pdf: r.url ?? '', note: r.note ?? '',
+    })));
+    const matched = rows.filter((r) => r.title.includes(name));
+    return {
+      success: true,
+      law_name: name,
+      total: matched.length,
+      versions: matched.slice(0, limit),
+      truncated: matched.length > limit,
+      source: '立法院開放資料平台（三讀通過條文＆附帶決議，資料集 373）',
+      source_url: THIRD_READING_URL,
+      attribution: attribution(),
+      note: '本資料集只有 2023 年起的三讀紀錄（third_reading_meeting 為「屆-會期-會次」）；完整修正沿革請用 search_taiwan_laws 查全國法規資料庫的沿革。',
+    };
+  }
+
+  return { searchBills, getLawProgress, getLawVersions };
 }
 
-/** @param {{ keyword?: string, proposer?: string, term?: number, billStatus?: string, limit?: number, now?: Date }} opts */
-export async function searchBills({ keyword = '', proposer = '', term, billStatus = '', limit = 10, now = new Date() }, fetchFn = lyFetch) {
-  const { terms, bills } = await loadBills(term, now, fetchFn);
-  const kw = keyword.trim();
-  const who = proposer.trim();
-  const matched = bills.filter((b) =>
-    (!kw || (b.billName ?? '').includes(kw))
-    && (!who || (b.billProposer ?? '').includes(who) || (b.billOrg ?? '').includes(who))
-    && (!billStatus || b.billStatus === billStatus));
-  const max = Math.min(limit, 50);
-  return {
-    success: true,
-    terms_searched: terms,
-    total: matched.length,
-    bills: matched.slice(0, max).map(toBill),
-    truncated: matched.length > max,
-    source: '立法院開放資料平台（議案提案，資料集 20）',
-    source_url: billsUrl(terms[0]),
-    attribution: attribution(),
-  };
-}
-
-export async function getLawProgress(law, maxBills = 10, fetchFn = lyFetch, now = new Date()) {
-  const name = law.trim();
-  const { terms, bills } = await loadBills(undefined, now, fetchFn);
-  const matched = bills.filter((b) => (b.billName ?? '').includes(name));
-  const status_summary = {};
-  for (const b of matched) status_summary[b.billStatus || '未標示'] = (status_summary[b.billStatus || '未標示'] ?? 0) + 1;
-  return {
-    success: true,
-    law_name: name,
-    terms_searched: terms,
-    total_bills: matched.length,
-    status_summary,
-    bills: matched.slice(0, maxBills).map(toBill),
-    truncated: matched.length > maxBills,
-    source: '立法院開放資料平台（議案提案，資料集 20）',
-    source_url: billsUrl(terms[0]),
-    attribution: attribution(),
-    note: '只查本屆與上一屆、名稱含這部法律的議案；關係文書連結為立法院官方文件（ppg.ly.gov.tw），引用前請開啟核對。',
-  };
-}
-
-const THIRD_READING_URL = `${LY}/openDatasetJson.action?id=373&selectTerm=all&page=1`;
-
-export async function getLawVersions(law, limit = 30, fetchFn = lyFetch) {
-  const name = law.trim();
-  const data = await getJson(THIRD_READING_URL, fetchFn);
-  const matched = (data.jsonList ?? []).filter((r) => (r.title ?? '').includes(name));
-  return {
-    success: true,
-    law_name: name,
-    total: matched.length,
-    versions: matched.slice(0, limit).map((r) => ({ title: r.title ?? '', third_reading_meeting: r.thirdReading ?? '', document_pdf: r.url ?? '', note: r.note ?? '' })),
-    truncated: matched.length > limit,
-    source: '立法院開放資料平台（三讀通過條文＆附帶決議，資料集 373）',
-    source_url: THIRD_READING_URL,
-    attribution: attribution(),
-    note: '本資料集只有 2023 年起的三讀紀錄（third_reading_meeting 為「屆-會期-會次」）；完整修正沿革請用 search_taiwan_laws 查全國法規資料庫的沿革。',
-  };
-}
+// server.js 匯入的三個工具
+export const { searchBills, getLawProgress, getLawVersions } = createLy();

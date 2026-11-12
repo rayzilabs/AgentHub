@@ -131,21 +131,34 @@ async function fetchRetry(url: string): Promise<Response> {
   }
 }
 
+/** 只留用得到的欄位：完整檔含全部條文，整份留在記憶體會佔很多空間 */
 async function mojLaws(kind: 'Law' | 'Order'): Promise<{ UpdateDate: string; Laws: MojLaw[] }> {
   const zip = unzipSync(new Uint8Array(await (await fetchRetry(`${MOJ}/${kind}/JSON`)).arrayBuffer()));
   const name = Object.keys(zip).find((n) => n.endsWith('.json'));
   if (!name) throw new Error(`法務部 ${kind} 壓縮檔裡沒有 JSON`);
-  return JSON.parse(new TextDecoder().decode(zip[name]).replace(/^﻿/, ''));
+  const data = JSON.parse(new TextDecoder().decode(zip[name]).replace(/^﻿/, '')) as { UpdateDate: string; Laws: MojLaw[] };
+  return {
+    UpdateDate: data.UpdateDate,
+    Laws: data.Laws.map(({ LawName, LawURL, LawAbandonNote, LawHistories }) => ({ LawName, LawURL, LawAbandonNote, LawHistories })),
+  };
 }
 
-async function crawl(start: string): Promise<{ old: Record<string, Case>; new: Record<string, Case> }> {
-  const out = { old: {} as Record<string, Case>, new: {} as Record<string, Case> };
+async function writeMojData(write: (name: string, data: unknown) => Promise<void>): Promise<void> {
+  const law = await mojLaws('Law');
+  const order = await mojLaws('Order');
+  await write('pcode_all.json', buildPcodeAll(law.Laws, order.Laws, law.UpdateDate));
+  for (const [group, items] of Object.entries(buildHistories([...law.Laws, ...order.Laws]))) await write(`histories-${group}.json`, items);
+  console.log(`法務部資料：法律 ${law.Laws.length}、命令 ${order.Laws.length}（更新日 ${law.UpdateDate}）`);
+}
+
+async function crawl(start: string): Promise<Record<string, Case>> {
+  const out: Record<string, Case> = {};
   const seen = new Set<string>();
   for (let url: string | null = start; url && !seen.has(url); ) {
     seen.add(url);
     const page = parseConsPage(await (await fetchRetry(url)).text(), url);
-    if (page.kind && page.key && page.case) out[page.kind][page.key] = page.case;
-    if (seen.size % 50 === 0) console.log(`已抓 ${seen.size} 頁`);
+    if (page.key && page.case) out[page.key] = page.case;
+    if (seen.size % 50 === 0) console.log(`${start} 已抓 ${seen.size} 頁`);
     url = page.next;
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -156,13 +169,8 @@ async function main(): Promise<void> {
   await mkdir(OUT, { recursive: true });
   const write = (name: string, data: unknown) => writeFile(path.join(OUT, name), JSON.stringify(data));
 
-  const [law, order] = await Promise.all([mojLaws('Law'), mojLaws('Order')]);
-  await write('pcode_all.json', buildPcodeAll(law.Laws, order.Laws, law.UpdateDate));
-  for (const [group, items] of Object.entries(buildHistories([...law.Laws, ...order.Laws]))) await write(`histories-${group}.json`, items);
-  console.log(`法務部資料：法律 ${law.Laws.length}、命令 ${order.Laws.length}（更新日 ${law.UpdateDate}）`);
-
-  const oldCases = (await crawl(CONS_START.old)).old;
-  const newCases = (await crawl(CONS_START.new)).new;
+  // 三者互不相關；兩條憲法法庭爬取各自仍逐頁進行
+  const [, oldCases, newCases] = await Promise.all([writeMojData(write), crawl(CONS_START.old), crawl(CONS_START.new)]);
   if (Object.keys(oldCases).length < 813) throw new Error(`釋字只抓到 ${Object.keys(oldCases).length} 號，應有 813 號，請檢查憲法法庭網站是否改版`);
   await write('old_cases.json', oldCases);
   await write('new_cases.json', newCases);

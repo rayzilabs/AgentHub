@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -7,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { publicJwk, signCreatorToken } from '@/lib/platform-tokens';
 import { verifyPlatformToken } from '@/demo/hosted-mcp/taiwan-law/auth.mjs';
-import { currentTerm, getLawProgress, getLawVersions, searchBills } from '@/demo/hosted-mcp/taiwan-law/ly.mjs';
+import { testSigningKey } from './helpers';
+import { createLy, currentTerm } from '@/demo/hosted-mcp/taiwan-law/ly.mjs';
 
 const PKG = fileURLToPath(new URL('../demo/hosted-mcp/taiwan-law/', import.meta.url));
 
-const pem = () => generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+const pem = testSigningKey;
 
 describe('taiwan-law 代管套件：平台通行證', () => {
   const key = pem();
@@ -61,6 +61,7 @@ describe('taiwan-law 代管套件：立法院官方開放資料', () => {
     return new Response(JSON.stringify(body));
   };
   const now = new Date('2026-11-12T00:00:00+08:00');
+  const { searchBills, getLawProgress, getLawVersions } = createLy(fakeFetch, () => now);
 
   it('依日期算出目前是第幾屆（第 11 屆自 2024 年 2 月起）', () => {
     expect(currentTerm(new Date('2024-01-31T12:00:00+08:00'))).toBe(10);
@@ -69,23 +70,30 @@ describe('taiwan-law 代管套件：立法院官方開放資料', () => {
   });
 
   it('搜尋議案：只連立法院官方資料，依關鍵字、提案人、狀態篩選，拆開提案人與連署人', async () => {
-    const out = await searchBills({ keyword: '個人資料保護法', limit: 10, now }, fakeFetch);
+    const out = await searchBills({ keyword: '個人資料保護法', limit: 10 });
     expect(out.bills.map((b: { bill_no: string }) => b.bill_no)).toEqual(['202110000001', '202010000001']);
     expect(out.bills[0]).toMatchObject({ proposers: ['王小明'], cosignatories: ['李大華', '陳美玲'], status: '交付審查', term: '11', document_pdf: 'https://ppg.ly.gov.tw/202110000001.pdf' });
     expect(out.attribution).toContain('政府資料開放授權條款');
-    expect((await searchBills({ keyword: '個人資料保護法', term: 10, now }, fakeFetch)).bills).toHaveLength(1);
-    expect((await searchBills({ keyword: '法', billStatus: '三讀', now }, fakeFetch)).bills.map((b: { bill_no: string }) => b.bill_no)).toEqual(['202110000002']);
-    expect((await searchBills({ proposer: '行政院', now }, fakeFetch)).bills).toHaveLength(1);
+    expect((await searchBills({ keyword: '個人資料保護法', term: 10 })).bills).toHaveLength(1);
+    expect((await searchBills({ keyword: '法', billStatus: '三讀' })).bills.map((b: { bill_no: string }) => b.bill_no)).toEqual(['202110000002']);
+    expect((await searchBills({ proposer: '行政院' })).bills).toHaveLength(1);
+  });
+
+  it('同時進來的查詢共用同一次下載，之後用快取', async () => {
+    const before = requested.length;
+    const ly = createLy(fakeFetch, () => now);
+    await Promise.all([ly.searchBills({ keyword: '法' }), ly.getLawProgress('法'), ly.searchBills({ proposer: '王' })]);
+    expect(requested.length - before).toBe(2);
   });
 
   it('法律的立法歷程：統計各狀態，只列名稱含這部法律的議案', async () => {
-    const out = await getLawProgress('個人資料保護法', 1, fakeFetch, now);
+    const out = await getLawProgress('個人資料保護法', 1);
     expect(out).toMatchObject({ success: true, law_name: '個人資料保護法', total_bills: 2, status_summary: { 交付審查: 1, 審查完畢: 1 }, truncated: true });
     expect(out.bills).toHaveLength(1);
   });
 
   it('三讀紀錄：從資料集 373 找名稱含這部法律的三讀條文', async () => {
-    const out = await getLawVersions('個人資料保護法', 30, fakeFetch);
+    const out = await getLawVersions('個人資料保護法', 30);
     expect(out.versions).toEqual([{ title: '修正個人資料保護法部分條文，咨請公布。', third_reading_meeting: '11-04-08', document_pdf: 'https://ppg.ly.gov.tw/a.pdf', note: '' }]);
     expect(out.source_url).toBe('https://data.ly.gov.tw/odw/openDatasetJson.action?id=373&selectTerm=all&page=1');
     expect(requested.every((u) => new URL(u).hostname === 'data.ly.gov.tw')).toBe(true);
