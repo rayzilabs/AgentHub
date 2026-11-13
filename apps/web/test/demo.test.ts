@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiHostedClient, BUSINESS_AGENTS_ROOT, loadDemoAgents, publishDemoAgents, type DemoAgent } from '@/lib/demo';
 import { HttpError } from '@/lib/http';
 import { TemplateInputSchema } from '@/lib/schemas';
-import { listVersions } from '@/lib/services/hosted-mcp';
-import { listMyTemplates, listPublishedTemplates } from '@/lib/services/templates';
+import { HOSTED_BUCKET, listVersions } from '@/lib/services/hosted-mcp';
+import { createTemplate, listMyTemplates, listPublishedTemplates } from '@/lib/services/templates';
 import { parseSkillsZip } from '@/lib/skills-zip';
 import { fakeSprites, seedUser, serviceHostedClient, testDb, testSigningKey } from './helpers';
 
@@ -159,13 +159,25 @@ describe('平台代管 MCP 套件', () => {
   });
 
   it('內容沒變時，也會下架上次中斷留下的失敗版本', async () => {
-    const { first, publish, versions } = await firstPublish();
-    const { error } = await db.from('hosted_mcp_versions')
-      .insert({ template_id: first.id, mcp_name: 'law', version: 2, status: 'failed', bundle_path: `${first.id}/law/2.zip`, sprite_name: 'agenthub-mcp-leftover00000' });
+    // 直接在資料庫建好「已發布的第 1 版（套件已在 Storage）＋中斷留下的失敗第 2 版」，只跑一輪上架
+    const creator = await seedUser(db);
+    const { agents, hosted } = await fixture();
+    const [agent] = await loadDemoAgents(agents, hosted);
+    const t = await createTemplate(db, creator.id, agent.input);
+    const bundle = `${t.id}/law/1.zip`;
+    const { error: uploadError } = await db.storage.from(HOSTED_BUCKET).upload(bundle, zipSync(agent.hosted.law), { contentType: 'application/zip' });
+    if (uploadError) throw uploadError;
+    const { error } = await db.from('hosted_mcp_versions').insert([
+      { template_id: t.id, mcp_name: 'law', version: 1, status: 'published', bundle_path: bundle, published_at: new Date().toISOString() },
+      { template_id: t.id, mcp_name: 'law', version: 2, status: 'failed', bundle_path: `${t.id}/law/2.zip`, sprite_name: 'agenthub-mcp-leftover00000' },
+    ]);
     if (error) throw error;
+    const { ops, calls } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
 
-    expect((await publish()).deployed).toEqual([]);
-    expect(await versions()).toEqual([[2, 'retired'], [1, 'published']]);
+    const [again] = await publishDemoAgents(db, creator.id, [agent], serviceHostedClient(db, creator.id, ops));
+    expect(again).toMatchObject({ id: t.id, created: false, deployed: [] });
+    expect((await listVersions(db, creator.id, t.id, 'law')).map((v) => [v.version, v.status])).toEqual([[2, 'retired'], [1, 'published']]);
+    expect(calls.filter((c) => c.fn === 'destroy').map((c) => c.args[0])).toEqual(['agenthub-mcp-leftover00000']);
   });
 
   it('有代管 MCP 卻沒給 HostedClient 時說明要怎麼做', async () => {
