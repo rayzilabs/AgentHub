@@ -172,7 +172,7 @@
 做法：`@test.local` 測試帳號在正式站（https://agenthub-kappa-pink.vercel.app）建專案、租用人資顧問，透過 API 對話，再從 `messages.tool_events` 讀出工具紀錄；結束後刪除專案、Sprite 與測試帳號（都已確認刪除）。
 
 **第 1 輪（2026-11-12 晚上，修正前的版本）**：腳本把 `tool_events` 讀錯格式，沒記到工具紀錄，不能當作「有載入 skill、有呼叫 MCP」的證據。從回答內容發現兩個問題並已修正：
-- 顧問不知道今天日期：runtime 的 prompt 沒有日期，顧問自己猜成 2026-03-29，說霸凌專章「最晚 115/7/1 前完成」（其實已施行）。→ system prompt 加上「先用 `TZ=Asia/Taipei date +%F` 取得日期」。平台層級在 runtime 注入日期的建議已交給主工作區。
+- 顧問不知道今天日期：runtime 的 prompt 沒有日期，顧問自己猜成 2026-03-29，說霸凌專章「最晚 115/7/1 前完成」（其實已施行）。→ system prompt 加上「先用 `TZ=Asia/Taipei date +%F` 取得日期」。平台層級在 runtime 注入日期的建議已交給主工作區。後續：KAN-18 在 runtime 的 prompt 注入今天日期（台灣時間）上線後，這個臨時解法已拿掉，改以 prompt 裡的「今天」為準。
 - 顧問把勞基法第 74 條的罰鍰說成 2 萬～100 萬（第 79 條第 1 項），正確是第 79 條第 3 項的 2 萬～30 萬。→ termination 的高風險旗標補上正確罰則。
 
 **第 2 輪（2026-11-13 13:54–14:01，人資顧問掛三個代管 MCP：taiwan-payroll、taiwan-holidays、taiwan-law）**：

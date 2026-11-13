@@ -18,11 +18,6 @@ describe('人資顧問', () => {
     files = Object.fromEntries(Object.entries(unzipSync(hr.skillsZip)).map(([p, b]) => [p, strFromU8(b)]));
   });
 
-  it('system prompt 要求先取得今天日期', () => {
-    // runtime 的 prompt 沒有今天日期；期限、法規是否已施行、年度費率都依賴日期
-    expect(hr.input.system_prompt).toContain('TZ=Asia/Taipei date');
-  });
-
   it('每個 skill 的 description 寫明什麼情況用', () => {
     for (const s of parseSkillsZip(hr.skillsZip)) expect(s.description, s.name).toMatch(/時用|用：/);
   });
