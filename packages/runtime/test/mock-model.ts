@@ -1,4 +1,12 @@
+import { APICallError } from 'ai';
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test';
+
+/** Vertex 忙線（共用容量塞車）時回的錯誤；標成不可重試，測試才不用等 AI SDK 退避重試 */
+export function quotaError() {
+  return new APICallError({
+    message: 'Resource exhausted. Please try again later.', url: 'https://platform/api/runtime/model', requestBodyValues: {}, statusCode: 429, isRetryable: false,
+  });
+}
 
 export const usage = {
   inputTokens: { total: 10, noCache: 8, cacheRead: 2, cacheWrite: 0 },

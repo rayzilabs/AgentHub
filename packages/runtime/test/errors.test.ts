@@ -1,10 +1,8 @@
-import { APICallError, RetryError } from 'ai';
+import { RetryError } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { BUSY_ERROR, modelErrorText } from '../src/errors';
+import { quotaError as quota } from './mock-model';
 
-const quota = () => new APICallError({
-  message: 'Resource exhausted. Please try again later.', url: 'https://platform/api/runtime/model', requestBodyValues: {}, statusCode: 429, isRetryable: true,
-});
 
 describe('modelErrorText', () => {
   it('模型配額用完（429／Resource exhausted）：改成請使用者稍後再試', () => {
