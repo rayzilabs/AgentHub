@@ -6,7 +6,7 @@ const decode = (part) => JSON.parse(Buffer.from(part, 'base64url').toString('utf
 
 /**
  * @param {string | undefined} token
- * @param {{ audience: string, issuer: string, jwks: () => Promise<{ keys: object[] }> }} opts
+ * @param {{ audience: string, issuer: string, jwks: (force?: boolean) => Promise<{ keys: object[] }> }} opts
  */
 export async function verifyPlatformToken(token, { audience, issuer, jwks }) {
   if (!token) throw fail(401, '缺少平台通行證');
@@ -19,13 +19,15 @@ export async function verifyPlatformToken(token, { audience, issuer, jwks }) {
   } catch (e) {
     throw fail(401, `通行證無效：${e.message}`);
   }
-  let keys;
-  try {
-    ({ keys } = await jwks());
-  } catch (e) {
-    throw fail(503, `取不到平台公鑰：${e.message}`);
-  }
-  const jwk = keys.find((k) => k.kid === header.kid);
+  const findKey = async (force) => {
+    try {
+      return (await jwks(force)).keys.find((k) => k.kid === header.kid);
+    } catch (e) {
+      throw fail(503, `取不到平台公鑰：${e.message}`);
+    }
+  };
+  // 不認得的 kid 可能是平台剛換鑰匙，快取裡還沒有：強制重抓一次
+  const jwk = (await findKey(false)) ?? (await findKey(true));
   const data = Buffer.from(`${parts[0]}.${parts[1]}`);
   const sig = Buffer.from(parts[2], 'base64url');
   const valid = header.alg === 'ES256' && jwk
@@ -34,14 +36,16 @@ export async function verifyPlatformToken(token, { audience, issuer, jwks }) {
   const sec = Date.now() / 1000;
   if (payload.iss !== issuer) throw fail(401, '通行證無效：簽發平台不符');
   if (payload.aud !== audience) throw fail(401, '通行證無效：對象網址不符');
-  if (typeof payload.exp !== 'number' || payload.exp + 30 < sec) throw fail(401, '通行證無效：已過期');
+  if (typeof payload.exp !== 'number') throw fail(401, '通行證無效：缺少到期時間');
+  if (payload.exp + 30 < sec) throw fail(401, '通行證無效：已過期');
 }
 
-/** 公鑰快取五分鐘；平台換鑰匙時最多五分鐘內生效 */
+/** 公鑰快取五分鐘；force 時重抓，但 30 秒內最多一次，免得偽造的 kid 讓我們一直打平台 */
 export function cachedJwks(url) {
   let cache = null;
-  return async () => {
-    if (cache && Date.now() - cache.at < 300_000) return cache.value;
+  return async (force = false) => {
+    const age = cache ? Date.now() - cache.at : Infinity;
+    if (age < (force ? 30_000 : 300_000)) return cache.value;
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     cache = { at: Date.now(), value: await res.json() };

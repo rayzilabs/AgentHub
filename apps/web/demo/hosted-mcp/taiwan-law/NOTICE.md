@@ -22,6 +22,8 @@
 | `data/legal-data/pcode_all.json`、`histories-*.json`（法規名稱對 pcode、廢止清單、修正沿革） | 法務部全國法規資料庫開放 API `https://law.moj.gov.tw/api/Ch/Law/JSON`、`/api/Ch/Order/JSON` | 平台維運者每月一次，或重大修法公布後：`cd apps/web && node scripts/taiwan-law-data.ts`（約 80 分鐘：憲法法庭網站每頁約 5 秒，依「下一筆」連結順序抓），commit 後跑 `seed-business-agents.ts` 部署新版本 |
 | `data/legal-data/old_cases.json`、`new_cases.json`、`interp-index.json`（釋字、憲判字全文與索引） | 憲法法庭網站（cons.judicial.gov.tw） | 同上；有新的憲判字時再跑 |
 
+**既有租用者的資料版本**：平台的代管 MCP 版本在租用時鎖定，重新產生資料並部署新版本後，只有之後新加入顧問的專案會用新版本；已租用的專案留在舊版本（舊版本有專案在用時不會被下架）。受影響的只有本機資料檔（法規名稱索引、修正沿革、釋憲全文）；法條、函釋、判決、議案都是即時查官方網站，不受影響。要讓既有專案用新版本，請租用者重新加入顧問。
+
 法令、判決、解釋依《著作權法》第 9 條不受著作權保護；立法院開放資料依《政府資料開放授權條款》使用並標示出處。
 
 意見書只收錄網站上的文件名稱，不含全文。

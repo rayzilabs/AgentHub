@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildHistories, buildIndex, buildPcodeAll, parseConsPage } from '@/scripts/taiwan-law-data';
+import { buildHistories, buildIndex, buildPcodeAll, checkCounts, parseConsPage } from '@/scripts/taiwan-law-data';
 
 const law = (name: string, pcode: string, extra: Record<string, string> = {}) => ({
   LawName: name, LawURL: `https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=${pcode}`, LawAbandonNote: '', LawHistories: `${name}沿革`, ...extra,
@@ -79,5 +79,20 @@ describe('taiwan-law 資料檔：憲法法庭網站', () => {
   it('索引只放字號與爭點', () => {
     expect(buildIndex({ 1: { case_number: '釋字第1號', issues: '爭點', main_text: '長文' } }, { '111_1': { case_number: '111年憲判字第1號', issue_summary: '案由', main_text: '長文' } }))
       .toEqual({ old: { 1: { case_number: '釋字第1號', issues: '爭點' } }, new: { '111_1': { case_number: '111年憲判字第1號', issue_summary: '案由' } } });
+  });
+});
+
+describe('taiwan-law 資料檔：寫檔前的筆數檢查', () => {
+  const ok = { laws: 1351, orders: 10454, oldCases: 813, newCases: 59 };
+
+  it('筆數都夠就通過', () => {
+    expect(() => checkCounts(ok)).not.toThrow();
+  });
+
+  it('任何一種資料太少就整批中止，並說是哪一種', () => {
+    expect(() => checkCounts({ ...ok, newCases: 0 })).toThrow(/憲判字只有 0 號/);
+    expect(() => checkCounts({ ...ok, oldCases: 800 })).toThrow(/釋字只有 800 號/);
+    expect(() => checkCounts({ ...ok, laws: 10 })).toThrow(/法律只有 10 部/);
+    expect(() => checkCounts({ ...ok, orders: 10 })).toThrow(/命令只有 10 部/);
   });
 });

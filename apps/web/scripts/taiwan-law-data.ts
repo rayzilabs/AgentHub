@@ -1,5 +1,5 @@
 // 重新產生代管 taiwan-law MCP 的資料檔（apps/web/demo/hosted-mcp/taiwan-law/data/legal-data/）。
-// 用法：cd apps/web && pnpm exec tsx scripts/taiwan-law-data.ts
+// 用法：cd apps/web && node scripts/taiwan-law-data.ts（約 80 分鐘）
 // 資料來源都是官方：法務部全國法規資料庫開放 API（法規名稱、pcode、沿革）、憲法法庭網站（釋字、憲判字）。
 // 每月跑一次，或重大修法、新憲判字公布後跑；跑完 commit，再跑 seed-business-agents.ts 部署新版本。
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -143,14 +143,6 @@ async function mojLaws(kind: 'Law' | 'Order'): Promise<{ UpdateDate: string; Law
   };
 }
 
-async function writeMojData(write: (name: string, data: unknown) => Promise<void>): Promise<void> {
-  const law = await mojLaws('Law');
-  const order = await mojLaws('Order');
-  await write('pcode_all.json', buildPcodeAll(law.Laws, order.Laws, law.UpdateDate));
-  for (const [group, items] of Object.entries(buildHistories([...law.Laws, ...order.Laws]))) await write(`histories-${group}.json`, items);
-  console.log(`法務部資料：法律 ${law.Laws.length}、命令 ${order.Laws.length}（更新日 ${law.UpdateDate}）`);
-}
-
 async function crawl(start: string): Promise<Record<string, Case>> {
   const out: Record<string, Case> = {};
   const seen = new Set<string>();
@@ -165,16 +157,36 @@ async function crawl(start: string): Promise<Record<string, Case>> {
   return out;
 }
 
+/** 寫檔前的最低筆數（2026-11 實際：法律 1,351、命令 10,454、釋字 813、憲判字 59）；網站改版時解析結果會變少，寧可中止也不要寫入空資料 */
+const MIN = { laws: 1000, orders: 8000, oldCases: 813, newCases: 59 };
+
+export function checkCounts(counts: { laws: number; orders: number; oldCases: number; newCases: number }): void {
+  const problems = [
+    counts.laws < MIN.laws && `法律只有 ${counts.laws} 部（應至少 ${MIN.laws}）`,
+    counts.orders < MIN.orders && `命令只有 ${counts.orders} 部（應至少 ${MIN.orders}）`,
+    counts.oldCases < MIN.oldCases && `釋字只有 ${counts.oldCases} 號（應有 ${MIN.oldCases}）`,
+    counts.newCases < MIN.newCases && `憲判字只有 ${counts.newCases} 號（應至少 ${MIN.newCases}）`,
+  ].filter(Boolean);
+  if (problems.length) throw new Error(`資料筆數不足，沒有寫入任何檔案：${problems.join('；')}。請檢查法務部 API 或憲法法庭網站是否改版。`);
+}
+
 async function main(): Promise<void> {
+  // 三者互不相關；兩條憲法法庭爬取各自仍逐頁進行
+  const [[law, order], oldCases, newCases] = await Promise.all([
+    mojLaws('Law').then(async (l) => [l, await mojLaws('Order')] as const),
+    crawl(CONS_START.old),
+    crawl(CONS_START.new),
+  ]);
+  checkCounts({ laws: law.Laws.length, orders: order.Laws.length, oldCases: Object.keys(oldCases).length, newCases: Object.keys(newCases).length });
+
   await mkdir(OUT, { recursive: true });
   const write = (name: string, data: unknown) => writeFile(path.join(OUT, name), JSON.stringify(data));
-
-  // 三者互不相關；兩條憲法法庭爬取各自仍逐頁進行
-  const [, oldCases, newCases] = await Promise.all([writeMojData(write), crawl(CONS_START.old), crawl(CONS_START.new)]);
-  if (Object.keys(oldCases).length < 813) throw new Error(`釋字只抓到 ${Object.keys(oldCases).length} 號，應有 813 號，請檢查憲法法庭網站是否改版`);
+  await write('pcode_all.json', buildPcodeAll(law.Laws, order.Laws, law.UpdateDate));
+  for (const [group, items] of Object.entries(buildHistories([...law.Laws, ...order.Laws]))) await write(`histories-${group}.json`, items);
   await write('old_cases.json', oldCases);
   await write('new_cases.json', newCases);
   await write('interp-index.json', buildIndex(oldCases, newCases));
+  console.log(`法務部資料：法律 ${law.Laws.length}、命令 ${order.Laws.length}（更新日 ${law.UpdateDate}）`);
   console.log(`憲法法庭：釋字 ${Object.keys(oldCases).length} 號、憲判字 ${Object.keys(newCases).length} 號`);
 }
 

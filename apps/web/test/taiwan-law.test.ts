@@ -32,6 +32,25 @@ describe('taiwan-law 代管套件：平台通行證', () => {
     await expect(verifyPlatformToken('a.b', opts)).rejects.toThrow(/通行證無效/);
   });
 
+  it('拒絕 alg 不是 ES256 與沒有 exp 的通行證', async () => {
+    const [h, p, s] = token().split('.');
+    const swap = (part: string, change: object) =>
+      Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(part, 'base64url').toString()), ...change })).toString('base64url');
+    await expect(verifyPlatformToken(`${swap(h, { alg: 'none' })}.${p}.${s}`, opts)).rejects.toThrow(/通行證無效/);
+    const noExp = signCreatorToken({ iss: opts.issuer, aud: opts.audience, sub: 'u', project_id: 'p', template_id: 't' }, key);
+    const [nh, np] = noExp.split('.');
+    const payload = JSON.parse(Buffer.from(np, 'base64url').toString());
+    delete payload.exp;
+    await expect(verifyPlatformToken(`${nh}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.x`, opts)).rejects.toThrow(/通行證無效/);
+  });
+
+  it('遇到不認得的 kid 會強制重抓一次公鑰（平台換鑰匙時不用等快取過期）', async () => {
+    const calls: boolean[] = [];
+    const jwks = async (force?: boolean) => { calls.push(Boolean(force)); return { keys: force ? [publicJwk(key)] : [] }; };
+    await expect(verifyPlatformToken(token(), { ...opts, jwks })).resolves.toBeUndefined();
+    expect(calls).toEqual([false, true]);
+  });
+
   it('取不到平台公鑰時回 503，不是 401', async () => {
     const e = await verifyPlatformToken(token(), { ...opts, jwks: async () => { throw new Error('timeout'); } }).then(() => null, (x: Error) => x);
     expect(e).toMatchObject({ status: 503 });
