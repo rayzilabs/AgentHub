@@ -22900,6 +22900,7 @@ function summarizeCacheMeta(results) {
 
 // worker/legal-legislative.ts (AgentHub: data.ly.gov.tw, see ly.mjs)
 import { getLawProgress, getLawVersions, searchBills } from "./ly.mjs";
+import { fetchLawsWithin, unavailableNote } from "./law-fetch.mjs";
 
 // worker/legal-moj-rules.ts
 var MOJLAW_BASE = "https://mojlaw.moj.gov.tw";
@@ -23214,6 +23215,7 @@ async function fetchOfficial(input, init, attempts = 2, timeoutMs = 15e3) {
   throw lastError instanceof Error ? lastError : new Error("\u5B98\u65B9\u4F86\u6E90\u67E5\u8A62\u5931\u6557");
 }
 async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false) {
+  const startedAt = Date.now();
   const searchUrl = `${LAW_SEARCH}?ty=ONEBAR&kw=${encodeURIComponent(query)}`;
   const terms = termsFor(query);
   const compactQuery = query.replace(/\s+/g, "");
@@ -23221,6 +23223,17 @@ async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false)
   const getOfficial = async (url) => {
     const result = await cachedFetchOfficial(
       (target, init) => fetchOfficial(target, init),
+      url,
+      { headers: { "User-Agent": "TaiwanLegalTechReview/1.0" } },
+      CACHE_TTL.LAW_MOJ,
+      fresh
+    );
+    cacheMetas.push(result);
+    return result.response;
+  };
+  const getLawPage = async (url) => {
+    const result = await cachedFetchOfficial(
+      (target, init) => fetchOfficial(target, init, 1, 45e3),
       url,
       { headers: { "User-Agent": "TaiwanLegalTechReview/1.0" } },
       CACHE_TTL.LAW_MOJ,
@@ -23251,20 +23264,21 @@ async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false)
   const wanted = [...new Set(
     (articleNumber?.match(/\d+(?:[-之]\d+)?/g) ?? []).map((number3) => number3.replace(/之/g, "-").replace(/^0+/, ""))
   )].slice(0, 10);
-  const output = [];
-  for (const law of laws) {
+  const { results: output, unavailable } = await fetchLawsWithin(laws, async (law) => {
     let articles;
     if (wanted.length) {
       articles = await fetchSingleArticles(law.pcode, wanted, getOfficial);
     } else {
-      const response = await getOfficial(law.url);
-      const all = response.ok ? extractArticles(await response.text()) : [];
+      const response = await getLawPage(law.url);
+      if (!response.ok) throw new Error(`\u5168\u570B\u6CD5\u898F\u8CC7\u6599\u5EAB\u56DE\u61C9 ${response.status}`);
+      const all = extractArticles(await response.text());
       const relevant = all.filter((article) => terms.some((term) => article.text.includes(term) || article.number.includes(term)));
       articles = relevant.length ? relevant : all;
     }
-    output.push({ name: law.name, pcode: law.pcode, url: law.url, articles: articles.slice(0, 6) });
-  }
-  return { query, source: "\u6CD5\u52D9\u90E8\u5168\u570B\u6CD5\u898F\u8CC7\u6599\u5EAB", source_url: searchUrl, results: output, ...summarizeCacheMeta(cacheMetas) };
+    return { name: law.name, pcode: law.pcode, url: law.url, articles: articles.slice(0, 6) };
+  }, { deadline: startedAt + 5e4 });
+  const note = unavailableNote(unavailable, laws.length);
+  return { query, source: "\u6CD5\u52D9\u90E8\u5168\u570B\u6CD5\u898F\u8CC7\u6599\u5EAB", source_url: searchUrl, results: output, ...(note ? { unavailable, note } : {}), ...summarizeCacheMeta(cacheMetas) };
 }
 async function fetchSingleArticles(pcode, articleNumbers, getOfficial) {
   const articles = [];

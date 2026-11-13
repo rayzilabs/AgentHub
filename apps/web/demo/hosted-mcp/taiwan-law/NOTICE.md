@@ -9,7 +9,8 @@
   1. 立法歷程三個工具（`get_taiwan_law_progress`、`get_taiwan_law_versions`、`search_taiwan_bills`）原本查民間的 LYAPI（ly.govapi.tw），改成匯入 `ly.mjs`，直接查立法院開放資料服務平台；三個工具的說明同步改寫。
   2. 資料檔只讀本套件的 `data/legal-data/`，預設上游從 `https://legaltech.org.tw` 改成不存在的位址，執行時不會連到第三方。
   3. `/mcp` 先呼叫 `start.mjs` 提供的平台通行證驗證，平台以外的請求回 401。
-- `start.mjs`、`auth.mjs`、`ly.mjs`：AgentHub 撰寫。
+  4. `search_taiwan_laws` 的法規全文頁（LawAll）改由 `law-fetch.mjs` 同時抓、整個工具呼叫最多 50 秒（全文頁單次最多等 45 秒、不重試）；單部法規逾時或失敗不再讓整個工具失敗，而是列在 `unavailable`（附官方網址）並加上 `note` 說明。原因：大部法規（例如民法）的全文頁，法務部伺服器要 20 秒以上才回應，原程式一部一部等、每次 15 秒逾時，只帶關鍵字查詢時整個工具會失敗。
+- `start.mjs`、`auth.mjs`、`ly.mjs`、`law-fetch.mjs`：AgentHub 撰寫。
 
 ## 資料來源與更新方式
 

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { publicJwk, signCreatorToken } from '@/lib/platform-tokens';
 import { verifyPlatformToken } from '@/demo/hosted-mcp/taiwan-law/auth.mjs';
 import { testSigningKey } from './helpers';
+import { fetchLawsWithin, unavailableNote } from '@/demo/hosted-mcp/taiwan-law/law-fetch.mjs';
 import { createLy, currentTerm } from '@/demo/hosted-mcp/taiwan-law/ly.mjs';
 
 const PKG = fileURLToPath(new URL('../demo/hosted-mcp/taiwan-law/', import.meta.url));
@@ -167,5 +168,48 @@ describe('taiwan-law 代管套件：實際啟動', () => {
       child.kill();
       platform.close();
     }
+  });
+});
+
+describe('taiwan-law 代管套件：關鍵字查法規時逐部抓全文', () => {
+  const law = (name: string) => ({ name, pcode: name, url: `https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=${name}` });
+  const after = <T,>(ms: number, value: T) => new Promise<T>((r) => setTimeout(() => r(value), ms));
+
+  it('同時抓，不是一部一部等', async () => {
+    const t0 = Date.now();
+    const out = await fetchLawsWithin([law('A'), law('B'), law('C')], (l: { name: string }) => after(150, { name: l.name }), { deadline: Date.now() + 5000 });
+    expect(Date.now() - t0).toBeLessThan(400);
+    expect(out.results.map((r: { name: string }) => r.name)).toEqual(['A', 'B', 'C']);
+    expect(out.unavailable).toEqual([]);
+  });
+
+  it('其中一部超過總時限：時間到就回傳已抓到的，逾時的列為暫時取不到並附官方網址', async () => {
+    const t0 = Date.now();
+    const out = await fetchLawsWithin([law('A'), law('SLOW'), law('C')],
+      (l: { name: string }) => after(l.name === 'SLOW' ? 5000 : 50, { name: l.name }), { deadline: Date.now() + 300 });
+    expect(Date.now() - t0).toBeLessThan(800);
+    expect(out.results.map((r: { name: string }) => r.name)).toEqual(['A', 'C']);
+    expect(out.unavailable).toEqual([{ name: 'SLOW', pcode: 'SLOW', url: law('SLOW').url, reason: '官方網站回應太慢，超過時限' }]);
+  });
+
+  it('其中一部出錯：其他照常回傳，出錯的附上原因', async () => {
+    const out = await fetchLawsWithin([law('A'), law('BAD')],
+      async (l: { name: string }) => { if (l.name === 'BAD') throw new Error('fetch failed'); return { name: l.name }; }, { deadline: Date.now() + 5000 });
+    expect(out.results.map((r: { name: string }) => r.name)).toEqual(['A']);
+    expect(out.unavailable).toEqual([{ name: 'BAD', pcode: 'BAD', url: law('BAD').url, reason: 'fetch failed' }]);
+  });
+
+  it('全部都失敗時回傳清楚的說明，不拋出錯誤', async () => {
+    const out = await fetchLawsWithin([law('A'), law('B')], async () => { throw new Error('fetch failed'); }, { deadline: Date.now() + 5000 });
+    expect(out.results).toEqual([]);
+    expect(unavailableNote(out.unavailable, 2)).toMatch(/全部暫時取不到/);
+    expect(unavailableNote([], 2)).toBeUndefined();
+    expect(unavailableNote(out.unavailable.slice(0, 1), 2)).toMatch(/1 部暫時取不到/);
+  });
+
+  it('server.js 的關鍵字路徑改用 law-fetch.mjs，並有整體時限', () => {
+    const server = readFileSync(`${PKG}server.js`, 'utf8');
+    expect(server).toContain('import { fetchLawsWithin, unavailableNote } from "./law-fetch.mjs";');
+    expect(server).toContain('await fetchLawsWithin(laws,');
   });
 });
