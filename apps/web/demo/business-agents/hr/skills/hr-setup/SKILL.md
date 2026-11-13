@@ -54,7 +54,7 @@ description: 第一次在這個專案談人資問題、專案記憶裡沒有 hr-
 - `content`：用下面的格式
 
 ```markdown
-# 人資設定（更新：YYYY-MM-DD）
+# 人資設定（更新：YYYY-MM-DD，用 `TZ=Asia/Taipei date +%F` 取得，不要自己填）
 ## 規模與行業
 - 公司／行業：
 - 員工人數：（含兼職，日期）　據點：

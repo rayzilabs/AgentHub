@@ -26,6 +26,8 @@ describe('人資顧問', () => {
     expect(TemplateInputSchema.parse(hr.input)).toEqual(hr.input);
     expect(hr.input.description).toMatch(/（示範內容，正式版本將由執業專業人士提供）$/);
     expect(hr.input.system_prompt).toContain('以下為一般性分析，不構成正式法律、財務或授信意見');
+    // runtime 的 prompt 沒有今天日期；期限、法規是否已施行、年度費率都依賴日期
+    expect(hr.input.system_prompt).toContain('TZ=Asia/Taipei date');
     expect(parseSkillsZip(hr.skillsZip).map((s) => s.name).sort()).toEqual(SKILLS);
     expect(hr.input.mcp_servers.map((m) => [m.name, m.transport, m.hosted])).toEqual([
       ['taiwan-payroll', 'remote', true],
