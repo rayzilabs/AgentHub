@@ -147,7 +147,7 @@ describe.each([
       env: { ...process.env, PORT: String(port), AGENTHUB_MCP_URL: mcpUrl, AGENTHUB_PLATFORM_URL: platformUrl },
       stdio: 'ignore',
     });
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 450; i++) {
       try {
         await fetch(mcpUrl, { method: 'POST' });
         return;
@@ -155,7 +155,7 @@ describe.each([
         await new Promise((r) => setTimeout(r, 200));
       }
     }
-    throw new Error(`${name} 沒有在 20 秒內啟動`);
+    throw new Error(`${name} 沒有在 90 秒內啟動（tsx 第一次編譯在 Windows 上可能要十幾秒以上）`);
   }, 240_000);
 
   afterAll(() => {
