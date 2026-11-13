@@ -13,6 +13,11 @@
       "name": "taiwan-holidays",
       "transport": "remote",
       "hosted": true
+    },
+    {
+      "name": "taiwan-law",
+      "transport": "remote",
+      "hosted": true
     }
   ]
 }

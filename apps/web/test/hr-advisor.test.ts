@@ -22,7 +22,7 @@ describe('人資顧問', () => {
     files = Object.fromEntries(Object.entries(unzipSync(hr.skillsZip)).map(([p, b]) => [p, strFromU8(b)]));
   });
 
-  it('格式通過、skill 清單正確、兩句標示都在、掛上兩個代管 MCP', () => {
+  it('格式通過、skill 清單正確、兩句標示都在、掛上三個代管 MCP', () => {
     expect(TemplateInputSchema.parse(hr.input)).toEqual(hr.input);
     expect(hr.input.description).toMatch(/（示範內容，正式版本將由執業專業人士提供）$/);
     expect(hr.input.system_prompt).toContain('以下為一般性分析，不構成正式法律、財務或授信意見');
@@ -32,8 +32,9 @@ describe('人資顧問', () => {
     expect(hr.input.mcp_servers.map((m) => [m.name, m.transport, m.hosted])).toEqual([
       ['taiwan-payroll', 'remote', true],
       ['taiwan-holidays', 'remote', true],
+      ['taiwan-law', 'remote', true],
     ]);
-    expect(Object.keys(hr.hosted).sort()).toEqual(['taiwan-holidays', 'taiwan-payroll']);
+    expect(Object.keys(hr.hosted).sort()).toEqual(['taiwan-holidays', 'taiwan-law', 'taiwan-payroll']);
   });
 
   it('每個 skill 的 description 寫明什麼情況用、結尾有來源段落', () => {
