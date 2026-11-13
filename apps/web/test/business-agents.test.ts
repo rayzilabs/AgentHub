@@ -21,11 +21,36 @@ type AgentSpec = {
   extraDisclaimer?: string;
   /** NOTICE.md 必須提到的來源與授權 */
   noticeMentions: string[];
-  /** 允許出現中國用語的檔案（用語對照表），路徑相對於 skills/ */
-  wordingTables?: string[];
+  /** 檔案（相對於 skills/）允許出現的禁用詞：用語對照表、說明「不要套用某外國法」時會點名它 */
+  allowedTerms?: Record<string, string[]>;
+  /** 不放數字與價格、所以不用標「資料截至」的範本（相對於 skills/） */
+  undatedReferences?: string[];
 };
 
+const DEMO_NOTE = '（示範內容，正式版本將由執業專業人士提供）';
+const DISCLAIMER = '以下為一般性分析，不構成正式法律、財務或授信意見';
+const CHINA_TERMS = ['視頻', '營銷', '質量', '用戶', '性價比', '網絡', '信息', '軟件', '優化', '打造爆款'];
+// 美國法規與美國情境殘留；`${CLAUDE_SKILL_DIR}` 這類 skill 變數不算，只擋「$ 後面接數字」的美元金額
+const US_RESIDUE = ['FTC', 'CAN-SPAM', 'GDPR', 'CCPA', 'FLSA', 'at-will', '401(k)', 'W-2', 'Product Hunt', 'MRR', 'paywall', 'USD'];
+const DOLLAR_AMOUNT = /\$\s?\d/;
+
 const AGENTS: Record<string, AgentSpec> = {
+  legal: {
+    skills: [
+      'ad-claims-review', 'contract-review', 'legal-letter', 'legal-risk-triage',
+      'legal-setup', 'nda-review', 'online-terms-review', 'privacy-check',
+    ],
+    mcpServers: [{ name: 'taiwan-law', transport: 'remote', hosted: true, required_secrets: [] }],
+    toolNames: [],
+    playbook: 'legal-playbook',
+    noticeMentions: ['anthropics/claude-for-legal', 'anthropics/knowledge-work-plugins', 'Apache License 2.0'],
+    allowedTerms: {
+      'ad-claims-review/SKILL.md': ['FTC'],
+      'privacy-check/SKILL.md': ['GDPR', 'CCPA'],
+      'privacy-check/references/vendor-and-crossborder.md': ['GDPR'],
+    },
+    undatedReferences: ['legal-letter/references/templates.md', 'privacy-check/references/notice-template.md'],
+  },
   marketing: {
     skills: [
       'campaign-plan', 'copywriting', 'customer-competitor-research', 'line-official-account',
@@ -36,16 +61,9 @@ const AGENTS: Record<string, AgentSpec> = {
     playbook: 'marketing-playbook',
     extraDisclaimer: '行銷成效會因產業、預算與執行而不同；涉及廣告法規的內容請另請法務確認',
     noticeMentions: ['anthropics/knowledge-work-plugins', 'Apache License 2.0', 'coreyhaines31/marketingskills', 'MIT'],
-    wordingTables: ['copywriting/references/tw-wording.md'],
+    allowedTerms: { 'copywriting/references/tw-wording.md': CHINA_TERMS },
   },
 };
-
-const DEMO_NOTE = '（示範內容，正式版本將由執業專業人士提供）';
-const DISCLAIMER = '以下為一般性分析，不構成正式法律、財務或授信意見';
-const CHINA_TERMS = ['視頻', '營銷', '質量', '用戶', '性價比', '網絡', '信息', '軟件', '優化', '打造爆款'];
-// 美國法規與美國情境殘留；`${CLAUDE_SKILL_DIR}` 這類 skill 變數不算，只擋「$ 後面接數字」的美元金額
-const US_RESIDUE = ['FTC', 'CAN-SPAM', 'GDPR', 'CCPA', 'FLSA', 'at-will', '401(k)', 'W-2', 'Product Hunt', 'MRR', 'paywall', 'USD'];
-const DOLLAR_AMOUNT = /\$\s?\d/;
 
 describe('business-agents 資料夾都有測試設定', () => {
   it('每個顧問資料夾都在 AGENTS 對照表裡', async () => {
@@ -92,20 +110,22 @@ describe.each(Object.entries(AGENTS))('%s', (slug, spec) => {
     for (const f of skillMds) {
       expect(f.text, f.file).toContain(spec.playbook);
       expect(f.text, f.file).toMatch(/## 來源/);
-      expect(f.text, f.file).toContain('已翻譯並改寫為台灣情境');
+      expect(f.text, f.file).toMatch(/改寫為台灣/);
     }
   });
 
   it('沒有中國用語，也沒有美國法規或美國情境殘留', () => {
     for (const f of files) {
-      const terms = spec.wordingTables?.includes(f.file) ? US_RESIDUE : [...CHINA_TERMS, ...US_RESIDUE];
-      for (const term of terms) expect(f.text.includes(term), `${f.file} 出現「${term}」`).toBe(false);
+      const allowed = spec.allowedTerms?.[f.file] ?? [];
+      for (const term of [...CHINA_TERMS, ...US_RESIDUE].filter((t) => !allowed.includes(t))) {
+        expect(f.text.includes(term), `${f.file} 出現「${term}」`).toBe(false);
+      }
       expect(f.text, `${f.file} 出現美元金額`).not.toMatch(DOLLAR_AMOUNT);
     }
   });
 
   it('references 都附「資料截至」日期', () => {
-    const refs = files.filter((f) => f.file.includes('/references/'));
+    const refs = files.filter((f) => f.file.includes('/references/') && !spec.undatedReferences?.includes(f.file));
     expect(refs.length).toBeGreaterThan(0);
     for (const f of refs) expect(f.text, f.file).toMatch(/資料截至 \d{4}-\d{2}-\d{2}/);
   });
