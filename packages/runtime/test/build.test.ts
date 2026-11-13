@@ -103,7 +103,6 @@ describe('usageRow', () => {
     const row = usageRow(
       { db, projectId: 'p', runId: 'r', instance: inst },
       {
-        // 實際回答的模型（備援時和 step.model 不同，見 model-fallback.ts）
         response: { modelId: 'gemini-3.8-flash' },
         usage: {
           inputTokens: 100, outputTokens: 20, totalTokens: 120,

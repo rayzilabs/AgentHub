@@ -5,8 +5,8 @@ import { createRun } from '../src/run-store';
 import { loadInstances } from '../src/project-store';
 import { textOf } from '../src/ui-stream';
 import { seedConsultant, seedProject, seedThread, seedUser, testDb, tmpRoots, waitFor } from './helpers';
-import { emptyTurn, failingModel, mockModel, promptText, textTurn, toolTurn } from './mock-model';
-import { APICallError, type LanguageModel } from 'ai';
+import { emptyTurn, failingModel, mockModel, promptText, quotaError, textTurn, toolTurn } from './mock-model';
+import type { LanguageModel } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 
 const db = testDb();
@@ -53,7 +53,7 @@ describe('createConsultantRunner', () => {
   it('模型配額用完：錯誤訊息是「目前使用人數較多，請稍後再試」', async () => {
     const busy = new MockLanguageModelV4({
       doStream: async () => {
-        throw new APICallError({ message: 'Resource exhausted.', url: 'u', requestBodyValues: {}, statusCode: 429, isRetryable: false });
+        throw quotaError();
       },
     });
     const { run, instance } = await setup(busy);
