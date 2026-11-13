@@ -13,6 +13,8 @@ type AgentSpec = {
   skills: string[];
   /** agent.json 的 mcp_servers（含 schema 預設值） */
   mcpServers: unknown[];
+  /** system prompt 要寫出的 MCP 工具名稱（runtime 給模型的名稱是 <MCP 名稱，- 換成 _>__<工具>） */
+  toolNames: string[];
   /** 每個 SKILL.md 開頭都要讀的專案記憶 */
   playbook: string;
   /** 共同開頭聲明之後，這位顧問另外要有的句子 */
@@ -30,6 +32,7 @@ const AGENTS: Record<string, AgentSpec> = {
       'marketing-setup', 'seo-ai-visibility', 'social-content',
     ],
     mcpServers: [{ name: 'tw-marketing', transport: 'remote', hosted: true, required_secrets: [] }],
+    toolNames: ['tw_marketing__tw_calendar', 'tw_marketing__site_audit'],
     playbook: 'marketing-playbook',
     extraDisclaimer: '行銷成效會因產業、預算與執行而不同；涉及廣告法規的內容請另請法務確認',
     noticeMentions: ['anthropics/knowledge-work-plugins', 'Apache License 2.0', 'coreyhaines31/marketingskills', 'MIT'],
@@ -75,6 +78,12 @@ describe.each(Object.entries(AGENTS))('%s', (slug, spec) => {
   it('MCP 設定符合，代管 MCP 的套件讀得到', () => {
     expect(agent.input.mcp_servers).toEqual(spec.mcpServers);
     for (const [name, pkg] of Object.entries(agent.hosted)) expect(Object.keys(pkg), name).toContain('mcp.json');
+  });
+
+  // 只寫「某 MCP 的 某工具」時，模型會先呼叫不存在的工具名稱（2026-11-12 正式站驗收第 1 輪）
+  it('system prompt 用 runtime 實際的工具名稱，skill 不用「某 MCP 的 某工具」的寫法', () => {
+    for (const tool of spec.toolNames) expect(agent.input.system_prompt).toContain(tool);
+    for (const f of files) expect(f.text, f.file).not.toMatch(/MCP 的 `/);
   });
 
   it('每個 SKILL.md 都先讀專案記憶，結尾有來源段落並註明台灣化', () => {
