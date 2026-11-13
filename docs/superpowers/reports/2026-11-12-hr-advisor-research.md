@@ -162,4 +162,31 @@
 
 ## 驗收
 
-（階段三完成後填寫）
+### 測試
+
+- `apps/web/test/business-agents.test.ts`（三位非金融顧問共用規則，含人資的設定）、`hr-advisor.test.ts`（人資特有規則與試算腳本，資遣費用勞動部官網算例：新制 53,125、舊制 107,500）、`hosted-mcp-hr.test.ts`（兩個代管套件本機啟動、通行證 401、和原遠端版 21 筆結果一致、51 筆上游官方向量）。
+- 2026-11-13 拿雲端測試鎖跑完整 `pnpm test`：web 41 檔 463 項通過；runtime 27 檔 314 項通過、5 項原本就略過。`pnpm typecheck` 通過。
+
+### 正式站驗收
+
+做法：`@test.local` 測試帳號在正式站（https://agenthub-kappa-pink.vercel.app）建專案、租用人資顧問，透過 API 對話，再從 `messages.tool_events` 讀出工具紀錄；結束後刪除專案、Sprite 與測試帳號（都已確認刪除）。
+
+**第 1 輪（2026-11-12 晚上，修正前的版本）**：腳本把 `tool_events` 讀錯格式，沒記到工具紀錄，不能當作「有載入 skill、有呼叫 MCP」的證據。從回答內容發現兩個問題並已修正：
+- 顧問不知道今天日期：runtime 的 prompt 沒有日期，顧問自己猜成 2026-03-29，說霸凌專章「最晚 115/7/1 前完成」（其實已施行）。→ system prompt 加上「先用 `TZ=Asia/Taipei date +%F` 取得日期」。平台層級在 runtime 注入日期的建議已交給主工作區。
+- 顧問把勞基法第 74 條的罰鍰說成 2 萬～100 萬（第 79 條第 1 項），正確是第 79 條第 3 項的 2 萬～30 萬。→ termination 的高風險旗標補上正確罰則。
+
+**第 2 輪（2026-11-13 13:54–14:01，人資顧問掛三個代管 MCP：taiwan-payroll、taiwan-holidays、taiwan-law）**：
+
+| 情境 | 問題 | 載入的 skill／呼叫的工具 | 結果 |
+|---|---|---|---|
+| 設定（記憶） | 咖啡廳 12 人（8 全職 4 兼職）、排班、曆年制特休、底薪 30,000＋全勤 2,000… | `bash`（取得日期 2026-11-13）、`hr-setup`、`memory_write`、`taiwan_payroll__calculate_payroll` | 寫入 project 範圍記憶 `hr-playbook`，更新日期正確；列出 10 人以上的性騷擾與霸凌申訴管道義務 |
+| 用記憶 | 「我們公司需要職場霸凌申訴管道嗎？要做哪些事？」 | `bash`、`memory_read`、`harassment-bullying`、`taiwan_law__search_taiwan_laws`（職安法第 22-1 條） | 沒有再問人數，直接用記憶的 12 人判斷屬 10–29 人級距；正確說明專章已於 115/7/1 施行、今天 2026-11-13 已是法定義務 |
+| MCP | 月薪 32,000＋全勤 2,000、1 位眷屬，勞健保勞退與總成本 | `bash`、`payroll-insurance`、`taiwan_payroll__list_years`、`taiwan_payroll__calculate_payroll`（34,000、1 眷） | 全勤獎金併入投保；級距 34,800；員工自付 1,950、公司負擔 6,890、總成本 40,890（和手算一致） |
+| 法規查詢 | 「店長離職後 2 年不能去台中其他咖啡廳，可以嗎？補償多少？請查最新條文」 | `bash`、`onboarding-contract`、`taiwan_law__search_taiwan_laws`（勞基法第 9-1 條）、`taiwan_law__search_taiwan_regulations`（施行細則） | 四要件、最長 2 年、補償不低於月平均工資 50%、區域過廣可能無效，附官方網址。**不精確**：說「施行細則第 7-1 條定義正當營業利益」（第 7-1 條是書面與簽章）→ 已在 onboarding-contract 寫明各條分工 |
+| 資遣（高風險） | 2023/3/1 到職、月薪 45,000、表現差想下月底請走，但上個月剛向勞工局檢舉加班費 | `bash`（日期）、`termination`、`severance.py`、`annual_leave.py`、`taiwan_law__search_taiwan_laws`（勞基法第 74 條） | 🔴 標出報復性解僱（第 74 條、第 79 條第 3 項 2 萬～30 萬）與缺乏不能勝任紀錄；資遣費 86,250 用腳本算；期限都用曆日（最晚 12/01 預告、12/21 前資遣通報、2027/01/30 前付清）。**小問題**：第一次呼叫特休腳本猜錯參數，看到錯誤後自己改正 → termination 已附指令範例 |
+
+五段都沒有美國法殘留，都先取得今天日期，都載入了對應的 skill。
+
+**發現、交給 KAN-14 的問題**：taiwan-law 帶條號的查詢都正常，但只帶關鍵字的查詢（「職業安全衛生法 申訴」「競業禁止」）回傳 `fetch failed`，顧問改用帶條號的查詢補上。
+
+**驗收後的修正與重新上架**：termination 的特休腳本指令範例、onboarding-contract 的施行細則分工，已在 14:03 重新上架（只更新 skill，代管 MCP 沒有建新版本）。
