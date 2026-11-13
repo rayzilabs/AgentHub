@@ -54,10 +54,10 @@ describe('今天的日期', () => {
     expect(consultantAt(now)).toContain('今天是 2026-11-13（星期五），台灣時間。');
   });
 
-  it('UTC 還是前一天、台灣已經是隔天時，用台灣的日期', () => {
-    const now = new Date('2026-11-12T16:30:00Z'); // 台灣 11/13 00:30
-    expect(managerAt(now)).toContain('今天是 2026-11-13（星期五），台灣時間。');
-    expect(consultantAt(now)).toContain('今天是 2026-11-13（星期五），台灣時間。');
+  it('UTC 還是前一天、台灣已經是隔天時，用台灣的日期與星期', () => {
+    const now = new Date('2026-12-31T16:30:00Z'); // UTC 12/31（星期四），台灣 2027/1/1 00:30
+    expect(managerAt(now)).toContain('今天是 2027-01-01（星期五），台灣時間。');
+    expect(consultantAt(now)).toContain('今天是 2027-01-01（星期五），台灣時間。');
   });
 
   it('日期放在角色段落之後、其他段落之前；記憶規則的相對日期以它為準', () => {
