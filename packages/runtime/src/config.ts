@@ -12,7 +12,11 @@ const EnvSchema = z.object({
   /** 共用資料夾的同步紀錄：放在只有 runtime 帳號能讀寫的地方（Sprite 上是 /home/sprite/agenthub，700），顧問改不到 */
   SYNC_STATE_PATH: z.string().default(path.join(os.homedir(), 'agenthub', 'shared-sync.json')),
   SPRITE_API_SOCK: z.string().default('/.sprite/api.sock'),
-  MODEL_ID: z.string().default('gemini-3.6-flash'),
+  /** gemini-3.7-flash 官方 2027-01-28 下架，到時要再換 */
+  MODEL_ID: z.string().default('gemini-3.7-flash'),
+  /** 主模型忙線（429）時依序改用的模型，逗號分隔（見 model-fallback.ts） */
+  MODEL_FALLBACKS: z.string().default('gemini-3.8-flash,gemini-3.5-flash')
+    .transform((s) => s.split(',').map((id) => id.trim()).filter(Boolean)),
   PORT: z.coerce.number().int().default(8080),
   /** 沙盒帳號；Sprite 上一律是 agent，本機開發不設定 */
   SANDBOX_USER: z.string().min(1).optional(),

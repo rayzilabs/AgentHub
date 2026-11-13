@@ -115,6 +115,7 @@ export function testConfig(projectId: string, roots: Roots): Config {
     SPRITE_API_SOCK: roots.sock,
     SYNC_STATE_PATH: roots.syncState,
     MODEL_ID: 'mock',
+    MODEL_FALLBACKS: [],
     PORT: 0,
   };
 }

@@ -2,7 +2,8 @@ import type { LanguageModelUsage } from 'ai';
 import type { Db } from './db';
 import type { AgentInstance } from './types';
 
-export type StepLike = { usage: LanguageModelUsage; model: { modelId: string } };
+/** response.modelId 是實際回答的模型；step.model 在備援時仍是主模型（見 model-fallback.ts） */
+export type StepLike = { usage: LanguageModelUsage; response: { modelId: string } };
 
 export type UsageContext = { db: Db; projectId: string; runId: string; instance: AgentInstance };
 
@@ -13,7 +14,7 @@ export function usageRow(ctx: UsageContext, step: StepLike) {
     instance_id: ctx.instance.id,
     template_id: ctx.instance.template_id,
     creator_id: ctx.instance.creator_id,
-    model: step.model.modelId,
+    model: step.response.modelId,
     prompt_tokens: step.usage.inputTokens ?? 0,
     output_tokens: step.usage.outputTokens ?? 0,
     cached_tokens: step.usage.inputTokenDetails?.cacheReadTokens ?? 0,
