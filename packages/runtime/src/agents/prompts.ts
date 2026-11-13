@@ -12,9 +12,19 @@ const MEMORY_RULES = [
   '- 寫之前先看索引有沒有相同主題的記憶，有就用同一個名稱以 memory_write 更新，不要新增重複的；發現記憶錯了或過時就更新，或用 memory_delete 刪除。',
   '- 一筆記憶一件事。名稱用簡短的英文小寫加連字號；summary 寫一行說明，讓之後看索引就能判斷相不相關。',
   '- feedback 與 project 類的內容寫成：事實，接著「為什麼：」與「怎麼用：」各一行。',
-  '- 「明天」「下週」這類相對日期換成絕對日期。',
+  '- 「明天」「下週」這類相對日期換成絕對日期（以上面的「今天」為準）。',
   '- 能從專案檔案或這次對話直接得知的東西不要記。',
 ].join('\n');
+
+const TAIPEI_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' });
+const TAIPEI_WEEKDAY = new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', weekday: 'long' });
+
+function todaySection(now: Date): string {
+  return [
+    '## 今天',
+    `今天是 ${TAIPEI_DATE.format(now)}（${TAIPEI_WEEKDAY.format(now)}），台灣時間。提到今天、期限、年資或資料截至哪一天時，以這個日期為準，不要自己猜。`,
+  ].join('\n');
+}
 
 /** prompt 裡最多列出幾個共用檔案，其餘請 agent 自己用 ls -R 看 */
 export const SHARED_FILES_LISTED = 50;
@@ -42,6 +52,7 @@ export type ConsultantPromptInput = {
   envFailure?: string;
   /** 沒裝好的那份 requirements */
   envPackages?: string[];
+  now: Date;
 };
 
 export function buildConsultantInstructions(p: ConsultantPromptInput): string {
@@ -54,6 +65,7 @@ export function buildConsultantInstructions(p: ConsultantPromptInput): string {
 
   const sections = [
     p.instance.system_prompt.trim(),
+    todaySection(p.now),
     [
       '## 工作環境',
       `- 你的工作目錄：${p.workDir}。bash 指令和相對路徑都以這裡為基準。`,
@@ -88,11 +100,13 @@ export type ManagerPromptInput = {
   memories: MemoryIndex;
   sharedRoot: string;
   sharedFiles: SharedFile[];
+  now: Date;
 };
 
 export function buildManagerInstructions(p: ManagerPromptInput): string {
   return [
     '你是這個專案的主管，直接面對使用者。你沒有自己的專業 skill：專業問題一律交給顧問處理；簡單的寒暄或釐清需求可以直接回答。',
+    todaySection(p.now),
     ['## 你的顧問', ...p.consultants.map((c) => `- ${c.name}（id: ${c.id}）：${c.description || '（沒有介紹）'}`)].join('\n'),
     [
       '## 怎麼分工',
