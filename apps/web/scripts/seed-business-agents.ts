@@ -32,4 +32,4 @@ for (const p of await publishDemoAgents(db, creatorId, await loadDemoAgents(BUSI
   const deployed = p.deployed.length ? `；部署新版代管 MCP：${p.deployed.join('、')}` : '';
   console.log(`${p.created ? '已建立' : '已更新'}並上架：${p.name}${deployed}`);
 }
-await anon.auth.signOut();
+await anon.auth.signOut({ scope: 'local' });
