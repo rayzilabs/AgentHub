@@ -53,7 +53,7 @@ describe('非金融顧問（只上架到市集）', () => {
     expect(await readFile(path.join(dir, 'NOTICE.md'), 'utf8')).toContain('Apache License 2.0');
     for (const name of LEGAL_SKILLS) {
       const md = await readFile(path.join(dir, 'skills', name, 'SKILL.md'), 'utf8');
-      expect(md, name).toMatch(/\n## 來源\n/);
+      expect(md.match(/^## .+$/gm)?.at(-1), name).toBe('## 來源');
     }
   });
 });

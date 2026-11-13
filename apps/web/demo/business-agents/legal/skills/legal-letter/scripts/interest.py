@@ -13,6 +13,7 @@ Copyright (c) law24tw contributors。AgentHub 改為單檔命令列工具，只�
 日期可用民國 YYYMMDD（1150101）或西元 YYYY-MM-DD／YYYYMMDD；--rate 是年息百分比（5 代表 5%）。輸出 JSON。
 """
 import argparse
+import calendar
 import json
 import sys
 from datetime import date, timedelta
@@ -50,14 +51,21 @@ def add_years(d, n):
         return d.replace(year=d.year + n, day=28)
 
 
+def year_end(start, n):
+    """自 start 起算 n 年的末日：相當日之前一日；2/29 起算而該年沒有 2/29 時，以 2/28（月末）為末日（民法第 121 條第 2 項）。"""
+    if start.month == 2 and start.day == 29 and not calendar.isleap(start.year + n):
+        return date(start.year + n, 2, 28)
+    return add_years(start, n) - timedelta(days=1)
+
+
 def year_basis(start, end):
     """回傳（足年數、殘日、該年度總日數、給付基數）；起迄都算入。"""
     if end < start:
         raise CalcError('終止日早於起算日')
     n = 0
-    while add_years(start, n + 1) - timedelta(days=1) <= end:
+    while year_end(start, n + 1) <= end:
         n += 1
-    rem_start = add_years(start, n)
+    rem_start = year_end(start, n) + timedelta(days=1) if n else start
     rem = (end - rem_start).days + 1
     denom = (add_years(rem_start, 1) - rem_start).days
     basis = Decimal(n) + Decimal(rem) / Decimal(denom)
@@ -65,11 +73,13 @@ def year_basis(start, end):
 
 
 def interest(principal, start, end, rate=5):
+    if principal < 0 or rate < 0:
+        raise CalcError('本金與年息不能是負數')
     s, e = to_date(start), to_date(end)
     n, rem, denom, basis = year_basis(s, e)
     r = Decimal(str(rate)) / 100  # 年息以百分比輸入
     amount = Decimal(str(principal)) * basis * r
-    return {
+    out = {
         'principal': float(Decimal(str(principal))),
         'rate': float(r),
         'start': roc(s),
@@ -79,6 +89,9 @@ def interest(principal, start, end, rate=5):
         'amount': float(amount.quantize(Decimal(1), rounding=ROUND_HALF_UP)),
         'legal_basis': '民法第 233 條（遲延利息）、第 203 條（法定週年利率 5%）；約定利率較高者從約定',
     }
+    if r > Decimal('0.16'):
+        out['warning'] = '約定利率超過週年 16% 的部分無效（民法第 205 條），請求時以 16% 為上限'
+    return out
 
 
 def main():

@@ -27,6 +27,22 @@ describe('legal-letter：遲延利息試算腳本', () => {
     expect(json).toMatchObject({ rate: 0.01, amount: 1000 });
   });
 
+  it('2 月 29 日起算：一年期間到隔年 2 月 28 日（民法第 121 條第 2 項，沒有相當日以月末為末日）', () => {
+    const { json } = run(['--principal', '100000', '--start', '20240229', '--end', '20250228']);
+    expect(json).toMatchObject({ amount: 5000, basis_years: { full: 1, remainder_days: 0 } });
+  });
+
+  it('年息超過週年 16% 時附警告（民法第 205 條）', () => {
+    expect(run(['--principal', '100000', '--rate', '20', '--start', '1150101', '--end', '1151231']).json.warning).toContain('第 205 條');
+    expect(run(['--principal', '100000', '--start', '1150101', '--end', '1151231']).json.warning).toBeUndefined();
+  });
+
+  it('本金或年息是負數時拒絕', () => {
+    const { code, err } = run(['--principal', '-1', '--start', '1150101', '--end', '1151231']);
+    expect(code).not.toBe(0);
+    expect(err).toContain('不能是負數');
+  });
+
   it('日期錯誤時回傳錯誤訊息與非零結束碼', () => {
     const { code, err } = run(['--principal', '1', '--start', '1151301', '--end', '1151231']);
     expect(code).not.toBe(0);
