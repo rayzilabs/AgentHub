@@ -305,7 +305,7 @@ describe('今天的日期由每次組裝時的現在時間帶入', () => {
 
   it('主管與顧問的指示都用組裝當下的台灣日期', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-13T04:00:00Z'));
+    vi.setSystemTime(new Date('2027-03-01T04:00:00Z'));
     // 組裝只會讀記憶索引，查不到的 id 回空索引，不需要先建資料
     const projectId = randomUUID();
     const roots = await tmpRoots();
@@ -324,8 +324,8 @@ describe('今天的日期由每次組裝時的現在時間帶入', () => {
       }),
     ]);
     await consultant.close();
-    expect(manager.instructions).toContain('今天是 2026-11-13（星期五），台灣時間。');
-    expect(consultant.instructions).toContain('今天是 2026-11-13（星期五），台灣時間。');
+    expect(manager.instructions).toContain('今天是 2027-03-01（星期一），台灣時間。');
+    expect(consultant.instructions).toContain('今天是 2027-03-01（星期一），台灣時間。');
   });
 });
 
