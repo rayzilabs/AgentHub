@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readUIMessageStream } from 'ai';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildConsultant, buildManager, MAX_STEPS } from '../src/agents/build';
 import type { Db } from '../src/db';
 import { buildConsultantInstructions, buildManagerInstructions, SUMMARY_HEADINGS } from '../src/agents/prompts';
@@ -48,6 +48,7 @@ describe('buildConsultantInstructions', () => {
       sharedFiles: [{ path: '資料/財報.pdf', fileId: 'f1' }],
       memories: { rows: [{ id: '1', instance_id: null, name: 'risk', description: '客戶偏好保守', type: 'user', updated_at: '' }], omitted: 0 },
       mcpWarnings: ['MCP「finmind」目前無法使用：timeout'],
+      now: new Date(),
     });
     expect(text).toContain('你是法務顧問。');
     expect(text).toContain('/agents/x');
@@ -65,7 +66,7 @@ describe('buildConsultantInstructions', () => {
   it('平台通用規則：回答用到數字或資料時，註明來源與截至日期，工具以外的資料與自己的假設要明講', () => {
     const text = buildConsultantInstructions({
       instance: instance(), workDir: '/w', sharedRoot: '/shared',
-      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
+      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [], now: new Date(),
     });
     expect(text).toContain('## 資料說明');
     expect(text).toContain('資料來源');
@@ -77,7 +78,7 @@ describe('buildConsultantInstructions', () => {
     // 2026-10-29 run c897a145：工具失敗改自己寫程式回測，程式沒算的 8 個基準指標（Sortino、VaR、Beta、Alpha）被編出來填滿表格
     const text = buildConsultantInstructions({
       instance: instance(), workDir: '/w', sharedRoot: '/shared',
-      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
+      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [], now: new Date(),
     });
     expect(text).toContain('程式的輸出');
     expect(text).toContain('未計算');
@@ -87,7 +88,7 @@ describe('buildConsultantInstructions', () => {
   it('沒有檔案、skill、記憶時顯示空狀態', () => {
     const text = buildConsultantInstructions({
       instance: instance(), workDir: '/w', sharedRoot: '/shared',
-      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [],
+      sharedFiles: [], memories: { rows: [], omitted: 0 }, mcpWarnings: [], now: new Date(),
     });
     expect(text).toContain('（目前沒有專案檔案）');
     expect(text).toContain('（沒有 skill）');
@@ -278,6 +279,7 @@ describe('buildManagerInstructions', () => {
       memories: { rows: [], omitted: 0 },
       sharedRoot: '/shared',
       sharedFiles: [{ path: '資料/規格/需求.md', fileId: 'f2' }],
+      now: new Date(),
     });
     expect(text).toContain('- 法務顧問（id: c-1）：契約與法遵');
     expect(text).toContain('- 工程顧問（id: c-2）：（沒有介紹）');
@@ -290,11 +292,40 @@ describe('buildManagerInstructions', () => {
 
   it('彙整時保留顧問的資料說明（來源、截至日期、假設、限制與免責），可以精簡但不能刪掉', () => {
     // 2026-10-30 回覆品質抽查：多顧問時主管的最終回覆 48 則裡 0 則保留顧問寫的揭露與免責
-    const text = buildManagerInstructions({ consultants: [instance({ id: 'c-1' })], memories: { rows: [], omitted: 0 }, sharedRoot: '/shared', sharedFiles: [] });
+    const text = buildManagerInstructions({ consultants: [instance({ id: 'c-1' })], memories: { rows: [], omitted: 0 }, sharedRoot: '/shared', sharedFiles: [], now: new Date() });
     expect(text).toContain('資料來源');
     expect(text).toContain('截至');
     expect(text).toContain('免責');
     expect(text).toContain('不能刪掉');
+  });
+});
+
+describe('今天的日期由每次組裝時的現在時間帶入', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('主管與顧問的指示都用組裝當下的台灣日期', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-13T04:00:00Z'));
+    // 組裝只會讀記憶索引，查不到的 id 回空索引，不需要先建資料
+    const projectId = randomUUID();
+    const roots = await tmpRoots();
+    const [manager, consultant] = await Promise.all([
+      buildManager({
+        db, model: mockModel(),
+        config: { PROJECT_ID: projectId, SHARED_ROOT: roots.sharedRoot },
+        manager: instance({ project_id: projectId, role: 'manager', name: '主管' }),
+        consultants: [instance({ name: 'A' })],
+        sharedFiles: [], runner: async function* () {}, record: async () => {},
+      }),
+      buildConsultant({
+        db, model: mockModel(),
+        config: { PROJECT_ID: projectId, AGENTS_ROOT: roots.agentsRoot, SHARED_ROOT: roots.sharedRoot },
+        instance: instance({ project_id: projectId }), sharedFiles: [], secrets: {},
+      }),
+    ]);
+    await consultant.close();
+    expect(manager.instructions).toContain('今天是 2026-11-13（星期五），台灣時間。');
+    expect(consultant.instructions).toContain('今天是 2026-11-13（星期五），台灣時間。');
   });
 });
 

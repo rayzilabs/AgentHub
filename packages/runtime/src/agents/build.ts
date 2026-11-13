@@ -164,6 +164,7 @@ export async function buildConsultant(ctx: ConsultantContext): Promise<BuiltAgen
       mcpWarnings: mcp.warnings,
       envFailure: ctx.env?.failure,
       envPackages: ctx.env?.packages,
+      now: new Date(),
     });
     const warnings = ctx.env?.failure ? [...mcp.warnings, `顧問 ${ctx.instance.name} 的套件安裝失敗`] : mcp.warnings;
 
@@ -226,6 +227,7 @@ export async function buildManager(ctx: ManagerContext): Promise<BuiltAgent> {
     memories,
     sharedRoot: ctx.config.SHARED_ROOT,
     sharedFiles: ctx.sharedFiles,
+    now: new Date(),
   });
   const tools: ToolSet = {
     read_file: readFileTool(ctx.config.SHARED_ROOT, createSandbox(ctx.config.SANDBOX_USER), ctx.images),
