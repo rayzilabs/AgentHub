@@ -126,39 +126,46 @@ describe('平台代管 MCP 套件', () => {
     await expect(loadDemoAgents(agents, path.join(tmpdir(), `none-${randomUUID()}`))).rejects.toThrow(/找不到代管 MCP「law」的套件/);
   });
 
-  it('第一次部署並發布；內容沒變不建新版本；內容變了建新版本並下架沒人用的舊版本', async () => {
+  // 每個測試最多跑兩輪上架：一輪約 45 次雲端往返，同一個測試塞三輪會貼著 30 秒上限
+  async function firstPublish() {
     const creator = await seedUser(db);
     const { agents, hosted } = await fixture();
     const { ops, calls } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
+    const publish = async () => (await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops)))[0];
+    const first = await publish();
+    const versions = async () => (await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status]);
+    return { first, hosted, calls, publish, versions };
+  }
 
-    const [first] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
+  it('第一次上架會部署並發布代管 MCP，範本出現在市集', async () => {
+    const { first, versions } = await firstPublish();
     expect(first.deployed).toEqual(['law']);
     expect((await listPublishedTemplates(db)).some((t) => t.id === first.id)).toBe(true);
-    expect((await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status])).toEqual([[1, 'published']]);
+    expect(await versions()).toEqual([[1, 'published']]);
+  });
 
-    const [same] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
-    expect(same.deployed).toEqual([]);
-    expect(await listVersions(db, creator.id, first.id, 'law')).toHaveLength(1);
+  it('套件內容沒變時重跑不建新版本', async () => {
+    const { publish, versions } = await firstPublish();
+    expect((await publish()).deployed).toEqual([]);
+    expect(await versions()).toEqual([[1, 'published']]);
+  });
 
+  it('套件內容變了就建新版本並發布，下架沒有專案在用的舊版本', async () => {
+    const { hosted, calls, publish, versions } = await firstPublish();
     await writeFile(path.join(hosted, 'law/server.mjs'), 'v2');
-    const [changed] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
-    expect(changed.deployed).toEqual(['law']);
-    expect((await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status])).toEqual([[2, 'published'], [1, 'retired']]);
+    expect((await publish()).deployed).toEqual(['law']);
+    expect(await versions()).toEqual([[2, 'published'], [1, 'retired']]);
     expect(calls.filter((c) => c.fn === 'destroy')).toHaveLength(1);
   });
 
   it('內容沒變時，也會下架上次中斷留下的失敗版本', async () => {
-    const creator = await seedUser(db);
-    const { agents, hosted } = await fixture();
-    const { ops } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
-    const [first] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
+    const { first, publish, versions } = await firstPublish();
     const { error } = await db.from('hosted_mcp_versions')
       .insert({ template_id: first.id, mcp_name: 'law', version: 2, status: 'failed', bundle_path: `${first.id}/law/2.zip`, sprite_name: 'agenthub-mcp-leftover00000' });
     if (error) throw error;
 
-    const [again] = await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops));
-    expect(again.deployed).toEqual([]);
-    expect((await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status])).toEqual([[2, 'retired'], [1, 'published']]);
+    expect((await publish()).deployed).toEqual([]);
+    expect(await versions()).toEqual([[2, 'retired'], [1, 'published']]);
   });
 
   it('有代管 MCP 卻沒給 HostedClient 時說明要怎麼做', async () => {
