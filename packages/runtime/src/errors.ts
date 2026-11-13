@@ -18,7 +18,7 @@ export function errorText(e: unknown): string {
 export const BUSY_ERROR = '目前使用人數較多，請稍後再試。';
 
 /** 模型配額用完（Vertex 429／RESOURCE_EXHAUSTED），重試後仍失敗；RetryError 的原因在 errors 裡 */
-function isQuotaError(e: unknown): boolean {
+export function isQuotaError(e: unknown): boolean {
   if (!e || typeof e !== 'object') return false;
   const x = e as { statusCode?: unknown; message?: unknown; errors?: unknown };
   if (x.statusCode === 429) return true;

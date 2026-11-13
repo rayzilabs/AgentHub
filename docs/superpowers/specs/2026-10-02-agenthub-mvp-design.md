@@ -25,7 +25,7 @@
 | 沙盒 | **每個專案一台 Fly.io Sprite**，每個 agent 在裡面有自己的工作目錄 |
 | agent 迴圈 | 跑在專案 Sprite 裡的 Node 服務，有請求進來才喚醒執行 |
 | Agent SDK | **Vercel AI SDK**（`ai`、`@ai-sdk/google-vertex`、`@ai-sdk/mcp`）。不用 Google ADK，理由見 §6.1 |
-| 模型 | `gemini-3.8-flash`，走 Gemini Enterprise Agent Platform（原 Vertex AI）的 express mode（API key，global 端點） |
+| 模型 | `gemini-3.7-flash`，忙線（429）時依序改用 `gemini-3.8-flash`、`gemini-3.5-flash`；走 Gemini Enterprise Agent Platform（原 Vertex AI）的 express mode（API key，global 端點） |
 | 主管 | 平台內建，不從市集上架 |
 | 多 agent 協作 | 派工 + 主持人式討論（最多 3 輪）。不做自由式 agent 互傳訊息 |
 | 記憶 | agent 自己用 `remember` / `recall` 決定記什麼，分「agent 私有」和「專案共用」兩層，存在 Supabase |
@@ -303,7 +303,7 @@ packages/runtime/src/
 
 | | 顧問 | 主管 |
 |---|---|---|
-| 模型 | `createVertex({ apiKey })('gemini-3.8-flash')`（express mode） | 同左 |
+| 模型 | `createVertex({ apiKey })('gemini-3.7-flash')`（express mode），用 `withFallbacks` 包上備援模型 | 同左 |
 | system prompt | 創作者的 prompt + 記憶區塊 + skill 清單 + `/shared` 檔案清單 + 工作目錄說明 | 內建主管 prompt + 記憶區塊 + 顧問名單與專長 + 總結格式 |
 | 工具 | `bash`、`read_file`、`write_file`、`remember`、`recall`、它自己的 MCP 工具 | `read_file`、`remember`、`recall`、`assign_task`、`convene_discussion` |
 | 工作目錄 | `/agents/<實例id>/`，可讀寫 `/shared` | 不需要 |
