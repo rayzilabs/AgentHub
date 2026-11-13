@@ -1,7 +1,7 @@
 // 人資顧問（demo/business-agents/hr）特有的規則與 skill 附的試算腳本。
 // 格式、skill 清單、MCP 設定、標示、NOTICE、資料日期等共用規則在 business-agents.test.ts。
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { strFromU8, unzipSync } from 'fflate';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BUSINESS_AGENTS_ROOT, loadDemoAgents, type DemoAgent } from '@/lib/demo';
@@ -36,7 +36,8 @@ describe('人資顧問', () => {
   it('skill 引用的 references 與 scripts 都在 zip 裡', () => {
     for (const s of parseSkillsZip(hr.skillsZip)) {
       for (const [, rel] of files[`${s.name}/SKILL.md`].matchAll(/\$\{CLAUDE_SKILL_DIR\}\/([\w./-]+)/g)) {
-        expect(files, `${s.name} → ${rel}`).toHaveProperty([`${s.name}/${rel}`]);
+        // 可能引用其他 skill 的檔案（../leave/...），先正規化成 zip 裡的路徑
+        expect(files, `${s.name} → ${rel}`).toHaveProperty([posix.normalize(`${s.name}/${rel}`)]);
       }
     }
   });
