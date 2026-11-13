@@ -1,17 +1,13 @@
-// 人資顧問（demo/business-agents/hr）：格式、skill 清單、標示、出處，以及 skill 附的試算腳本
+// 人資顧問（demo/business-agents/hr）特有的規則與 skill 附的試算腳本。
+// 格式、skill 清單、MCP 設定、標示、NOTICE、資料日期等共用規則在 business-agents.test.ts。
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { strFromU8, unzipSync } from 'fflate';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { BUSINESS_AGENTS_ROOT, loadDemoAgents, type DemoAgent } from '@/lib/demo';
-import { TemplateInputSchema } from '@/lib/schemas';
 import { parseSkillsZip } from '@/lib/skills-zip';
 
 const DIR = join(BUSINESS_AGENTS_ROOT, 'hr');
-const SKILLS = [
-  'harassment-bullying', 'hiring', 'hr-setup', 'leave', 'onboarding-contract', 'payroll-insurance', 'termination', 'worker-classification', 'working-hours',
-];
 
 describe('人資顧問', () => {
   let hr: DemoAgent;
@@ -22,45 +18,25 @@ describe('人資顧問', () => {
     files = Object.fromEntries(Object.entries(unzipSync(hr.skillsZip)).map(([p, b]) => [p, strFromU8(b)]));
   });
 
-  it('格式通過、skill 清單正確、兩句標示都在、掛上三個代管 MCP', () => {
-    expect(TemplateInputSchema.parse(hr.input)).toEqual(hr.input);
-    expect(hr.input.description).toMatch(/（示範內容，正式版本將由執業專業人士提供）$/);
-    expect(hr.input.system_prompt).toContain('以下為一般性分析，不構成正式法律、財務或授信意見');
+  it('system prompt 要求先取得今天日期', () => {
     // runtime 的 prompt 沒有今天日期；期限、法規是否已施行、年度費率都依賴日期
     expect(hr.input.system_prompt).toContain('TZ=Asia/Taipei date');
-    expect(parseSkillsZip(hr.skillsZip).map((s) => s.name).sort()).toEqual(SKILLS);
-    expect(hr.input.mcp_servers.map((m) => [m.name, m.transport, m.hosted])).toEqual([
-      ['taiwan-payroll', 'remote', true],
-      ['taiwan-holidays', 'remote', true],
-      ['taiwan-law', 'remote', true],
-    ]);
-    expect(Object.keys(hr.hosted).sort()).toEqual(['taiwan-holidays', 'taiwan-law', 'taiwan-payroll']);
   });
 
-  it('每個 skill 的 description 寫明什麼情況用、結尾有來源段落', () => {
-    for (const s of parseSkillsZip(hr.skillsZip)) {
-      expect(s.description, s.name).toMatch(/時用|用：/);
-      expect(files[`${s.name}/SKILL.md`], s.name).toMatch(/\n## 來源\n/);
-    }
+  it('每個 skill 的 description 寫明什麼情況用', () => {
+    for (const s of parseSkillsZip(hr.skillsZip)) expect(s.description, s.name).toMatch(/時用|用：/);
   });
 
-  it('有 NOTICE.md，列出改寫來源與授權', () => {
-    const notice = readFileSync(join(DIR, 'NOTICE.md'), 'utf8');
-    for (const src of ['anthropics/claude-for-legal', 'anthropics/knowledge-work-plugins', 'hikari5014/Labor-Pixie', 'law24tw/tw-legal-calc']) expect(notice).toContain(src);
-    expect(notice).toContain('Apache License 2.0');
-    expect(notice).toContain('MIT');
-  });
-
-  it('沒有美國法殘留', () => {
+  it('沒有美國勞動法的專有名詞', () => {
     const banned = /at-will|FLSA|401\(?k\)?|W-2|\bexempt\b|state law|RSU|EEOC|OSHA|COBRA|FMLA/i;
     expect(JSON.stringify(hr.input)).not.toMatch(banned);
     for (const [path, text] of Object.entries(files)) expect(text, path).not.toMatch(banned);
   });
 
   it('skill 引用的 references 與 scripts 都在 zip 裡', () => {
-    for (const name of SKILLS) {
-      for (const [, rel] of files[`${name}/SKILL.md`].matchAll(/\$\{CLAUDE_SKILL_DIR\}\/([\w./-]+)/g)) {
-        expect(files, `${name} → ${rel}`).toHaveProperty([`${name}/${rel}`]);
+    for (const s of parseSkillsZip(hr.skillsZip)) {
+      for (const [, rel] of files[`${s.name}/SKILL.md`].matchAll(/\$\{CLAUDE_SKILL_DIR\}\/([\w./-]+)/g)) {
+        expect(files, `${s.name} → ${rel}`).toHaveProperty([`${s.name}/${rel}`]);
       }
     }
   });

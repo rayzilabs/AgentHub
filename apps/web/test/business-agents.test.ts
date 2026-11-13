@@ -51,6 +51,23 @@ const AGENTS: Record<string, AgentSpec> = {
     },
     undatedReferences: ['legal-letter/references/templates.md', 'privacy-check/references/notice-template.md'],
   },
+  hr: {
+    skills: [
+      'harassment-bullying', 'hiring', 'hr-setup', 'leave', 'onboarding-contract',
+      'payroll-insurance', 'termination', 'worker-classification', 'working-hours',
+    ],
+    mcpServers: [
+      { name: 'taiwan-payroll', transport: 'remote', hosted: true, required_secrets: [] },
+      { name: 'taiwan-holidays', transport: 'remote', hosted: true, required_secrets: [] },
+      { name: 'taiwan-law', transport: 'remote', hosted: true, required_secrets: [] },
+    ],
+    toolNames: [
+      'taiwan_payroll__calculate_payroll', 'taiwan_holidays__count_workdays',
+      'taiwan_law__search_taiwan_laws', 'taiwan_law__search_taiwan_regulations', 'taiwan_law__search_taiwan_judgments',
+    ],
+    playbook: 'hr-playbook',
+    noticeMentions: ['anthropics/claude-for-legal', 'anthropics/knowledge-work-plugins', 'Apache License 2.0', 'hikari5014/Labor-Pixie', 'law24tw/tw-legal-calc', 'MIT'],
+  },
   marketing: {
     skills: [
       'campaign-plan', 'copywriting', 'customer-competitor-research', 'line-official-account',
