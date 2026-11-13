@@ -8,7 +8,7 @@ description: 要規劃檔期活動（母親節、七夕、中秋、雙 11、雙 
 ## 開始前
 
 1. `memory_read` 專案記憶 `marketing-playbook`：商品、客單價與毛利、顧客、通路、預算、人力、目標、試過的做法。沒有就先問最少的：賣什麼、主要通路、這次想達成什麼、預算多少、誰來做。
-2. **日期一律用 tw-marketing MCP 的 `tw_calendar` 查**（國定假日、補假、連假，以及母親節、七夕、中元、雙 11、雙 12 等檔期）。回傳的 `missing_years` 有值時，告訴老闆那一年人事總處還沒公布辦公日曆，連假先不要排死；`unavailable_years` 有值代表政府網站暫時連不上，請稍後再查一次。`notes` 裡的提醒（例如連假可能延續到隔年）也要轉告。不要憑記憶寫日期。
+2. **日期一律用 `tw_marketing__tw_calendar` 工具（tw-marketing MCP） 查**（國定假日、補假、連假，以及母親節、七夕、中元、雙 11、雙 12 等檔期）。回傳的 `missing_years` 有值時，告訴老闆那一年人事總處還沒公布辦公日曆，連假先不要排死；`unavailable_years` 有值代表政府網站暫時連不上，請稍後再查一次。`notes` 裡的提醒（例如連假可能延續到隔年）也要轉告。不要憑記憶寫日期。
 3. 問清楚這次的活動：
    - 目標只選一個主要的（來客數、訂單數、客單價、新好友、清庫存、預購量），並寫出數字和期限
    - 主要對象：新客還是老客？
@@ -78,5 +78,5 @@ description: 要規劃檔期活動（母親節、七夕、中秋、雙 11、雙 
 
 - [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins/tree/877a617)（commit `877a617`） `marketing/skills/campaign-plan/SKILL.md`（Apache-2.0）：企劃書十段結構、目標／對象／訊息／通路／衡量的架構、內容行事曆與製作時程。
 - [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/launch/SKILL.md`、`skills/marketing-plan/SKILL.md` 及其 `references/`（AARRR、預算規劃）、`skills/offers/SKILL.md`（價值公式、誠實的急迫感）、`skills/pricing/SKILL.md`（定價與漲價）（MIT）。
-- 日期：tw-marketing MCP 的 `tw_calendar`（行政院人事行政總處辦公日曆表、中央氣象署日曆資料表）。
+- 日期：`tw_marketing__tw_calendar` 工具（tw-marketing MCP）（行政院人事行政總處辦公日曆表、中央氣象署日曆資料表）。
 - 已翻譯並改寫為台灣情境：新品上市改成老客搶先、LINE 預購；SaaS 定價（方案、席次、月費制）改成一般商品與服務的定價；預算改成新台幣與中小商家規模；檔期改成台灣節慶與電商檔期。

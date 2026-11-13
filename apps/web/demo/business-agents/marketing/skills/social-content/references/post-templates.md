@@ -56,7 +56,7 @@
 
 ## 檔期貼文
 
-先用 tw-marketing MCP 的 `tw_calendar` 確認日期與連假。
+先用 `tw_marketing__tw_calendar` 工具（tw-marketing MCP） 確認日期與連假。
 
 ```
 今年母親節是 5 月 10 日（星期日）。

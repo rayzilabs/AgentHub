@@ -1,6 +1,6 @@
 # 檔期活動企劃書範本
 
-資料截至 2026-11-12（結構改寫自 knowledge-work-plugins `marketing/skills/campaign-plan`）。日期一律用 tw-marketing MCP 的 `tw_calendar` 查，範本中的日期與數字都是示意。
+資料截至 2026-11-12（結構改寫自 knowledge-work-plugins `marketing/skills/campaign-plan`）。日期一律用 `tw_marketing__tw_calendar` 工具（tw-marketing MCP） 查，範本中的日期與數字都是示意。
 
 ```markdown
 # 〈活動名稱〉企劃書

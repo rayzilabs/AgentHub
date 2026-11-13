@@ -2,7 +2,7 @@
 
 資料截至 2026-11-12。
 
-**出處**：Google 搜尋中心繁中文件（各項網址如下）；各家 AI 爬蟲的官方說明（[OpenAI](https://platform.openai.com/docs/bots)、[Anthropic](https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler)、[Perplexity](https://docs.perplexity.ai/guides/bots)、[Google 檢索器](https://developers.google.com/search/docs/crawling-indexing/google-common-crawlers?hl=zh-tw)）。tw-marketing MCP 的 `site_audit` 會自動檢查其中大部分項目。
+**出處**：Google 搜尋中心繁中文件（各項網址如下）；各家 AI 爬蟲的官方說明（[OpenAI](https://platform.openai.com/docs/bots)、[Anthropic](https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler)、[Perplexity](https://docs.perplexity.ai/guides/bots)、[Google 檢索器](https://developers.google.com/search/docs/crawling-indexing/google-common-crawlers?hl=zh-tw)）。`tw_marketing__site_audit` 工具（tw-marketing MCP） 會自動檢查其中大部分項目。
 
 **更新方式**：每半年由維護者對照上述官方文件。
 

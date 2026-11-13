@@ -1,6 +1,6 @@
 ---
 name: seo-ai-visibility
-description: 使用者說「Google 搜不到我」「地圖上找不到我的店」「ChatGPT 推薦對手不推薦我」「對手排在我前面」、要健檢官網或商品頁 SEO、官網改版或搬家前、要經營 Google 商家檔案與評論時使用。用 tw-marketing MCP 的 site_audit 實際檢查網站。
+description: 使用者說「Google 搜不到我」「地圖上找不到我的店」「ChatGPT 推薦對手不推薦我」「對手排在我前面」、要健檢官網或商品頁 SEO、官網改版或搬家前、要經營 Google 商家檔案與評論時使用。用 tw_marketing__site_audit 工具 實際檢查網站。
 ---
 
 # 網站 SEO 與 AI 搜尋能見度健檢
@@ -23,7 +23,7 @@ Google 自己的說法：要出現在 Google 的 AI 摘要或 AI 模式，**沒�
 
 ## 第一步：用 MCP 實際檢查網站
 
-呼叫 tw-marketing MCP 的 `site_audit`，對首頁、主力商品或服務頁、門市或聯絡頁各跑一次。
+呼叫 `tw_marketing__site_audit` 工具（tw-marketing MCP），對首頁、主力商品或服務頁、門市或聯絡頁各跑一次。
 
 - 回傳的 `findings` 已經依嚴重程度排好，每條附官方文件網址；回答時保留網址。
 - `crawlers` 列出 robots.txt 對 Googlebot、Bing 與各家 AI 爬蟲的設定；`allowed` 是 null 代表 robots.txt 讀不到，無法判斷，不要說成「允許」。擋 AI 爬蟲是商家自己的選擇：擋搜尋類（OAI-SearchBot、Claude-SearchBot、PerplexityBot）就不會被那個服務引用；只擋訓練類（GPTBot、ClaudeBot、Google-Extended）不影響搜尋。
@@ -80,6 +80,6 @@ Google 自己的說法：要出現在 Google 的 AI 摘要或 AI 模式，**沒�
 
 - [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills/tree/1f83744)（commit `1f83744`） `skills/seo-audit/SKILL.md`、`skills/ai-seo/SKILL.md` 及其 `references/`（MIT）：檢查順序、AI 引用的觀念、問 AI 的記錄方式。
 - [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins/tree/877a617)（commit `877a617`） `small-business/skills/seo-ai-visibility/SKILL.md`（Apache-2.0）：「不操弄 AI 推薦」原則、中小商家流程、網頁內容當資料、只給五項優先事項。
-- 網站檢查：tw-marketing MCP 的 `site_audit`（抓取與解析程式來自 [aaron-he-zhu/aaron-marketing-skills](https://github.com/aaron-he-zhu/aaron-marketing-skills/tree/3764d7f)（commit `3764d7f`），Apache-2.0）。
+- 網站檢查：`tw_marketing__site_audit` 工具（tw-marketing MCP）（抓取與解析程式來自 [aaron-he-zhu/aaron-marketing-skills](https://github.com/aaron-he-zhu/aaron-marketing-skills/tree/3764d7f)（commit `3764d7f`），Apache-2.0）。
 - Google 官方說明（繁中）：Google 搜尋中心、Google 商家檔案說明、Google 地圖使用者內容政策（網址見 `references/`）。
 - 已翻譯並改寫為台灣情境：以 Google 商家檔案與在地搜尋為主；架站平台改成台灣常見的；加入 Dcard、PTT 口碑與台灣電商、外送平台。
