@@ -39,7 +39,10 @@ export function parseLawArticles(html) {
 
 const SUFFIXES = ['法', '條例', '通則', '規則', '細則', '辦法', '準則', '標準'];
 
-/** 把查詢拆成法規名稱（可省略字尾、可用簡稱）與關鍵字；沒有關鍵字時 terms 是空的 */
+/**
+ * 把查詢拆成法規名稱（可省略字尾、可用簡稱）與關鍵字；沒有關鍵字時 terms 是空的。
+ * 法規名稱和關鍵字黏在一起時分不清（「勞基法資遣費」與「公司法律責任」），只放在 guess，完整關鍵字查不到才用。
+ */
 export function splitQuery(query, pcodeData, aliases) {
   const map = pcodeData?.pcode_map ?? {};
   const abolished = new Set(pcodeData?.abolished_set);
@@ -52,11 +55,15 @@ export function splitQuery(query, pcodeData, aliases) {
   const suffixed = SUFFIXES.map((s) => named(whole + s)).find((l) => l && !abolished.has(l.pcode));
   const only = named(whole) ?? suffixed;
   if (only) return { law: only, terms: [] };
+  const without = (i, ...rest) => [...terms.slice(0, i), ...rest, ...terms.slice(i + 1)];
   for (const [i, term] of terms.entries()) {
-    for (let end = term.length; end >= 2; end--) {
-      const rest = term.slice(end);
-      const law = rest.length === 1 ? null : named(term.slice(0, end));
-      if (law) return { law, terms: [...terms.slice(0, i), ...(rest ? [rest] : []), ...terms.slice(i + 1)] };
+    const law = named(term);
+    if (law) return { law, terms: without(i) };
+  }
+  for (const [i, term] of terms.entries()) {
+    for (let end = term.length - 2; end >= 2; end--) {
+      const law = named(term.slice(0, end));
+      if (law) return { law: null, terms, guess: { law, terms: without(i, term.slice(end)) } };
     }
   }
   return { law: null, terms };
@@ -81,9 +88,11 @@ function searchIndex(index, terms) {
 
 /**
  * @param {{ law: { name: string, pcode: string } | null, terms: string[], limit: number, abolished: string[], deadline: number,
+ *   guess?: { law: { name: string, pcode: string }, terms: string[] },
  *   loadIndex: () => Promise<{ update_date: string, laws: object[] }>, fetchHtml: (url: string) => Promise<string> }} opts
  */
-export async function searchByKeyword({ law, terms, limit, abolished, loadIndex, fetchHtml, deadline }) {
+export async function searchByKeyword({ guess, ...opts }) {
+  const { law, terms, limit, abolished, loadIndex, fetchHtml, deadline } = opts;
   const kw = terms.join(' ');
   const sourceUrl = law ? contentUrl(law.pcode, kw) : listUrl(kw);
   const index = await loadIndex().catch(() => null);
@@ -98,7 +107,7 @@ export async function searchByKeyword({ law, terms, limit, abolished, loadIndex,
   } else {
     try {
       const list = parseLawList(await fetchHtml(sourceUrl));
-      candidates = list.laws.filter((l) => !l.abolished && !gone.has(l.pcode));
+      candidates = list.laws.filter((l) => !l.abolished);
       if (list.total > list.laws.length) {
         const listed = new Set(list.laws.map((l) => l.pcode));
         candidates.push(...[...local.values()].filter((h) => !listed.has(h.law.p)).map((h) => ({ name: h.law.n, pcode: h.law.p })));
@@ -110,12 +119,18 @@ export async function searchByKeyword({ law, terms, limit, abolished, loadIndex,
       listError = e;
       candidates = [...local.values()].map((h) => ({ name: h.law.n, pcode: h.law.p }));
     }
+    candidates = candidates.filter((l) => !gone.has(l.pcode));
+    if (!candidates.length && guess) {
+      const guessed = await searchByKeyword({ ...opts, ...guess });
+      if (guessed.results.length || guessed.unavailable) return guessed;
+    }
   }
 
   const entry = (l, amended, articles, extra) => {
     const note = effective.get(l.pcode);
+    const isAbolished = extra.abolished || gone.has(l.pcode);
     return {
-      name: l.name, pcode: l.pcode, url: lawUrl(l.pcode), ...(amended ? { amended_date: amended } : {}), ...extra,
+      name: l.name, pcode: l.pcode, url: lawUrl(l.pcode), ...(amended ? { amended_date: amended } : {}), ...extra, ...(isAbolished ? { abolished: true } : {}),
       ...(note ? { effective_note: note, effective_note_date: index.update_date } : {}),
       matched_articles: articles.length, articles: pickArticles(articles, terms),
     };

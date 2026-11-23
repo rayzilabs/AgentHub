@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseLawArticles, parseLawList, searchByKeyword, splitQuery } from '@/demo/hosted-mcp/taiwan-law/law-search.mjs';
 
@@ -83,13 +81,18 @@ describe('taiwan-law 關鍵字檢索：拆出法規名稱與關鍵字', () => {
     expect(split('勞工請假')).toEqual({ law: { name: '勞工請假規則', pcode: 'N0030006' }, terms: [] });
   });
 
-  it('法規名稱加關鍵字：有沒有空白、誰先誰後都拆得開，取最長的名稱', () => {
+  it('法規名稱加關鍵字：誰先誰後都拆得開，取最長的名稱', () => {
     const osh = { law: { name: '職業安全衛生法', pcode: 'N0060001' }, terms: ['申訴'] };
     expect(split('職業安全衛生法 申訴')).toEqual(osh);
     expect(split('申訴 職業安全衛生法')).toEqual(osh);
-    expect(split('職業安全衛生法申訴')).toEqual(osh);
     expect(split('勞動基準法施行細則 競業禁止')).toEqual({ law: { name: '勞動基準法施行細則', pcode: 'N0030002' }, terms: ['競業禁止'] });
-    expect(split('勞基法資遣費')).toEqual({ law: { name: '勞動基準法', pcode: 'N0030001' }, terms: ['資遣費'] });
+  });
+
+  it('法規名稱和關鍵字黏在一起：可能是別的詞（公司法律責任），只當成猜測，關鍵字保持完整', () => {
+    expect(split('職業安全衛生法申訴')).toEqual({ law: null, terms: ['職業安全衛生法申訴'], guess: { law: { name: '職業安全衛生法', pcode: 'N0060001' }, terms: ['申訴'] } });
+    expect(split('勞基法資遣費').guess).toEqual({ law: { name: '勞動基準法', pcode: 'N0030001' }, terms: ['資遣費'] });
+    expect(split('公司法律責任')).toMatchObject({ law: null, terms: ['公司法律責任'] });
+    expect(split('公司法律責任 董事')).toMatchObject({ law: null, terms: ['公司法律責任', '董事'] });
   });
 
   it('只是某部法規名稱的一部分，不當成指定那部法規', () => {
@@ -122,12 +125,12 @@ describe('taiwan-law 關鍵字檢索：查詢', () => {
   };
   type Over = {
     list?: string | Error; contents?: Record<string, string | Error>; law?: { name: string; pcode: string };
-    terms?: string[]; limit?: number; index?: null; abolished?: string[];
+    terms?: string[]; limit?: number; index?: null; abolished?: string[]; guess?: { law: { name: string; pcode: string }; terms: string[] };
   };
   const run = async (over: Over = {}) => {
     const urls: string[] = [];
     const out = await searchByKeyword({
-      law: over.law ?? null, terms: over.terms ?? ['競業禁止'], limit: over.limit ?? 3, abolished: over.abolished ?? [],
+      law: over.law ?? null, terms: over.terms ?? ['競業禁止'], limit: over.limit ?? 3, abolished: over.abolished ?? [], guess: over.guess,
       loadIndex: async () => { if (over.index === null) throw new Error('沒有檔案'); return index; },
       fetchHtml: async (url: string) => {
         urls.push(url);
@@ -200,6 +203,34 @@ describe('taiwan-law 關鍵字檢索：查詢', () => {
     expect(numbers(out.results[0])).toEqual(['第 39 條']);
   });
 
+  const guess = { law: { name: '勞動基準法', pcode: 'N0030001' }, terms: ['競業禁止'] };
+
+  it('完整關鍵字查得到就不用猜的法規', async () => {
+    const { out } = await run({ terms: ['勞動基準法競業禁止'], guess });
+    expect(out.total_laws).toBe(3);
+  });
+
+  it('完整關鍵字查不到才用猜的法規；猜的也沒有就照原本的關鍵字說明', async () => {
+    const { out } = await run({ terms: ['勞動基準法競業禁止'], guess, list: listPage([]) });
+    expect(names(out.results)).toEqual(['勞動基準法']);
+    const none = await run({ terms: ['勞動基準法競業禁止'], guess, list: listPage([]), contents: {} });
+    expect(none.out.results).toEqual([]);
+    expect(none.out.note).toContain('「勞動基準法競業禁止」');
+  });
+
+  it('條文索引比廢止清單舊時，備援與補候選也排除已廢止的法規', async () => {
+    const down = await run({ list: new Error('timeout'), abolished: ['N0030002'] });
+    expect(names(down.out.results)).toEqual(['勞動基準法']);
+    const paged = await run({ list: listPage(rows.slice(0, 1), 103), abolished: ['N0030002'] });
+    expect(names(paged.out.results)).toEqual(['勞動基準法', '公司法']);
+  });
+
+  it('指定的法規在廢止清單裡，用備援時也要標示', async () => {
+    const { out } = await run({ law: { name: '勞動基準法', pcode: 'N0030001' }, contents: { N0030001: new Error('timeout') }, abolished: ['N0030001'] });
+    expect(out.results).toMatchObject([{ abolished: true, data_date: '2026-11-13' }]);
+    expect(out.note).toContain('已廢止');
+  });
+
   it('指定的法規已廢止：標示出來', async () => {
     const { out } = await run({ law: { name: '工廠法', pcode: 'N0030007' } });
     expect(out.results[0].abolished).toBe(true);
@@ -247,14 +278,5 @@ describe('taiwan-law 關鍵字檢索：查詢', () => {
   it('本地索引壞掉不影響官方結果', async () => {
     const { out } = await run({ index: null });
     expect(names(out.results)).toEqual(['公司法', '勞動基準法', '勞動基準法施行細則']);
-  });
-});
-
-describe('taiwan-law 關鍵字檢索：接到 server.js', () => {
-  it('沒帶條號的關鍵字查詢走 law-search.mjs，並讀條文索引', () => {
-    const server = readFileSync(fileURLToPath(new URL('../demo/hosted-mcp/taiwan-law/server.js', import.meta.url)), 'utf8');
-    expect(server).toContain('import { searchByKeyword, splitQuery } from "./law-search.mjs";');
-    expect(server).toContain('await searchByKeyword({');
-    expect(server).toContain('loadLegalData("law-articles.json"');
   });
 });

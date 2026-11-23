@@ -23245,11 +23245,12 @@ async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false,
   };
   let laws = null;
   if (!articleNumber) {
-    const { law, terms: keywords } = splitQuery(query, pcodeData, LAW_ALIASES);
+    const { law, terms: keywords, guess } = splitQuery(query, pcodeData, LAW_ALIASES);
     if (keywords.length) {
       const found = await searchByKeyword({
         law,
         terms: keywords,
+        guess,
         limit,
         abolished: pcodeData?.abolished_set ?? [],
         loadIndex: loadArticles,
