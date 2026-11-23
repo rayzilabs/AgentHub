@@ -1,6 +1,6 @@
 // 重新產生代管 taiwan-law MCP 的資料檔（apps/web/demo/hosted-mcp/taiwan-law/data/legal-data/）。
-// 用法：cd apps/web && node scripts/taiwan-law-data.ts（約 80 分鐘）
-// 資料來源都是官方：法務部全國法規資料庫開放 API（法規名稱、pcode、沿革）、憲法法庭網站（釋字、憲判字）。
+// 用法：cd apps/web && node scripts/taiwan-law-data.ts（約 80 分鐘）；加 --articles 只重建條文索引（約 1 分鐘）
+// 資料來源都是官方：法務部全國法規資料庫開放 API（法規名稱、pcode、沿革、條文）、憲法法庭網站（釋字、憲判字）。
 // 每月跑一次，或重大修法、新憲判字公布後跑；跑完 commit，再跑 seed-business-agents.ts 部署新版本。
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -8,6 +8,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { unzipSync } from 'fflate';
 
 type MojLaw = { LawName: string; LawURL: string; LawAbandonNote: string; LawHistories: string };
+type MojLawFull = MojLaw & {
+  LawCategory: string; LawModifiedDate: string; LawEffectiveNote: string;
+  LawArticles: { ArticleType: string; ArticleNo: string; ArticleContent: string }[];
+};
 type Case = Record<string, string | boolean>;
 
 const pcodeOf = (law: MojLaw) => new URL(law.LawURL).searchParams.get('pcode') ?? new URL(law.LawURL).searchParams.get('PCode') ?? '';
@@ -41,6 +45,29 @@ export function buildHistories(all: MojLaw[]): Record<string, Record<string, str
     (out[group] ??= {})[pcode] = l.LawHistories;
   }
   return out;
+}
+
+/** 條文索引（law-articles.json）：全部命令有 56 MB，MCP 要整份載入記憶體，所以命令只收勞動部主管的 */
+export function buildArticles(laws: MojLawFull[], orders: MojLawFull[], updateDate: string, min = { laws: 900, orders: 200 }) {
+  const current = (l: MojLaw) => !l.LawAbandonNote;
+  const currentLaws = laws.filter(current);
+  const laborOrders = orders.filter((o) => current(o) && o.LawCategory.includes('勞動部'));
+  if (currentLaws.length < min.laws || laborOrders.length < min.orders) {
+    throw new Error(`條文索引筆數不足，沒有寫入：現行法律 ${currentLaws.length} 部（應至少 ${min.laws}）、勞動部命令 ${laborOrders.length} 部（應至少 ${min.orders}）。請檢查法務部 API 是否改版。`);
+  }
+  return {
+    update_date: isoDate(updateDate),
+    laws: [...currentLaws, ...laborOrders].map((l) => {
+      const note = l.LawEffectiveNote.replace(/\s+/g, '');
+      return {
+        n: l.LawName,
+        p: pcodeOf(l),
+        d: l.LawModifiedDate.replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3'),
+        ...(note ? { e: note } : {}),
+        a: l.LawArticles.filter((a) => a.ArticleType === 'A').map((a) => [a.ArticleNo, a.ArticleContent.replace(/\r\n/g, '\n')]),
+      };
+    }),
+  };
 }
 
 const decode = (s: string) => s
@@ -131,16 +158,11 @@ async function fetchRetry(url: string): Promise<Response> {
   }
 }
 
-/** 只留用得到的欄位：完整檔含全部條文，整份留在記憶體會佔很多空間 */
-async function mojLaws(kind: 'Law' | 'Order'): Promise<{ UpdateDate: string; Laws: MojLaw[] }> {
+async function mojLaws(kind: 'Law' | 'Order'): Promise<{ UpdateDate: string; Laws: MojLawFull[] }> {
   const zip = unzipSync(new Uint8Array(await (await fetchRetry(`${MOJ}/${kind}/JSON`)).arrayBuffer()));
   const name = Object.keys(zip).find((n) => n.endsWith('.json'));
   if (!name) throw new Error(`法務部 ${kind} 壓縮檔裡沒有 JSON`);
-  const data = JSON.parse(new TextDecoder().decode(zip[name]).replace(/^﻿/, '')) as { UpdateDate: string; Laws: MojLaw[] };
-  return {
-    UpdateDate: data.UpdateDate,
-    Laws: data.Laws.map(({ LawName, LawURL, LawAbandonNote, LawHistories }) => ({ LawName, LawURL, LawAbandonNote, LawHistories })),
-  };
+  return JSON.parse(new TextDecoder().decode(zip[name]).replace(/^﻿/, ''));
 }
 
 async function crawl(start: string): Promise<Record<string, Case>> {
@@ -170,17 +192,37 @@ export function checkCounts(counts: { laws: number; orders: number; oldCases: nu
   if (problems.length) throw new Error(`資料筆數不足，沒有寫入任何檔案：${problems.join('；')}。請檢查法務部 API 或憲法法庭網站是否改版。`);
 }
 
+/** 條文索引在下載完就產生，只把小欄位交給後面 80 分鐘的爬取：完整檔含全部條文，整份留在記憶體會佔很多空間 */
+async function mojData() {
+  const law = await mojLaws('Law');
+  const order = await mojLaws('Order');
+  const slim = (laws: MojLawFull[]): MojLaw[] => laws.map(({ LawName, LawURL, LawAbandonNote, LawHistories }) => ({ LawName, LawURL, LawAbandonNote, LawHistories }));
+  return {
+    articles: buildArticles(law.Laws, order.Laws, law.UpdateDate),
+    law: { UpdateDate: law.UpdateDate, Laws: slim(law.Laws) },
+    order: { Laws: slim(order.Laws) },
+  };
+}
+
+const write = (name: string, data: unknown) => writeFile(path.join(OUT, name), JSON.stringify(data));
+
 async function main(): Promise<void> {
+  await mkdir(OUT, { recursive: true });
+  if (process.argv.includes('--articles')) {
+    const { articles } = await mojData();
+    await write('law-articles.json', articles);
+    console.log(`條文索引：${articles.laws.length} 部（資料日期 ${articles.update_date}）`);
+    return;
+  }
   // 三者互不相關；兩條憲法法庭爬取各自仍逐頁進行
-  const [[law, order], oldCases, newCases] = await Promise.all([
-    mojLaws('Law').then(async (l) => [l, await mojLaws('Order')] as const),
+  const [{ articles, law, order }, oldCases, newCases] = await Promise.all([
+    mojData(),
     crawl(CONS_START.old),
     crawl(CONS_START.new),
   ]);
   checkCounts({ laws: law.Laws.length, orders: order.Laws.length, oldCases: Object.keys(oldCases).length, newCases: Object.keys(newCases).length });
 
-  await mkdir(OUT, { recursive: true });
-  const write = (name: string, data: unknown) => writeFile(path.join(OUT, name), JSON.stringify(data));
+  await write('law-articles.json', articles);
   await write('pcode_all.json', buildPcodeAll(law.Laws, order.Laws, law.UpdateDate));
   for (const [group, items] of Object.entries(buildHistories([...law.Laws, ...order.Laws]))) await write(`histories-${group}.json`, items);
   await write('old_cases.json', oldCases);
