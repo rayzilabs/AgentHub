@@ -10,20 +10,22 @@
   2. 資料檔只讀本套件的 `data/legal-data/`，預設上游從 `https://legaltech.org.tw` 改成不存在的位址，執行時不會連到第三方。
   3. `/mcp` 先呼叫 `start.mjs` 提供的平台通行證驗證，平台以外的請求回 401。
   4. `search_taiwan_laws` 的法規全文頁（LawAll）改由 `law-fetch.mjs` 同時抓、整個工具呼叫最多 50 秒（全文頁單次最多等 45 秒、不重試）；單部法規逾時或失敗不再讓整個工具失敗，而是列在 `unavailable`（附官方網址）並加上 `note` 說明。原因：大部法規（例如民法）的全文頁，法務部伺服器要 20 秒以上才回應，原程式一部一部等、每次 15 秒逾時，只帶關鍵字查詢時整個工具會失敗。
-- `start.mjs`、`auth.mjs`、`ly.mjs`、`law-fetch.mjs`：AgentHub 撰寫。
+  5. `search_taiwan_laws` 沒帶條號、查詢裡有法規名稱以外的關鍵字時，改由 `law-search.mjs` 查全國法規資料庫的「法條內容」檢索（`LawSearchResult.aspx?cur=Ld`、`LawSearchContent.aspx`），只回真的命中的條文；已廢止的法規排除。官方連不上或頁面看不懂時改用本地條文索引，結果標 `data_date`。官方查無結果就回空結果，不再退回前 6 條。原因：原程式抓前幾部法規的全文比對字串，比對不到就回第 1～6 條。
+- `start.mjs`、`auth.mjs`、`ly.mjs`、`law-fetch.mjs`、`law-search.mjs`：AgentHub 撰寫。
 
 ## 資料來源與更新方式
 
 | 資料 | 來源 | 更新方式 |
 |---|---|---|
-| 法條、法規全文 | 法務部全國法規資料庫網頁（law.moj.gov.tw），每次查詢即時抓 | 不需更新 |
+| 法條、法規全文、條文關鍵字檢索 | 法務部全國法規資料庫網頁（law.moj.gov.tw），每次查詢即時抓 | 不需更新 |
+| `data/legal-data/law-articles.json`（現行法律＋勞動部主管命令的條文：官方連不上時的備援、關鍵字結果的排序、生效註記） | 法務部全國法規資料庫開放 API（同下） | 每月一次，或重大修法公布後：`cd apps/web && node scripts/taiwan-law-data.ts --articles`（約 1 分鐘），commit 後跑 `seed-business-agents.ts` |
 | 法務部函釋 | 法務部主管法規查詢系統（mojlaw.moj.gov.tw），即時查詢 | 不需更新 |
 | 司法院裁判 | 司法院裁判書查詢（judgment.judicial.gov.tw），即時查詢 | 不需更新 |
 | 議案、三讀紀錄 | 立法院開放資料服務平台資料集 20、373（data.ly.gov.tw），即時查詢、快取 6 小時 | 不需更新 |
 | `data/legal-data/pcode_all.json`、`histories-*.json`（法規名稱對 pcode、廢止清單、修正沿革） | 法務部全國法規資料庫開放 API `https://law.moj.gov.tw/api/Ch/Law/JSON`、`/api/Ch/Order/JSON` | 平台維運者每月一次，或重大修法公布後：`cd apps/web && node scripts/taiwan-law-data.ts`（約 80 分鐘：憲法法庭網站每頁約 5 秒，依「下一筆」連結順序抓），commit 後跑 `seed-business-agents.ts` 部署新版本 |
 | `data/legal-data/old_cases.json`、`new_cases.json`、`interp-index.json`（釋字、憲判字全文與索引） | 憲法法庭網站（cons.judicial.gov.tw） | 同上；有新的憲判字時再跑 |
 
-**既有租用者的資料版本**：平台的代管 MCP 版本在租用時鎖定，重新產生資料並部署新版本後，只有之後新加入顧問的專案會用新版本；已租用的專案留在舊版本（舊版本有專案在用時不會被下架）。受影響的只有本機資料檔（法規名稱索引、修正沿革、釋憲全文）；法條、函釋、判決、議案都是即時查官方網站，不受影響。要讓既有專案用新版本，請租用者重新加入顧問。
+**既有租用者的資料版本**：平台的代管 MCP 版本在租用時鎖定，重新產生資料並部署新版本後，只有之後新加入顧問的專案會用新版本；已租用的專案留在舊版本（舊版本有專案在用時不會被下架）。受影響的只有本機資料檔（法規名稱索引、修正沿革、釋憲全文、備援條文索引）；法條、函釋、判決、議案都是即時查官方網站，不受影響。要讓既有專案用新版本，請租用者重新加入顧問。
 
 法令、判決、解釋依《著作權法》第 9 條不受著作權保護；立法院開放資料依《政府資料開放授權條款》使用並標示出處。
 
