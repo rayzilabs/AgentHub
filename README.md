@@ -195,7 +195,7 @@ DEMO_PASSWORD=<密碼> pnpm exec tsx scripts/seed-demo.ts
 
 `pnpm exec tsx scripts/seed-business-agents.ts` 以同一個創作者帳號上架 `apps/web/demo/business-agents/` 的非金融顧問（同名就更新），連同 `apps/web/demo/hosted-mcp/<名稱>/` 的平台代管 MCP（內容沒變就不建新版本，發布新版後下架沒人用的舊版），只上架到市集、不建專案；要先跑過 `seed-demo.ts`。
 
-平台代管的 taiwan-law MCP（法務、人資顧問共用）的法規索引與釋憲資料用 `node scripts/taiwan-law-data.ts` 從法務部開放 API 與憲法法庭網站重新產生，每月一次；資料來源與更新方式見 `apps/web/demo/hosted-mcp/taiwan-law/NOTICE.md`。
+平台代管的 taiwan-law MCP（法務、人資顧問共用）的法規索引、條文索引與釋憲資料用 `node scripts/taiwan-law-data.ts` 從法務部開放 API 與憲法法庭網站重新產生，每月一次；只重建條文索引（關鍵字查條文的備援與排序用）加 `--articles`，約 1 分鐘。資料來源與更新方式見 `apps/web/demo/hosted-mcp/taiwan-law/NOTICE.md`。
 
 | 帳號 | 角色 |
 |---|---|
