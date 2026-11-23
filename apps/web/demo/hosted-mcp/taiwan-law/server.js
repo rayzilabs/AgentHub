@@ -22901,6 +22901,7 @@ function summarizeCacheMeta(results) {
 // worker/legal-legislative.ts (AgentHub: data.ly.gov.tw, see ly.mjs)
 import { getLawProgress, getLawVersions, searchBills } from "./ly.mjs";
 import { fetchLawsWithin, unavailableNote } from "./law-fetch.mjs";
+import { searchByKeyword, splitQuery } from "./law-search.mjs";
 
 // worker/legal-moj-rules.ts
 var MOJLAW_BASE = "https://mojlaw.moj.gov.tw";
@@ -23214,7 +23215,7 @@ async function fetchOfficial(input, init, attempts = 2, timeoutMs = 15e3) {
   }
   throw lastError instanceof Error ? lastError : new Error("\u5B98\u65B9\u4F86\u6E90\u67E5\u8A62\u5931\u6557");
 }
-async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false) {
+async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false, loadArticles) {
   const startedAt = Date.now();
   const searchUrl = `${LAW_SEARCH}?ty=ONEBAR&kw=${encodeURIComponent(query)}`;
   const terms = termsFor(query);
@@ -23243,7 +23244,28 @@ async function searchLaws(query, articleNumber, limit, pcodeData, fresh = false)
     return result.response;
   };
   let laws = null;
-  if (pcodeData) {
+  if (!articleNumber) {
+    const { law, terms: keywords } = splitQuery(query, pcodeData, LAW_ALIASES);
+    if (keywords.length) {
+      const found = await searchByKeyword({
+        law,
+        terms: keywords,
+        limit,
+        abolished: pcodeData?.abolished_set ?? [],
+        loadIndex: loadArticles,
+        deadline: startedAt + 45e3,
+        fetchHtml: async (url) => {
+          const result = await cachedFetchOfficial((target, init) => fetchOfficial(target, init, 1), url, { headers: { "User-Agent": "TaiwanLegalTechReview/1.0" } }, CACHE_TTL.LAW_MOJ, fresh);
+          if (!result.response.ok) throw new Error(`全國法規資料庫回應 ${result.response.status}`);
+          cacheMetas.push(result);
+          return result.response.text();
+        }
+      });
+      return { query, ...found, ...summarizeCacheMeta(cacheMetas) };
+    }
+    if (law) laws = [{ ...law, url: `${LAW_PAGE}?pcode=${encodeURIComponent(law.pcode)}` }];
+  }
+  if (!laws && pcodeData) {
     const pcode = resolvePcode(compactQuery, pcodeData.pcode_map);
     if (pcode) {
       const name = Object.keys(pcodeData.pcode_map).find((key) => pcodeData.pcode_map[key] === pcode) ?? compactQuery;
@@ -23595,7 +23617,7 @@ function createServer(fetchAsset2, logSink) {
       fresh: boolean2().default(false).describe("\u7565\u904E\u908A\u7DE3\u5FEB\u53D6\uFF0C\u5F37\u5236\u5411\u5B98\u65B9\u8CC7\u6599\u5EAB\u53D6\u5F97\u6700\u65B0\u5167\u5BB9\uFF08\u4F8B\u5982\u525B\u516C\u5E03\u7684\u4FEE\u6B63\u689D\u6587\uFF09")
     }
   }, async ({ query, article_number, limit, include_history, fresh }) => {
-    const result = await searchLaws(query, article_number, limit, await loadPcode().catch(() => void 0), fresh);
+    const result = await searchLaws(query, article_number, limit, await loadPcode().catch(() => void 0), fresh, () => loadLegalData("law-articles.json", fetchAsset2));
     if (include_history && result.results.length) {
       for (const law of result.results) {
         const history = (await loadHistoryBucket(law.pcode).catch(() => ({})))[law.pcode];
