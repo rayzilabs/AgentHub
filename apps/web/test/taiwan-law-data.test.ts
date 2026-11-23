@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildHistories, buildIndex, buildPcodeAll, checkCounts, parseConsPage } from '@/scripts/taiwan-law-data';
+import { buildArticles, buildHistories, buildIndex, buildPcodeAll, checkCounts, parseConsPage } from '@/scripts/taiwan-law-data';
 
 const law = (name: string, pcode: string, extra: Record<string, string> = {}) => ({
   LawName: name, LawURL: `https://law.moj.gov.tw/LawClass/LawAll.aspx?pcode=${pcode}`, LawAbandonNote: '', LawHistories: `${name}沿革`, ...extra,
@@ -21,6 +21,29 @@ describe('taiwan-law 資料檔：法務部開放資料', () => {
     expect(buildHistories([...laws, ...orders])).toEqual({
       B: { B0000001: '民法沿革' }, A: { A0000005: '動員戡亂時期臨時條款沿革' }, I: { I0050022: '個人資料保護法施行細則沿革' }, 0: { '0000001': '某某辦法沿革' },
     });
+  });
+});
+
+describe('taiwan-law 資料檔：條文索引', () => {
+  const item = (name: string, pcode: string, extra: object = {}) => ({
+    ...law(name, pcode), LawCategory: '行政＞勞動部＞勞動條件及就業平等目', LawModifiedDate: '20240731', LawEffectiveNote: '',
+    LawArticles: [{ ArticleType: 'C', ArticleNo: '', ArticleContent: '第 一 章 總則' }, { ArticleType: 'A', ArticleNo: '第 1 條', ArticleContent: '第一項。\r\n第二項。' }], ...extra,
+  });
+
+  it('收現行法律與勞動部主管的現行命令，只留條文，附資料日期、修正日期與生效註記', () => {
+    const out = buildArticles(
+      [item('勞動契約法', 'N0030010', { LawEffectiveNote: '施行日期以命令\r\n  定之。' }), item('工廠法', 'N0030007', { LawAbandonNote: '廢' })],
+      [item('勞動基準法施行細則', 'N0030002'), item('某某辦法', 'G0000001', { LawCategory: '行政＞財政部＞關務目' }), item('舊細則', 'N1', { LawAbandonNote: '廢', LawCategory: '廢止法規＞勞動部' })],
+      '2026/11/13 上午 12:00:00', { laws: 1, orders: 1 },
+    );
+    expect(out).toEqual({ update_date: '2026-11-13', laws: [
+      { n: '勞動契約法', p: 'N0030010', d: '2024-07-31', e: '施行日期以命令定之。', a: [['第 1 條', '第一項。\n第二項。']] },
+      { n: '勞動基準法施行細則', p: 'N0030002', d: '2024-07-31', a: [['第 1 條', '第一項。\n第二項。']] },
+    ] });
+  });
+
+  it('筆數太少時中止，不產生索引', () => {
+    expect(() => buildArticles([item('民法', 'B0000001')], [], '2026/11/13 上午 12:00:00')).toThrow('筆數不足');
   });
 });
 
