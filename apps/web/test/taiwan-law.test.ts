@@ -137,7 +137,10 @@ describe('taiwan-law 代管套件：server.js 的修改', () => {
 describe('taiwan-law 代管套件：實際啟動', () => {
   const listen = (s: Server) => new Promise<number>((r) => s.listen(0, '127.0.0.1', () => r((s.address() as AddressInfo).port)));
 
-  it('沒有通行證回 401；帶平台通行證可以列出工具', async () => {
+  // 全國法規資料庫一律連不上，測試不依賴外部網站
+  const offline = `data:text/javascript,${encodeURIComponent("const real = globalThis.fetch; globalThis.fetch = (u, i) => String(u?.url ?? u).includes('law.moj.gov.tw') ? Promise.reject(new Error('offline')) : real(u, i);")}`;
+
+  it('沒有通行證回 401；帶平台通行證可以列出工具、用關鍵字查法條', async () => {
     const key = pem();
     const platform = createServer((_, res) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ keys: [publicJwk(key)] })));
     const platformUrl = `http://127.0.0.1:${await listen(platform)}`;
@@ -145,11 +148,11 @@ describe('taiwan-law 代管套件：實際啟動', () => {
     const port = await listen(probe);
     await new Promise((r) => probe.close(r));
     const mcpUrl = `http://127.0.0.1:${port}/mcp`;
-    const child = spawn(process.execPath, ['start.mjs'], { cwd: PKG, env: { ...process.env, PORT: String(port), AGENTHUB_MCP_URL: mcpUrl, AGENTHUB_PLATFORM_URL: platformUrl }, stdio: 'pipe' });
+    const child = spawn(process.execPath, ['--import', offline, 'start.mjs'], { cwd: PKG, env: { ...process.env, PORT: String(port), AGENTHUB_MCP_URL: mcpUrl, AGENTHUB_PLATFORM_URL: platformUrl }, stdio: 'pipe' });
     try {
-      const post = (headers: Record<string, string>) => fetch(mcpUrl, {
+      const post = (headers: Record<string, string>, method = 'tools/list', params?: object) => fetch(mcpUrl, {
         method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
       });
       for (let i = 0; i < 50; i++) {
         if (await fetch(`http://127.0.0.1:${port}/healthz`).then((r) => r.ok, () => false)) break;
@@ -159,11 +162,21 @@ describe('taiwan-law 代管套件：實際啟動', () => {
       const token = signCreatorToken({ iss: platformUrl, aud: mcpUrl, sub: 'u', project_id: 'p', template_id: 't' }, key);
       const res = await post({ 'x-agenthub-token': token });
       expect(res.status).toBe(200);
-      const text = await res.text();
-      const body = JSON.parse(text.startsWith('{') ? text : text.split('\n').find((l) => l.startsWith('data:'))!.slice(5));
+      const parse = async (r: Response) => {
+        const text = await r.text();
+        return JSON.parse(text.startsWith('{') ? text : text.split('\n').find((l) => l.startsWith('data:'))!.slice(5));
+      };
+      const body = await parse(res);
       const names = body.result.tools.map((t: { name: string }) => t.name);
       expect(names).toHaveLength(14);
       expect(names).toEqual(expect.arrayContaining(['search_taiwan_laws', 'search_taiwan_bills', 'get_taiwan_law_progress', 'get_taiwan_law_versions']));
+
+      const search = async (query: string) => JSON.parse(
+        (await parse(await post({ 'x-agenthub-token': token }, 'tools/call', { name: 'search_taiwan_laws', arguments: { query } }))).result.content[0].text);
+      const article = (await search('競業禁止')).results.find((l: { name: string }) => l.name === '勞動基準法');
+      expect(article).toMatchObject({ pcode: 'N0030001', articles: [{ number: '第 9-1 條' }] });
+      expect(article.data_date).toMatch(/^\d{4}-\d\d-\d\d$/);
+      expect((await search('職業安全衛生法申訴')).results).toMatchObject([{ name: '職業安全衛生法' }]);
     } finally {
       child.kill();
       platform.close();
