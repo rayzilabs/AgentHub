@@ -96,7 +96,9 @@ export function createSpriteHost(deps?: SpritesLike): RuntimeHost {
       }
       const logs = await s.createService(spec.name, config, '10s');
       await logs.processAll(() => {});
-      // createService 不會重啟正在跑的程序；重新啟動才會載入剛寫入的檔案
+      // 新建立的服務已經在跑，不要再重啟（代管 MCP 的部署會被中斷）
+      if (!existing) return;
+      // 原本就有這個服務：createService 不會重啟正在跑的程序；重新啟動才會載入剛寫入的檔案
       const restartLogs = await s.restartService(spec.name, '10s');
       await restartLogs.processAll(() => {});
     },

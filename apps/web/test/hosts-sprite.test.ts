@@ -89,13 +89,14 @@ describe('createSpriteHost', () => {
     expect(config()).toEqual({ cmd: spec.cmd, args: spec.args, httpPort: 8080 });
   });
 
-  it('startService 設定相同或還沒有服務時不刪除', async () => {
+  it('startService 設定相同時不刪除、重啟載入新檔；還沒有服務時只建立、不重啟', async () => {
     const same = fakeHost({ cmd: spec.cmd, args: spec.args });
     await same.host.startService(machine, spec);
     expect(same.calls).toEqual(['create', 'create:drained', 'restart', 'restart:drained']);
+    // 新建立的服務已經在跑：再重啟會中斷正在跑的程式（例如代管 MCP 的部署）
     const none = fakeHost(null);
     await none.host.startService(machine, spec);
-    expect(none.calls).toEqual(['create', 'create:drained', 'restart', 'restart:drained']);
+    expect(none.calls).toEqual(['create', 'create:drained']);
     expect(await none.host.hasService(machine, 'runtime')).toBe(false);
   });
 
