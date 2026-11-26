@@ -109,17 +109,6 @@ export async function setSpriteState(
   if (error) throw error;
 }
 
-/**
- * 標成準備中，回傳是否由這次請求標上；已經在準備中就不動。
- * E2B 每次建立都是新沙盒，兩次佈建重疊會留下孤兒，所以只有標上的那一方去佈建。
- */
-export async function claimProvisioning(db: Db, id: string): Promise<boolean> {
-  const { data, error } = await db.from('projects').update({ sprite_status: 'provisioning', sprite_error: null })
-    .eq('id', id).neq('sprite_status', 'provisioning').select('id');
-  if (error) throw error;
-  return data.length > 0;
-}
-
 export async function deleteOwnProject(db: Db, userId: string, id: string): Promise<ProjectRow> {
   const project = await getOwnProject(db, userId, id);
   const { error } = await db.from('projects').delete().eq('id', id);
