@@ -264,6 +264,10 @@ export function createHostedOps(
       return hosts(m.host).extend(m, ms);
     },
 
+    async status(m) {
+      return hosts(m.host).status(m);
+    },
+
     async destroy(host, name) {
       await hosts(host).destroy(name, 'agenthub-mcp-');
     },

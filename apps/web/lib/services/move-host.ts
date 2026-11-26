@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createHostedOps } from '@/lib/hosted-runtime';
-import { hostFor, projectMachine } from '@/lib/hosts';
+import { hostFor, projectMachine, versionMachine } from '@/lib/hosts';
 import { errorText } from '@/lib/hosts/sprite';
 import type { HostName, Machine, RuntimeHost } from '@/lib/hosts/types';
 import { bringUpProject, destroyProjectMachine, spriteName } from '@/lib/project-runtime';
@@ -37,7 +37,7 @@ async function hasRunningRun(db: Db, projectId: string): Promise<boolean> {
 }
 
 /**
- * 把專案的機器搬到 to：先標 provisioning（對話路由不再收新對話）再檢查進行中的 run；
+ * 把專案的機器搬到 to（目標與現在同一家時，只有機器不見才重新部署，見規格 §6.9）：先標 provisioning（對話路由不再收新對話）再檢查進行中的 run；
  * 新機器健康才一次更新資料列，之後刪舊機器（失敗只警告）。新機器失敗就刪掉它、資料列還原、丟出錯誤。
  */
 export async function moveProject(
@@ -49,7 +49,9 @@ export async function moveProject(
   if (error) throw error;
   if (!data) throw new Error(`找不到專案 ${projectId}`);
   const original = data as ProjectHostRow;
-  if (original.host === to) return 'already-there';
+  const current = projectMachine(original);
+  const sameHost = original.host === to;
+  if (sameHost && current && (await hosts(to).status(current)) !== 'gone') return 'already-there';
   if (original.sprite_status === 'provisioning') throw new Error('專案正在佈建中，等它完成後再搬');
 
   // 狀態沒變才標：與「重新建立環境」或另一個搬遷互斥
@@ -79,8 +81,9 @@ export async function moveProject(
     return 'skipped-running';
   }
 
+  let m: Machine;
   try {
-    const m = await bringUpProject(db, hosts(to), projectId);
+    m = await bringUpProject(db, hosts(to), projectId);
     const { error: swapError } = await db.from('projects').update({
       host: to, sprite_name: m.name, sprite_url: m.url, host_token: m.token, sprite_status: 'ready', sprite_error: null,
     }).eq('id', projectId);
@@ -92,8 +95,13 @@ export async function moveProject(
     throw e;
   }
 
-  await bestEffortDestroy('刪除舊機器', original.host, original.sprite_name ?? spriteName(projectId),
-    () => destroyProjectMachine(projectMachine(original), projectId, original.host, hosts));
+  if (!sameHost) {
+    await bestEffortDestroy('刪除舊機器', original.host, original.sprite_name ?? spriteName(projectId),
+      () => destroyProjectMachine(current, projectId, original.host, hosts));
+  } else if (current && current.name !== m.name) {
+    // 同一家：依名稱只刪舊的那台（E2B 依 claim 刪會連新沙盒一起刪；Sprite 名稱固定，新舊同名就不刪）
+    await bestEffortDestroy('刪除舊機器', to, current.name, () => hosts(to).destroy(current.name, 'agenthub-'));
+  }
   return 'moved';
 }
 
@@ -123,7 +131,7 @@ async function waitForTools(ops: HostedOps, m: Machine, templateId: string, poll
 }
 
 /**
- * 把代管 MCP 版本搬到 to：用 Storage 同一份套件與 Vault 的金鑰在目標部署，listTools 成功才換資料列，
+ * 把代管 MCP 版本搬到 to（目標與現在同一家時，只有機器不見才重新部署，見規格 §6.9）：用 Storage 同一份套件與 Vault 的金鑰在目標部署，listTools 成功才換資料列，
  * 之後刪舊機器（失敗只警告）。只搬 published、ready；新機器失敗就刪掉它、資料列不動、丟出錯誤。
  */
 export async function moveHostedVersion(
@@ -136,14 +144,17 @@ export async function moveHostedVersion(
   if (!data) throw new Error(`找不到代管版本 ${versionId}`);
   const version = data as HostedVersion;
   if (!MOVABLE_VERSION_STATUSES.includes(version.status)) return 'skipped';
-  if (version.host === to) return 'already-there';
+  const current = versionMachine(version);
+  const sameHost = version.host === to;
+  if (sameHost && current && (await ops.status(current)) !== 'gone') return 'already-there';
 
   const claim = hostedSpriteName(version.id);
+  let m: Machine;
   try {
     const { data: signed, error: signError } = await db.storage.from(HOSTED_BUCKET).createSignedUrl(version.bundle_path, 900);
     if (signError) throw new Error(`讀不到套件 ${version.bundle_path}：${signError.message}`);
     const vars = await hostedEnv(db, version.template_id, version.mcp_name);
-    const m = await ops.provision({ ...version, host: to }, vars, signed.signedUrl);
+    m = await ops.provision({ ...version, host: to }, vars, signed.signedUrl);
     // 部署腳本上限 9 分鐘，再留一點給程式啟動；本機腳本沒有 Vercel 的 300 秒限制
     await waitForTools(ops, m, version.template_id, deps.pollMs ?? 5000, deps.timeoutMs ?? HOSTED_LIMITS.deployMs);
     const { data: swapped, error: swapError } = await db.from('hosted_mcp_versions')
@@ -157,8 +168,9 @@ export async function moveHostedVersion(
     throw e;
   }
 
-  if (version.sprite_name) {
-    const old = version.sprite_name;
+  const old = version.sprite_name;
+  // 同一家：Sprite 新舊同名（claim）不刪；E2B 依 sandboxId 只刪舊的那台，不能依 claim（會刪到新沙盒）
+  if (old && !(sameHost && old === m.name)) {
     await bestEffortDestroy('刪除舊機器', version.host, old, () => ops.destroy(version.host, old));
   }
   return 'moved';

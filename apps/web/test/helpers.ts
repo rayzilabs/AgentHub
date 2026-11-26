@@ -67,6 +67,7 @@ export function fakeHostedOps(state: DeployState = { phase: 'installing', log: '
       if (ops.extendError) throw ops.extendError;
       return ops.live;
     },
+    async status(m: Machine) { calls.push({ fn: 'status', args: [m] }); return ops.live; },
     async destroy(host: HostName, name: string) { calls.push({ fn: 'destroy', args: [host, name] }); },
   };
   return { ops, calls };

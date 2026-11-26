@@ -44,6 +44,7 @@ export type HostedOps = {
   /** 改寫 env.sh；mcp 服務已存在才重啟 */
   applyEnv(m: Machine, env: Record<string, string>): Promise<void>;
   extend(m: Machine, ms: number): Promise<Liveness>;
+  status(m: Machine): Promise<Liveness>;
   /** name 是機器名稱或 claim（E2B 依 claim 刪掉同版本的全部沙盒） */
   destroy(host: HostName, name: string): Promise<void>;
 };

@@ -171,20 +171,68 @@ describe('moveProject', () => {
     expect(e2b.create).not.toHaveBeenCalled();
   });
 
-  it('已在目標 host：already-there，不動任何東西', async () => {
-    const { id } = await projectOn('e2b', { sprite_name: 'sbx-here', sprite_url: 'https://here.e2b.app', host_token: 'tok' });
-    const before = await projectRow(id);
-    const { sprite, e2b, hosts } = twoHosts();
-    const tables: string[] = [];
-    const updates: unknown[] = [];
-    const spyDb = recordingDb((t) => tables.push(t), (_t, p) => updates.push(p));
+  const here = { sprite_name: 'sbx-here', sprite_url: 'https://here.e2b.app', host_token: 'tok' };
+  const hereMachine: Machine = { host: 'e2b', name: 'sbx-here', url: 'https://here.e2b.app', token: 'tok' };
 
-    expect(await moveProject(spyDb, id, 'e2b', { hosts })).toBe('already-there');
+  it('已在目標 host 且機器還在（running／paused）：already-there，不動任何東西', async () => {
+    for (const live of ['running', 'paused'] as const) {
+      const { id } = await projectOn('e2b', here);
+      const before = await projectRow(id);
+      const { sprite, e2b, hosts } = twoHosts();
+      e2b.status.mockResolvedValue(live);
+      const tables: string[] = [];
+      const updates: unknown[] = [];
+      const spyDb = recordingDb((t) => tables.push(t), (_t, p) => updates.push(p));
 
-    expect(updates).toEqual([]);
-    expect(tables).toEqual(['projects']);
-    expect(await projectRow(id)).toEqual(before);
-    for (const h of [sprite, e2b]) for (const fn of Object.values(h)) if (vi.isMockFunction(fn)) expect(fn).not.toHaveBeenCalled();
+      expect(await moveProject(spyDb, id, 'e2b', { hosts })).toBe('already-there');
+
+      expect(updates).toEqual([]);
+      expect(tables).toEqual(['projects']);
+      expect(await projectRow(id)).toEqual(before);
+      expect(e2b.status).toHaveBeenCalledExactlyOnceWith(hereMachine);
+      for (const h of [sprite, e2b]) {
+        for (const [name, fn] of Object.entries(h)) if (name !== 'status' && vi.isMockFunction(fn)) expect(fn).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('同一家但機器不見（gone）：在同一家重新部署，一次換列，只依名稱刪舊的那台', async () => {
+    const { id } = await projectOn('e2b', { ...here, sprite_status: 'error', sprite_error: 'agent 環境已不存在，請重新建立' });
+    const { e2b, hosts } = twoHosts();
+    e2b.status.mockResolvedValue('gone');
+    stubHealth(id);
+
+    expect(await moveProject(db, id, 'e2b', { hosts })).toBe('moved');
+
+    expect(e2b.create).toHaveBeenCalledExactlyOnceWith(spriteName(id), 'project');
+    expect(await projectRow(id)).toEqual({
+      host: 'e2b', sprite_name: 'sbx-moved', sprite_url: 'https://8080-sbx-moved.e2b.app', host_token: 'moved-tok', sprite_status: 'ready', sprite_error: null,
+    });
+    // 不能依 claim 刪（會刪到新沙盒）
+    expect(e2b.destroy.mock.calls).toEqual([['sbx-here', 'agenthub-']]);
+  });
+
+  it('同一家而且沒有機器：重新部署；Sprite 新舊同名時不刪', async () => {
+    const { id } = await projectOn('sprite', { sprite_name: null, sprite_url: null, host_token: null, sprite_status: 'error' });
+    const { sprite, hosts } = twoHosts();
+    sprite.create.mockResolvedValue({ host: 'sprite', name: spriteName(id), url: 'https://new.sprites.app', token: null });
+    stubHealth(id);
+
+    expect(await moveProject(db, id, 'sprite', { hosts })).toBe('moved');
+
+    expect(sprite.status).not.toHaveBeenCalled();
+    expect((await projectRow(id)).sprite_name).toBe(spriteName(id));
+    expect(sprite.destroy).not.toHaveBeenCalled();
+
+    // 舊 Sprite 不見、以同名重建：也不刪
+    const { id: id2 } = await projectOn('sprite', {});
+    await db.from('projects').update(spriteOld(id2)).eq('id', id2).throwOnError();
+    const two = twoHosts();
+    two.sprite.status.mockResolvedValue('gone');
+    two.sprite.create.mockResolvedValue({ host: 'sprite', name: spriteName(id2), url: 'https://new.sprites.app', token: null });
+    stubHealth(id2);
+    expect(await moveProject(db, id2, 'sprite', { hosts: two.hosts })).toBe('moved');
+    expect(two.sprite.destroy).not.toHaveBeenCalled();
   });
 });
 
@@ -297,15 +345,46 @@ describe('moveHostedVersion', () => {
     expect(message).toContain('403 Forbidden');
   });
 
-  it('已在目標 host：already-there，不動任何東西', async () => {
-    const { id } = await versionOn('e2b', 'published');
-    const before = await versionRow(id);
+  it('已在目標 host 且機器還在（running／paused）：already-there，不動任何東西', async () => {
+    for (const live of ['running', 'paused'] as const) {
+      const { id, old } = await versionOn('e2b', 'published');
+      const before = await versionRow(id);
+      const { ops, calls } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
+      ops.live = live;
+
+      expect(await moveHostedVersion(db, id, 'e2b', { ...opts, ops })).toBe('already-there');
+
+      expect(calls).toEqual([{ fn: 'status', args: [{ host: 'e2b', name: old.sprite_name, url: old.sprite_url, token: old.host_token }] }]);
+      expect(await versionRow(id)).toEqual(before);
+    }
+  });
+
+  it('同一家但機器不見（gone）：在同一家重新部署，listTools 成功才換列，只依 sandboxId 刪舊的那台', async () => {
+    vi.stubEnv('MCP_SIGNING_KEY', testSigningKey());
+    const { id, old } = await versionOn('e2b', 'published');
     const { ops, calls } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    ops.live = 'gone';
 
-    expect(await moveHostedVersion(db, id, 'e2b', { ...opts, ops })).toBe('already-there');
+    expect(await moveHostedVersion(db, id, 'e2b', { ...opts, ops })).toBe('moved');
 
-    expect(calls).toEqual([]);
-    expect(await versionRow(id)).toEqual(before);
+    expect(calls.map((c) => c.fn)).toEqual(['status', 'provision', 'readState', 'startService', 'listTools', 'destroy']);
+    expect(await versionRow(id)).toMatchObject({
+      host: 'e2b', sprite_name: 'sbx-fake', sprite_url: 'https://8080-sbx-fake.e2b.app', host_token: 'fake-traffic-token',
+    });
+    // 不能依 claim 刪（會刪到新沙盒）
+    expect(calls.at(-1)!.args).toEqual(['e2b', old.sprite_name]);
+  });
+
+  it('同一家 Sprite 不見：以同名重建，不刪', async () => {
+    vi.stubEnv('MCP_SIGNING_KEY', testSigningKey());
+    const { id } = await versionOn('sprite', 'ready');
+    const { ops, calls } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    ops.live = 'gone';
+
+    expect(await moveHostedVersion(db, id, 'sprite', { ...opts, ops })).toBe('moved');
+
+    expect(calls.some((c) => c.fn === 'destroy')).toBe(false);
+    expect(await versionRow(id)).toMatchObject({ host: 'sprite', sprite_name: hostedSpriteName(id), sprite_url: 'https://fake-mcp.sprites.app' });
   });
 });
 
