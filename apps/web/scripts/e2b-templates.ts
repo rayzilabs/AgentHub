@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import type { MachineKind } from '@/lib/hosts/types';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 
@@ -17,9 +18,22 @@ line=$(grep -E ' node-v22[0-9.]*-linux-x64[.]tar[.]gz$' SHASUMS256.txt | head -1
 test -n "$line"
 curl -fsSL "$base/\${line##* }" -o node.tar.gz
 echo "\${line%% *}  node.tar.gz" | sha256sum -c -
+# 先移除基底的舊 npm／corepack：直接覆蓋會留下舊版的檔案，新舊混在一起時 npm install 一律失敗
+rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 tar -xzf node.tar.gz -C /usr/local --strip-components=1 --exclude='*.md' --exclude=LICENSE
 rm -f node.tar.gz SHASUMS256.txt
 node -v | grep -q '^v22[.]'`;
+
+/**
+ * 基底映像的 root 與 user 是空密碼，sshd 又允許空密碼與 root 登入：沙盒帳號不用密碼就能 su／ssh 成 root。
+ * 這裡鎖住 root 與 user、整個移除 sshd（本平台不用）。但 user 的空密碼與 /usr/local 其他帳號可寫，會在範本建置最後一步
+ * 被改回去（2026-11-27 實測：root 維持鎖住、sshd 不在），所以每台建立後還要再鎖一次（lib/hosts/e2b.ts 的 E2B_LOCKDOWN_SCRIPT）。
+ */
+const HARDEN = `set -euo pipefail
+usermod -p '*' root
+usermod -p '*' user
+systemctl disable --now ssh.service ssh.socket 2>/dev/null || true
+DEBIAN_FRONTEND=noninteractive apt-get purge -y openssh-server openssh-sftp-server`;
 
 const base = () => Template().fromBaseImage().setUser('root').runCmd(INSTALL_NODE22);
 
@@ -27,14 +41,30 @@ const runtime = base()
   .aptInstall(['golang-go', 'default-jre-headless', 'ruby'], { noInstallRecommends: true })
   // 基底的 python3 在 /usr/local，以它的 pip 全域安裝，所有帳號都 import 得到
   .runCmd('python3 -m pip install numpy pandas')
+  .runCmd(HARDEN)
   .setUser('user');
-const mcp = base().setUser('user');
+const mcp = base().runCmd(HARDEN).setUser('user');
 
-type Spec = { name: string; template: ReturnType<typeof base>; cpuCount: number; memoryMB: number; checks: [string, string][] };
+/** plain <指令…>：以沒有 sudo 的一般帳號執行（沙盒帳號的角度） */
+const PLAIN = 'plain() { id -u agenthub-check >/dev/null 2>&1 || sudo -n useradd -m agenthub-check; sudo -n -u agenthub-check -H -- "$@"; };';
+/** 系統目錄裡其他帳號可寫、又沒有 sticky bit 的項目 */
+const WORLD_WRITABLE = 'find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5';
+const SECURITY_CHECKS: [string, string][] = [
+  ['沒有空密碼的帳號', `sudo -n test -s /etc/shadow && ! sudo -n awk -F: '$2 == ""' /etc/shadow | grep -q .`],
+  // 先確認一般帳號真的跑得起來，免得 sudo -u 本身失敗被當成 su 失敗
+  ['一般帳號 su root／user 不用密碼會失敗', `${PLAIN} test "$(plain id -un)" = agenthub-check && ! plain su root -c true </dev/null && ! plain su user -c true </dev/null`],
+  ['沒有程序聽 22 埠', `out=$(ss -ltnH) || exit 1; ! printf '%s\\n' "$out" | awk '{print $4}' | grep -qE ':22$'`],
+  ['系統目錄沒有其他帳號可寫的項目', `test -z "$(${WORLD_WRITABLE})"`],
+  ['user 仍可 sudo -n', 'sudo -n true'],
+  ['一般帳號能 npm install', `${PLAIN} plain sh -c 'cd "$(mktemp -d)" && npm init -y >/dev/null && npm install --no-audit --no-fund is-number@7 && node -e "require(\\"is-number\\")"'`],
+];
+
+type Spec = { name: string; kind: MachineKind; template: ReturnType<typeof base>; cpuCount: number; memoryMB: number; checks: [string, string][] };
 
 const specs: Spec[] = [
   {
     name: E2B_TEMPLATES.project,
+    kind: 'project',
     template: runtime,
     cpuCount: 2,
     memoryMB: 8192,
@@ -51,10 +81,12 @@ const specs: Spec[] = [
       ['ruby', 'ruby --version'],
       ['git', 'git --version'],
       ['curl', 'curl --version | head -1'],
+      ...SECURITY_CHECKS,
     ],
   },
   {
     name: E2B_TEMPLATES.mcp,
+    kind: 'mcp',
     template: mcp,
     cpuCount: 1,
     memoryMB: 2048,
@@ -62,15 +94,19 @@ const specs: Spec[] = [
       ['node 22', 'node -v | grep -q "^v22[.]"'],
       ['python3', 'python3 --version'],
       ['pip', 'pip --version || pip3 --version'],
+      ...SECURITY_CHECKS,
     ],
   },
 ];
 
 let failed = 0;
 
+// 以平台建立機器的方式（含建立後的權限鎖定）開一台來檢查：檢查的是平台實際拿到的沙盒
 async function verify(spec: Spec): Promise<void> {
-  const sbx = await Sandbox.create(spec.name, { apiKey, timeoutMs: 300_000 });
+  const host = createE2bHost();
+  const m = await host.create('agenthub-eval-check', spec.kind);
   try {
+    const sbx = await Sandbox.connect(m.name, { apiKey });
     for (const [label, cmd] of spec.checks) {
       try {
         const r = await sbx.commands.run(cmd);
@@ -80,8 +116,12 @@ async function verify(spec: Spec): Promise<void> {
         console.error(`  失敗 ${label}：${e instanceof Error ? e.message : e}`);
       }
     }
+    // 平台以 envd 用 root 執行指令（服務看守），鎖住 root 密碼後要照常
+    const root = await sbx.commands.run('id -u', { user: 'root' }).then((r) => r.stdout.trim(), (e: Error) => e.message);
+    if (root !== '0') failed++;
+    console.log(`  ${root === '0' ? '通過' : '失敗'} envd 以 root 執行：${root}`);
   } finally {
-    await sbx.kill();
+    await host.destroy(m.name, 'agenthub-').catch(() => Sandbox.kill(m.name, { apiKey }));
   }
 }
 

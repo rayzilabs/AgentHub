@@ -43,6 +43,20 @@ while true; do
 done
 `;
 
+/**
+ * E2B 範本建置的最後一步會把 user 改回空密碼、/usr/local 改回其他帳號可寫（在範本裡改了也會被蓋掉，2026-11-27 實測）。
+ * 不處理的話，沙盒帳號不用密碼就能 su 成 user（有 sudo），或換掉 runtime 與 root 會執行的 node、python。
+ * 每台建立後先以 root 鎖回來；暫停再叫醒會保留。
+ */
+export const E2B_LOCKDOWN_SCRIPT = [
+  'set -eu',
+  "usermod -p '*' root",
+  "usermod -p '*' user",
+  'chown -R root:root /usr/local',
+  'chmod -R go-w /usr/local',
+  'chmod o-w /etc/inittab /code 2>/dev/null || true',
+].join('\n');
+
 // create／connect 在 SDK 裡是帶 this 泛型的靜態方法，改成一般簽章才能注入假物件
 type SandboxSdk = Pick<typeof Sandbox, 'kill' | 'setTimeout' | 'getInfo' | 'list'> & {
   create(template: string, opts: SandboxOpts): Promise<Sandbox>;
@@ -117,6 +131,14 @@ chown root:root ${tmp} && chmod 755 ${tmp} && if cmp -s ${tmp} ${SVC_PATH}; then
         network: { allowPublicTraffic: false },
         metadata: { app: 'agenthub', kind, claim },
       });
+      try {
+        await sbx.commands.run(E2B_LOCKDOWN_SCRIPT, { user: 'root', timeoutMs: 120_000 });
+      } catch (e) {
+        // 鎖不起來就不交出這台：沙盒帳號能變成 user
+        await sdk.kill(sbx.sandboxId, api()).catch(() => undefined);
+        const detail = e instanceof CommandExitError ? (e.stderr || e.stdout || e.message).trim() : e instanceof Error ? e.message : String(e);
+        throw new Error(`沙盒權限鎖定失敗：${detail}`);
+      }
       return { host: 'e2b', name: sbx.sandboxId, url: `https://${sbx.getHost(8080)}`, token: sbx.trafficAccessToken ?? null };
     },
 

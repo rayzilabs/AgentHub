@@ -95,6 +95,9 @@ try {
   await mustNotLeak('讀不到 runtime 的 /proc environ', 'for p in $(pgrep node); do cat /proc/$p/environ 2>/dev/null | tr "\0" "\n"; done');
   const sudo = await sh(asAgent('sudo -n true'));
   record('agent 不能 sudo', sudo.code !== 0, sudo.out);
+  // 系統目錄可寫就能換掉 runtime 與 root 會執行的程式（E2B 基底映像的 /usr/local 曾整棵可寫）
+  const writable = await sh(asAgent('find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5'));
+  record('系統目錄沒有沙盒帳號可寫的項目', writable.out === '', writable.out);
   const sockCmd = 'curl -sf --max-time 3 --unix-socket /.sprite/api.sock http://sprite/v1/tasks';
   if (hostName === 'sprite') {
     const sock = await sh(asAgent(sockCmd));

@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { APIError, SpritesClient, type Sprite } from '@fly/sprites';
 import { env } from '@/lib/env';
@@ -83,7 +84,8 @@ export function createSpriteHost(deps?: SpritesLike): RuntimeHost {
     },
 
     async writeFile(m, path, content) {
-      await (await sprite(m)).filesystem('/').writeFile(path, content);
+      // 沿用改版前實測過的呼叫方式：以檔案所在目錄開檔案系統、寫相對檔名
+      await (await sprite(m)).filesystem(posix.dirname(path)).writeFile(posix.basename(path), content);
     },
 
     async startService(m, spec: ServiceSpec) {

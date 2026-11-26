@@ -1,6 +1,6 @@
 import { CommandExitError, NotFoundError, SandboxNotFoundError } from 'e2b';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createE2bHost, E2B_SERVICE_SCRIPT, E2B_TEMPLATES, E2B_TIMEOUT_MS } from '@/lib/hosts/e2b';
+import { createE2bHost, E2B_LOCKDOWN_SCRIPT, E2B_SERVICE_SCRIPT, E2B_TEMPLATES, E2B_TIMEOUT_MS } from '@/lib/hosts/e2b';
 import type { Machine } from '@/lib/hosts/types';
 
 const machine: Machine = { host: 'e2b', name: 'sbx-1', url: 'https://8080-sbx-1.e2b.app', token: 'tok' };
@@ -38,6 +38,21 @@ describe('create', () => {
       metadata: { app: 'agenthub', kind: 'project', claim: 'agenthub-p1' },
     });
     expect(m).toEqual({ host: 'e2b', name: 'sbx-new', url: 'https://8080-sbx-new.e2b.app', token: 'traffic-tok' });
+  });
+
+  it('建立後先以 root 鎖住密碼與 /usr/local', async () => {
+    const { run, host } = setup();
+    await host.create('agenthub-p1', 'project');
+    expect(run).toHaveBeenCalledWith(E2B_LOCKDOWN_SCRIPT, { user: 'root', timeoutMs: 120_000 });
+    expect(E2B_LOCKDOWN_SCRIPT).toContain("usermod -p '*' user");
+    expect(E2B_LOCKDOWN_SCRIPT).toContain('chmod -R go-w /usr/local');
+  });
+
+  it('鎖不起來就刪掉這台並丟錯', async () => {
+    const { sdk, run, host } = setup();
+    run.mockRejectedValueOnce(new Error('boom'));
+    await expect(host.create('agenthub-p1', 'project')).rejects.toThrow('沙盒權限鎖定失敗：boom');
+    expect(sdk.kill).toHaveBeenCalledWith('sbx-new', KEY);
   });
 
   it('mcp 用 mcp 範本與逾時', async () => {

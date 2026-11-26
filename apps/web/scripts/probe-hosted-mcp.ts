@@ -160,6 +160,9 @@ async function probe(runtime: string, creatorId: string, decoy: Machine | null):
     record(`${runtime}：mcp 改不了 env.sh`, write.code !== 0, write.out);
     const sudo = await sh(m, asMcp('sudo -n true'));
     record(`${runtime}：mcp 沒有 sudo`, sudo.code !== 0, sudo.out);
+    // 系統目錄可寫就能換掉部署腳本與服務會執行的 node、python（E2B 基底映像的 /usr/local 曾整棵可寫）
+    const writable = await sh(m, asMcp('find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5'));
+    record(`${runtime}：系統目錄沒有 mcp 可寫的項目`, writable.out === '', writable.out);
 
     const echo = await callEcho(m, { text: 'hi', show_headers: true, env_name: 'PROBE_KEY' });
     const headers = (echo.headers as string[]) ?? [];
