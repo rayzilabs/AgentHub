@@ -44,8 +44,12 @@ async function main(): Promise<void> {
   } else {
     const { createHostedOps } = await import('@/lib/hosted-runtime');
     const { cleanupFailed } = await import('@/lib/services/hosted-mcp');
-    const done = await cleanupFailed(db, createHostedOps());
-    console.log(done.length ? `已刪除：${done.join(', ')}` : '沒有需要清理的機器');
+    const { destroyed, failed } = await cleanupFailed(db, createHostedOps());
+    console.log(destroyed.length ? `已刪除：${destroyed.join(', ')}` : '沒有刪除任何機器');
+    if (failed.length) {
+      console.error(`刪不掉 ${failed.length} 台：${failed.map((f) => `${f.host} ${f.name}`).join(', ')}`);
+      process.exit(1);
+    }
   }
 }
 

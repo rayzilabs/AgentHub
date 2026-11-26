@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => ({ calls: [] as string[] }));
 vi.mock('@/lib/services/hosted-mcp', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/services/hosted-mcp')>()),
-  cleanupFailed: async () => { hoisted.calls.push('cleanupFailed'); return ['agenthub-mcp-a']; },
+  cleanupFailed: async () => {
+    hoisted.calls.push('cleanupFailed');
+    return { destroyed: ['sbx-a'], failed: [{ id: 'v1', host: 'sprite', name: 'agenthub-mcp-b', error: '403 Forbidden' }] };
+  },
   removeOrphanBundles: async () => { hoisted.calls.push('removeOrphanBundles'); return ['x/fin/1.zip']; },
 }));
 vi.mock('@/lib/hosted-runtime', () => ({ createHostedOps: () => ({}) }));
@@ -32,14 +35,18 @@ describe('排程：清理代管 MCP', () => {
     expect(printed.join()).not.toContain('right-secret');
   });
 
-  it('正確的密鑰：清理失敗版本的 Sprite 與孤兒套件', async () => {
+  it('正確的密鑰：清理失敗版本的機器與孤兒套件；有刪不掉的仍清套件、結果列出失敗', async () => {
     vi.stubEnv('CRON_SECRET', 'right-secret');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const res = await call('Bearer right-secret');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sprites: ['agenthub-mcp-a'], bundles: ['x/fin/1.zip'] });
+    expect(await res.json()).toEqual({
+      machines: ['sbx-a'], failed: [{ id: 'v1', host: 'sprite', name: 'agenthub-mcp-b', error: '403 Forbidden' }], bundles: ['x/fin/1.zip'],
+    });
     expect(hoisted.calls).toEqual(['cleanupFailed', 'removeOrphanBundles']);
     // Vercel 的 Runtime Logs 只列出有輸出的請求：每次執行都印一行結果
-    expect(log.mock.calls.map((c) => c.join(' '))).toEqual(['[cron] hosted-cleanup 完成：刪除 Sprite 1 台（agenthub-mcp-a）、套件 1 個']);
+    expect(log.mock.calls.map((c) => c.join(' '))).toEqual([
+      '[cron] hosted-cleanup 完成：刪除機器 1 台（sbx-a）、刪不掉 1 台（sprite agenthub-mcp-b）、套件 1 個',
+    ]);
   });
 });

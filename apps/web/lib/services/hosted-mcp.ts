@@ -350,10 +350,15 @@ export async function setHostedSecrets(
   for (const m of machines) await ops.applyEnv(m, { ...vars, AGENTHUB_MCP_URL: `${m.url}/mcp` });
 }
 
-/** opts.templateId 只給測試用：測試打正式資料庫，不能碰到真實版本 */
+export type CleanupFailure = { id: string; host: HostName; name: string; error: string };
+
+/**
+ * 逐台刪除；刪不掉的（例如 Fly 回 403）印出並記在 failed，不擋後面的，sprite_name 留著下次再試。
+ * opts.templateId 只給測試用：測試打正式資料庫，不能碰到真實版本
+ */
 export async function cleanupFailed(
   db: Db, ops: HostedOps, opts: { templateId?: string; now?: number } = {},
-): Promise<string[]> {
+): Promise<{ destroyed: string[]; failed: CleanupFailure[] }> {
   const cutoff = new Date((opts.now ?? Date.now()) - KEEP_FAILED_MS).toISOString();
   let query = db.from('hosted_mcp_versions').select('id, host, sprite_name')
     .not('sprite_name', 'is', null)
@@ -361,14 +366,21 @@ export async function cleanupFailed(
   if (opts.templateId) query = query.eq('template_id', opts.templateId);
   const { data, error } = await query;
   if (error) throw error;
-  const done: string[] = [];
+  const destroyed: string[] = [];
+  const failed: CleanupFailure[] = [];
   for (const v of data as { id: string; host: HostName; sprite_name: string }[]) {
-    await ops.destroy(v.host, v.sprite_name);
-    const { error: updateError } = await db.from('hosted_mcp_versions').update({ sprite_name: null }).eq('id', v.id);
-    if (updateError) throw updateError;
-    done.push(v.sprite_name);
+    try {
+      await ops.destroy(v.host, v.sprite_name);
+      const { error: updateError } = await db.from('hosted_mcp_versions').update({ sprite_name: null }).eq('id', v.id);
+      if (updateError) throw updateError;
+      destroyed.push(v.sprite_name);
+    } catch (e) {
+      const failure = { id: v.id, host: v.host, name: v.sprite_name, error: errorText(e) };
+      console.error(`[hosted-cleanup] 刪不掉代管版本 ${failure.id} 的機器 ${failure.host} ${failure.name}：${failure.error}`);
+      failed.push(failure);
+    }
   }
-  return done;
+  return { destroyed, failed };
 }
 
 /** 範本刪除時版本會跟著刪，但 Storage 裡的套件不會；刪掉範本已不存在的套件 */

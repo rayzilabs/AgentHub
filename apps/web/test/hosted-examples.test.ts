@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from '../scripts/hosted-mcp';
 import { createTemplate } from '@/lib/services/templates';
@@ -58,11 +58,47 @@ describe('營運腳本 hosted-mcp.ts', () => {
     const destroyed: string[] = [];
     const ops = { destroy: async (host: string, name: string) => { destroyed.push(`${host}:${name}`); } } as unknown as HostedOps;
     // 測試打正式資料庫：只清這個範本，不碰真實版本
-    await cleanupFailed(db, ops, { templateId: t.id });
+    expect(await cleanupFailed(db, ops, { templateId: t.id })).toMatchObject({ failed: [] });
     // 依版本的執行環境刪除
     expect(destroyed.sort()).toEqual(['e2b:sbx-old', 'sprite:agenthub-mcp-leak', 'sprite:agenthub-mcp-old']);
     const { data } = await db.from('hosted_mcp_versions').select('version, sprite_name').eq('template_id', t.id).order('version');
     expect(data!.map((r) => r.sprite_name)).toEqual([null, 'agenthub-mcp-new', null, 'agenthub-mcp-live', null]);
+  });
+
+  it('cleanup-failed：刪不掉的（Fly 403）只記錄，不擋其他台；只清掉真的刪掉的 sprite_name', async () => {
+    const db = testDb();
+    const creator = await seedUser(db);
+    const t = await createTemplate(db, creator.id, {
+      name: '代管顧問', description: '', category: '', system_prompt: 'p',
+      mcp_servers: [{ name: 'fin', transport: 'remote', hosted: true, required_secrets: [] }],
+    });
+    const rows = [
+      { version: 1, status: 'retired', host: 'sprite', sprite_name: 'agenthub-mcp-stuck' },
+      { version: 2, status: 'retired', host: 'e2b', sprite_name: 'sbx-gone' },
+    ];
+    const { data: inserted, error } = await db.from('hosted_mcp_versions')
+      .insert(rows.map((r) => ({ ...r, template_id: t.id, mcp_name: 'fin', bundle_path: 'x' }))).select('id, version');
+    if (error) throw error;
+    const stuckId = inserted.find((r) => r.version === 1)!.id as string;
+    const attempted: string[] = [];
+    const ops = {
+      destroy: async (host: string, name: string) => {
+        attempted.push(`${host}:${name}`);
+        if (host === 'sprite') throw new Error('403 Forbidden');
+      },
+    } as unknown as HostedOps;
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await cleanupFailed(db, ops, { templateId: t.id });
+
+    expect(attempted.sort()).toEqual(['e2b:sbx-gone', 'sprite:agenthub-mcp-stuck']);
+    expect(result.destroyed).toEqual(['sbx-gone']);
+    expect(result.failed).toEqual([{ id: stuckId, host: 'sprite', name: 'agenthub-mcp-stuck', error: '403 Forbidden' }]);
+    const { data } = await db.from('hosted_mcp_versions').select('version, sprite_name').eq('template_id', t.id).order('version');
+    expect(data!.map((r) => r.sprite_name)).toEqual(['agenthub-mcp-stuck', null]);
+    const message = logged.mock.calls.map((c) => c.join(' ')).join('\n');
+    for (const part of [stuckId, 'sprite', 'agenthub-mcp-stuck', '403 Forbidden']) expect(message).toContain(part);
+    logged.mockRestore();
   });
 
   it('removeOrphanBundles：刪掉範本已不存在的套件，留下還在的範本的套件', async () => {
