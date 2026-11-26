@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '@/app/api/threads/[id]/chat/route';
-import * as sprites from '@/lib/project-runtime';
+import * as projectRuntime from '@/lib/project-runtime';
 import { createProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { createThread } from '@/lib/services/threads';
@@ -52,7 +52,7 @@ describe('轉送對話', () => {
     const t = await createThread(db, user.id, p.id);
     const auth = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, { auth: { persistSession: false } });
     const { data } = await auth.auth.signInWithPassword({ email: user.email, password: user.password });
-    vi.mocked(sprites.forwardChat).mockClear();
+    vi.mocked(projectRuntime.forwardChat).mockClear();
     const res = await POST(
       new Request(`https://p.test/api/threads/${t.id}/chat`, {
         method: 'POST',
@@ -63,6 +63,6 @@ describe('轉送對話', () => {
     );
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe('專案裡的顧問都已無法使用');
-    expect(sprites.forwardChat).not.toHaveBeenCalled();
+    expect(projectRuntime.forwardChat).not.toHaveBeenCalled();
   });
 });

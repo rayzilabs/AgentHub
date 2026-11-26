@@ -151,8 +151,8 @@ chown root:root ${tmp} && chmod 755 ${tmp} && if cmp -s ${tmp} ${SVC_PATH}; then
       await kill(name);
     },
 
-    async exec(m, script) {
-      return run(m, `bash -lc ${quote(script)}`);
+    async exec(m, script, opts) {
+      return run(m, `bash -lc ${quote(script)}`, opts?.timeoutMs ? { timeoutMs: opts.timeoutMs } : {});
     },
 
     async writeFile(m, path, content) {

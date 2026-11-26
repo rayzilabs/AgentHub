@@ -10,7 +10,7 @@ import { seedUser, testDb } from './helpers';
 
 vi.mock('@/lib/project-runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/project-runtime')>()),
-  destroyProjectSprite: async () => {},
+  destroyProjectMachine: async () => {},
 }));
 
 const { DELETE: deleteProjectRoute } = await import('@/app/api/projects/[id]/route');

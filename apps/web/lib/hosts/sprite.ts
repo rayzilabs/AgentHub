@@ -77,8 +77,8 @@ export function createSpriteHost(deps?: SpritesLike): RuntimeHost {
       await deleteSpriteIfExists(client(), name, prefix);
     },
 
-    async exec(m, script) {
-      const { stdout } = await (await sprite(m)).execFile('bash', ['-lc', script]);
+    async exec(m, script, opts) {
+      const { stdout } = await (await sprite(m)).execFile('bash', ['-lc', script], opts?.timeoutMs ? { timeout: opts.timeoutMs } : undefined);
       return String(stdout);
     },
 

@@ -1,4 +1,5 @@
 import type { UIMessage } from 'ai';
+import { loadProjectMachine } from '@/lib/hosts';
 import { HttpError } from '@/lib/http';
 import { defaultRunCheck, INTERRUPTED_ERROR, markRunInterrupted, type RunCheck } from '@/lib/run-liveness';
 import type { Db } from '@/lib/supabase/admin';
@@ -80,8 +81,10 @@ export async function getThreadMessages(db: Db, userId: string, threadId: string
     .reduce<string | null>((max, m) => (max === null || Date.parse(m.updated_at) > Date.parse(max) ? m.updated_at : max), null);
   const base = { messages, queued, startedAt: run.started_at as string, updatedAt };
   if (run.status === 'running') {
-    // 直接問 runtime：程序被砍或重啟時，它會明確說不知道這個 run，不必等到 20 分鐘
-    if (project.sprite_url && (await checkRun(project.sprite_url, run.id, project.id)) === 'gone') {
+    // 直接問 runtime：程序被砍或重啟時，它會明確說不知道這個 run，不必等到 20 分鐘。
+    // 通行證不在專案資料裡（不送到瀏覽器），另外讀機器
+    const m = project.sprite_url ? await loadProjectMachine(db, project.id) : null;
+    if (m && (await checkRun(m, run.id, project.id)) === 'gone') {
       if (await markRunInterrupted(db, run.id)) return { ...base, running: false, runStatus: 'failed', error: INTERRUPTED_ERROR };
       // 沒改到：問的空檔裡 runtime 剛好寫完結果才回答「不在」，照實際結果回答
       const { data: latest, error } = await db.from('runs').select('status, error').eq('id', run.id).single();

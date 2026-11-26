@@ -7,7 +7,8 @@ import { SpritesClient, type Sprite } from '@fly/sprites';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('@/lib/supabase/admin');
-const { destroyProjectSprite, installRuntime, SANDBOX_ADDUSER, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/project-runtime');
+const { createSpriteHost } = await import('@/lib/hosts/sprite');
+const { installRuntime, SANDBOX_ADDUSER, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/project-runtime');
 
 const runtimeObject = process.argv[2];
 if (!runtimeObject) throw new Error('請指定 runtime 物件名稱，例如 main-abc1234.js');
@@ -53,7 +54,7 @@ try {
   // 家目錄單獨一行輸出，不會跟 .bashrc 的警告黏在同一行
   const base = `${(await sh(sprite, 'printf "%s\\n" "$HOME"')).out.split('\n')[0]}/agenthub`;
 
-  await installRuntime(adminDb(), sprite, projectId, runtimeObject);
+  await installRuntime(adminDb(), createSpriteHost(), { host: 'sprite', name, url: sprite.url!, token: null }, projectId, runtimeObject);
 
   const leak = /SUPABASE|VERTEX|sb_secret/;
   const mustNotLeak = async (check: string, cmd: string) => {
@@ -271,7 +272,7 @@ try {
   const after = await sh(sprite, 'echo alive; grep oom_kill /sys/fs/cgroup/agenthub-sandbox/memory.events');
   record('吃光記憶體的沙盒程式被砍，Sprite 照常回應', oom.code !== 0 && after.out.startsWith('alive') && /oom_kill [1-9]/.test(after.out), `${oom.out.slice(-200)} / ${after.out}`);
 } finally {
-  await destroyProjectSprite(name).catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
+  await createSpriteHost().destroy(name, 'agenthub-').catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
 }
 
 for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.check}${r.pass ? '' : `\n      ${r.detail}`}`);

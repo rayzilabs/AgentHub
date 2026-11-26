@@ -1,22 +1,22 @@
 import { fileURLToPath } from 'node:url';
-import { SpritesClient } from '@fly/sprites';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 
 const { adminDb } = await import('@/lib/supabase/admin');
-const { installRuntime, spriteName } = await import('@/lib/project-runtime');
+const { hostFor, projectMachine } = await import('@/lib/hosts');
+const { installRuntime } = await import('@/lib/project-runtime');
 
 const db = adminDb();
-const client = new SpritesClient(process.env.FLY_SPRITES_TOKEN!);
-const { data: projects, error } = await db.from('projects').select('id, sprite_name').eq('sprite_status', 'ready');
+const { data: projects, error } = await db.from('projects').select('id, host, sprite_name, sprite_url, host_token').eq('sprite_status', 'ready');
 if (error) throw error;
 
 const failed: string[] = [];
 for (const p of projects) {
   try {
-    const sprite = client.sprite(p.sprite_name ?? spriteName(p.id));
+    const m = projectMachine(p);
+    if (!m) throw new Error('專案沒有機器名稱或網址');
     // installRuntime 會重新啟動 runtime 服務，載入新的 main.js
-    await installRuntime(db, sprite, p.id);
+    await installRuntime(db, hostFor(m.host), m, p.id);
     console.log(`已更新 ${p.id}`);
   } catch (e) {
     failed.push(p.id);

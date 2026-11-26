@@ -147,6 +147,12 @@ describe('exec / writeFile', () => {
     expect(run).toHaveBeenCalledWith(`bash -lc 'echo '\\''hi'\\'''`, {});
   });
 
+  it('exec 有 timeoutMs 時取代 SDK 預設的 60 秒', async () => {
+    const { run, host } = setup();
+    await host.exec(machine, 'long', { timeoutMs: 600_000 });
+    expect(run).toHaveBeenCalledWith(`bash -lc 'long'`, { timeoutMs: 600_000 });
+  });
+
   it('非 0 結束時錯誤訊息含 stderr', async () => {
     const { run, host } = setup();
     run.mockRejectedValue(new CommandExitError({ stdout: '', stderr: 'no such file', exitCode: 2, error: 'x' }));

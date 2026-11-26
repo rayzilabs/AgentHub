@@ -3,7 +3,8 @@ import { route } from '@/lib/http';
 import { deleteRuntimeAccount } from '@/lib/runtime-session';
 import { removeProjectStorage } from '@/lib/services/files';
 import { deleteOwnProject, getOwnProject, getProjectDetail } from '@/lib/services/projects';
-import { destroyProjectSprite, spriteName } from '@/lib/project-runtime';
+import { loadProjectMachine } from '@/lib/hosts';
+import { destroyProjectMachine } from '@/lib/project-runtime';
 import { adminDb } from '@/lib/supabase/admin';
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -17,8 +18,8 @@ export const DELETE = route(async (req: Request, { params }: Ctx) => {
   const user = await requireUser(req);
   const db = adminDb();
   const project = await getOwnProject(db, user.id, (await params).id);
-  // 先刪 Sprite：失敗時專案還在，使用者可以再按一次刪除重試
-  await destroyProjectSprite(project.sprite_name ?? spriteName(project.id));
+  // 先刪機器：失敗時專案還在，使用者可以再按一次刪除重試
+  await destroyProjectMachine(await loadProjectMachine(db, project.id), project.id, project.host);
   // 檔案物件不會隨專案列連帶刪除，要先清掉；失敗時專案還在，可以重試
   await removeProjectStorage(db, project.id);
   await deleteRuntimeAccount(db, project.id);

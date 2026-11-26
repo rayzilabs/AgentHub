@@ -102,7 +102,8 @@ export async function getProjectDetail(db: Db, userId: string, id: string): Prom
 export async function setSpriteState(
   db: Db,
   id: string,
-  patch: Partial<Pick<ProjectRow, 'sprite_name' | 'sprite_url' | 'sprite_status' | 'sprite_error'>>,
+  // host_token 只寫不讀：ProjectRow 不含它，不會送到瀏覽器
+  patch: Partial<Pick<ProjectRow, 'sprite_name' | 'sprite_url' | 'sprite_status' | 'sprite_error'> & { host_token: string | null }>,
 ): Promise<void> {
   const { error } = await db.from('projects').update(patch).eq('id', id);
   if (error) throw error;

@@ -1,12 +1,15 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { SpritesClient, type Sprite } from '@fly/sprites';
 import { env } from '@/lib/env';
-import { deleteSpriteIfExists, errorText, findService, getOrCreateSprite, retryTransient } from '@/lib/hosts/sprite';
+import { hostFor, projectMachine } from '@/lib/hosts';
+import { errorText } from '@/lib/hosts/sprite';
+import type { HostName, Machine, RuntimeHost } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import { setSpriteState } from '@/lib/services/projects';
 import type { Db } from '@/lib/supabase/admin';
 
 export const RUNTIME_OBJECT = 'main.js';
+/** 機器整台不見（例如被刪除）時給使用者的訊息；專案頁的「重新建立環境」會建新的一台 */
+export const RUNTIME_GONE = 'agent 環境已不存在，請重新建立';
 export const WORKSPACE = '/workspace';
 export const SANDBOX_USER = 'agent';
 /** 與 packages/runtime/src/sandbox.ts 的 SANDBOX_WRAPPER 相同 */
@@ -111,7 +114,7 @@ export function runtimeEnvFile(vars: Record<string, string>): string {
  * 建立沙盒帳號與工作區（可重複執行），以 runtime 帳號透過 sudo 執行。
  * 工作區由 runtime 帳號擁有、workspace 群組可寫；agent 只靠群組權限進入，沒有 sudo，進不了 runtime 目錄。
  */
-export function sandboxSetupScript(base: string): string {
+export function sandboxSetupScript(base: string, host: HostName): string {
   const q = (p: string) => `'${p}'`;
   return [
     'set -euo pipefail',
@@ -135,23 +138,26 @@ export function sandboxSetupScript(base: string): string {
     `printf '%s' ${shellQuote(RUNTIME_SUPERVISOR_SCRIPT)} | sudo tee ${RUNTIME_SUPERVISOR} >/dev/null`,
     `sudo chown root:root ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER} ${RUNTIME_SUPERVISOR}`,
     `sudo chmod 755 ${SANDBOX_WRAPPER} ${SANDBOX_ADDUSER} ${RUNTIME_SUPERVISOR}`,
-    // /.sprite/bin 的語言包裝腳本（python3、node、go、java…）第一次執行時，會把各自的 export 行寫進 runtime 帳號的
-    // /etc/profile.d/languages_env；沙盒帳號寫不進去，於是每種語言在沙盒裡都會失敗（2026-10-30 正式站 75% 的對話撞到）。
-    // 由 runtime 帳號先替所有包裝腳本補齊（讀出它們會寫的那行，不執行語言工具本身）；補不了只警告
-    'LANG_ENV=/etc/profile.d/languages_env; { [ -f "$LANG_ENV" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_ENV"; '
-      + 'grep -h \'>> "$LANG_ENV"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo .\\(export [A-Za-z_]*=.*\\). >> "\\$LANG_ENV"$/\\1/p\' | sort -u | '
-      + 'while IFS= read -r line; do grep -q "^${line%%=*}=" "$LANG_ENV" || echo "$line" >> "$LANG_ENV"; done; } || echo "[setup] 補齊 languages_env 失敗" >&2',
-    // 包裝腳本也把自己的路徑（"$PYENV_ROOT/shims" 這類）寫進 languages_paths；寫不進去只印 Permission denied，
-    // 但每次執行都會混進顧問看到的輸出。以剛補齊的 languages_env 展開後補上；變數沒定義、展開不完整的跳過
-    'LANG_PATHS=/etc/profile.d/languages_paths; { [ -f "$LANG_PATHS" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_PATHS"; '
-      + '( set +u; . "$LANG_ENV"; grep -h \'>> "$LANG_PATHS"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo "\\([^"]*\\)" >> "\\$LANG_PATHS".*$/\\1/p\' | sort -u | '
-      + 'while IFS= read -r p; do eval "d=\\"$p\\""; case "$d" in /?*/*) ;; *) continue ;; esac; grep -qxF "$d" "$LANG_PATHS" || echo "$d" >> "$LANG_PATHS"; done ); } '
-      + '|| echo "[setup] 補齊 languages_paths 失敗" >&2',
-    // 顧問最常用的計算套件先裝進 pyenv 的 Python，
-    // 不必每次自己建 venv 安裝；裝不起來（例如暫時連不上 PyPI）只警告，顧問仍可自行安裝
-    // set -euo pipefail 下沒有 pyenv 時 ls 會失敗，|| true 讓這一步不會中止整個佈建
-    'py=$(ls -d /.sprite/languages/python/pyenv/versions/*/bin 2>/dev/null | sort -V | tail -1 || true); '
-      + 'if [ -n "$py" ]; then sudo "$py/pip" install --quiet --disable-pip-version-check numpy pandas || echo "[setup] 預先安裝 numpy、pandas 失敗" >&2; fi',
+    // 以下只在 Sprite：E2B 範本已裝好語言工具與 numpy、pandas，也沒有 /.sprite/bin 的包裝腳本
+    ...(host === 'sprite' ? [
+      // /.sprite/bin 的語言包裝腳本（python3、node、go、java…）第一次執行時，會把各自的 export 行寫進 runtime 帳號的
+      // /etc/profile.d/languages_env；沙盒帳號寫不進去，於是每種語言在沙盒裡都會失敗（2026-10-30 正式站 75% 的對話撞到）。
+      // 由 runtime 帳號先替所有包裝腳本補齊（讀出它們會寫的那行，不執行語言工具本身）；補不了只警告
+      'LANG_ENV=/etc/profile.d/languages_env; { [ -f "$LANG_ENV" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_ENV"; '
+        + 'grep -h \'>> "$LANG_ENV"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo .\\(export [A-Za-z_]*=.*\\). >> "\\$LANG_ENV"$/\\1/p\' | sort -u | '
+        + 'while IFS= read -r line; do grep -q "^${line%%=*}=" "$LANG_ENV" || echo "$line" >> "$LANG_ENV"; done; } || echo "[setup] 補齊 languages_env 失敗" >&2',
+      // 包裝腳本也把自己的路徑（"$PYENV_ROOT/shims" 這類）寫進 languages_paths；寫不進去只印 Permission denied，
+      // 但每次執行都會混進顧問看到的輸出。以剛補齊的 languages_env 展開後補上；變數沒定義、展開不完整的跳過
+      'LANG_PATHS=/etc/profile.d/languages_paths; { [ -f "$LANG_PATHS" ] || sudo install -m 644 -o "$(id -un)" /dev/null "$LANG_PATHS"; '
+        + '( set +u; . "$LANG_ENV"; grep -h \'>> "$LANG_PATHS"\' /.sprite/bin/* 2>/dev/null | sed -n \'s/^ *echo "\\([^"]*\\)" >> "\\$LANG_PATHS".*$/\\1/p\' | sort -u | '
+        + 'while IFS= read -r p; do eval "d=\\"$p\\""; case "$d" in /?*/*) ;; *) continue ;; esac; grep -qxF "$d" "$LANG_PATHS" || echo "$d" >> "$LANG_PATHS"; done ); } '
+        + '|| echo "[setup] 補齊 languages_paths 失敗" >&2',
+      // 顧問最常用的計算套件先裝進 pyenv 的 Python，
+      // 不必每次自己建 venv 安裝；裝不起來（例如暫時連不上 PyPI）只警告，顧問仍可自行安裝
+      // set -euo pipefail 下沒有 pyenv 時 ls 會失敗，|| true 讓這一步不會中止整個佈建
+      'py=$(ls -d /.sprite/languages/python/pyenv/versions/*/bin 2>/dev/null | sort -V | tail -1 || true); '
+        + 'if [ -n "$py" ]; then sudo "$py/pip" install --quiet --disable-pip-version-check numpy pandas || echo "[setup] 預先安裝 numpy、pandas 失敗" >&2; fi',
+    ] : []),
     // .env 可能由檔案 API 以別的帳號寫入，先改回 runtime 帳號再收緊
     `sudo chown "$(id -un)" ${q(`${base}/.env`)}`,
     `chmod 600 ${q(`${base}/.env`)}`,
@@ -159,17 +165,20 @@ export function sandboxSetupScript(base: string): string {
   ].join('\n');
 }
 
-function client() {
-  return new SpritesClient(env.spritesToken);
+/** 下載 runtime 與跑佈建腳本可能超過 E2B SDK 預設的 60 秒 */
+const PROVISION_EXEC_TIMEOUT_MS = 600_000;
+
+/** runtime 目錄：機器上 runtime 帳號的 $HOME/agenthub（Sprite: /home/sprite；E2B: /home/user） */
+async function runtimeBase(host: RuntimeHost, m: Machine): Promise<string> {
+  return `${(await host.exec(m, 'printf %s "$HOME"')).trim()}/agenthub`;
 }
 
-export async function installRuntime(db: Db, sprite: Sprite, projectId: string, runtimeObject = RUNTIME_OBJECT): Promise<string> {
-  const { stdout } = await sprite.execFile('bash', ['-lc', 'printf %s "$HOME"']);
-  const base = `${String(stdout).trim()}/agenthub`;
+export async function installRuntime(db: Db, host: RuntimeHost, m: Machine, projectId: string, runtimeObject = RUNTIME_OBJECT): Promise<string> {
+  const base = await runtimeBase(host, m);
   const { data, error } = await db.storage.from('runtime').createSignedUrl(runtimeObject, 600);
   if (error) throw new Error(`找不到 runtime 安裝檔：${error.message}`);
-  await sprite.execFile('bash', ['-lc', `mkdir -p '${base}' && curl -fsSL '${data.signedUrl}' -o '${base}/main.js'`]);
-  await sprite.filesystem(base).writeFile('.env', runtimeEnvFile({
+  await host.exec(m, `mkdir -p '${base}' && curl -fsSL '${data.signedUrl}' -o '${base}/main.js'`, { timeoutMs: PROVISION_EXEC_TIMEOUT_MS });
+  await host.writeFile(m, `${base}/.env`, runtimeEnvFile({
     PROJECT_ID: projectId,
     SUPABASE_URL: env.supabaseUrl,
     // 不放平台金鑰：資料庫用 Vercel 每次附上的 runtime 帳號通行證，模型走平台代理
@@ -178,35 +187,25 @@ export async function installRuntime(db: Db, sprite: Sprite, projectId: string, 
     SHARED_ROOT: `${WORKSPACE}/shared`,
     SANDBOX_USER,
     PLATFORM_URL: env.platformUrl,
+    // runtime 依它決定防休眠找 Sprite Tasks API 還是平台的 keepalive
+    RUNTIME_HOST: m.host,
   }));
-  await sprite.execFile('bash', ['-lc', sandboxSetupScript(base)]);
-  await startRuntimeService(sprite, base);
+  await host.exec(m, sandboxSetupScript(base, m.host), { timeoutMs: PROVISION_EXEC_TIMEOUT_MS });
+  await startRuntimeService(host, m, base);
   return base;
 }
 
-export async function startRuntimeService(sprite: Sprite, base: string): Promise<void> {
-  const config = { cmd: RUNTIME_SUPERVISOR, args: [base], httpPort: 8080 };
-  const existing = await findService(sprite, SERVICE);
-  // Sprites API 不准用 PUT 改既有服務的設定（409）；舊版服務直接執行 node，要先刪掉
-  if (existing && (existing.cmd !== config.cmd || existing.args.join('\0') !== config.args.join('\0'))) {
-    await sprite.deleteService(SERVICE);
-  }
-  const logs = await sprite.createService(SERVICE, config, '10s');
-  await logs.processAll(() => {});
-  // 重新佈建已存在的 Sprite 時，createService 不會重啟正在跑的程序；重新啟動才會載入剛下載的 main.js 與 .env
-  const restartLogs = await sprite.restartService(SERVICE, '10s');
-  await restartLogs.processAll(() => {});
+/** 建立或取代 runtime 服務並（重新）啟動，載入剛下載的 main.js 與 .env */
+export async function startRuntimeService(host: RuntimeHost, m: Machine, base: string): Promise<void> {
+  await host.startService(m, { name: SERVICE, cmd: RUNTIME_SUPERVISOR, args: [base], httpPort: 8080 });
 }
 
-async function waitForHealth(url: string, projectId: string): Promise<void> {
+async function waitForHealth(host: RuntimeHost, m: Machine, projectId: string): Promise<void> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let last = '';
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${url}/health`, {
-        headers: { authorization: `Bearer ${env.spritesToken}` },
-        signal: AbortSignal.timeout(5000),
-      });
+      const res = await fetch(`${m.url}/health`, { headers: host.edgeHeaders(m), signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const body = (await res.json()) as { project_id?: string };
         if (body.project_id === projectId) return;
@@ -222,41 +221,58 @@ async function waitForHealth(url: string, projectId: string): Promise<void> {
   throw new Error(`agent 環境啟動逾時（${last}）`);
 }
 
-export async function provisionProject(db: Db, projectId: string): Promise<void> {
-  const name = spriteName(projectId);
+/** 機器還在但 runtime 沒在跑（例如冷開機後程序全沒了）：重新啟動服務並等它回應 */
+export async function restartRuntime(host: RuntimeHost, m: Machine, projectId: string): Promise<void> {
+  await startRuntimeService(host, m, await runtimeBase(host, m));
+  await waitForHealth(host, m, projectId);
+}
+
+export async function provisionProject(db: Db, projectId: string, hosts: (n: HostName) => RuntimeHost = hostFor): Promise<void> {
   try {
-    await setSpriteState(db, projectId, { sprite_status: 'provisioning', sprite_error: null, sprite_name: name });
-    const sprite = await retryTransient(() => getOrCreateSprite(client(), name));
-    if (!sprite.url) throw new Error('agent 環境沒有對外網址');
-    await installRuntime(db, sprite, projectId);
-    await waitForHealth(sprite.url, projectId);
-    await setSpriteState(db, projectId, { sprite_status: 'ready', sprite_url: sprite.url });
+    await setSpriteState(db, projectId, { sprite_status: 'provisioning', sprite_error: null });
+    const { data: row, error } = await db.from('projects').select('host, sprite_name, sprite_url, host_token').eq('id', projectId).single();
+    if (error) throw error;
+    const host = hosts(row.host as HostName);
+    // E2B 重建後名稱、網址、通行證都會換，舊沙盒還在（含暫停）就沿用；Sprite 以固定名稱取得或建立
+    const existing = row.host === 'e2b' ? projectMachine(row) : null;
+    let m = existing && (await host.status(existing)) !== 'gone' ? existing : null;
+    if (!m) {
+      m = await host.create(spriteName(projectId), 'project');
+      // 建好就寫回：之後的步驟失敗時，刪除專案或重新建立都找得到這台
+      await setSpriteState(db, projectId, { sprite_name: m.name, sprite_url: m.url, host_token: m.token });
+    }
+    await installRuntime(db, host, m, projectId);
+    await waitForHealth(host, m, projectId);
+    await setSpriteState(db, projectId, { sprite_status: 'ready' });
   } catch (e) {
     console.error('[provision]', projectId, e);
     await setSpriteState(db, projectId, { sprite_status: 'error', sprite_error: errorText(e) }).catch(() => undefined);
   }
 }
 
-export async function destroyProjectSprite(name: string): Promise<void> {
-  await deleteSpriteIfExists(client(), name, 'agenthub-');
+/** m 為 null（還沒寫回機器）時以 spriteName 當 claim，刪掉 host 上可能建到一半的機器；已不在算成功 */
+export async function destroyProjectMachine(m: Machine | null, projectId: string, host: HostName | undefined = m?.host): Promise<void> {
+  if (!host) throw new Error('刪除機器需要指定執行環境');
+  await hostFor(host).destroy(m?.name ?? spriteName(projectId), 'agenthub-');
 }
 
 export async function forwardChat(
-  spriteUrl: string,
+  m: Machine,
   body: { thread_id: string; text?: string },
-  opts: { token?: string; projectToken?: string; dbToken?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
+  opts: { projectToken?: string; dbToken?: string; fetchImpl?: typeof fetch; retryDelayMs?: number } = {},
 ): Promise<Response> {
-  const token = opts.token ?? env.spritesToken;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const delay = opts.retryDelayMs ?? 1000;
+  // 邊緣驗證標頭：Sprite 是 Fly token（Fly 驗證後拿掉），E2B 是這台沙盒的通行證
+  const edge = hostFor(m.host).edgeHeaders(m);
   let last = '';
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetchImpl(`${spriteUrl}/chat`, {
+      const res = await fetchImpl(`${m.url}/chat`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
+          ...edge,
           ...(opts.projectToken ? { 'x-agenthub-token': opts.projectToken } : {}),
           ...(opts.dbToken ? { 'x-agenthub-db-token': opts.dbToken } : {}),
         },

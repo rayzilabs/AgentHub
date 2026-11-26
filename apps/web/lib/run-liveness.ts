@@ -1,23 +1,24 @@
-import { env } from '@/lib/env';
+import { hostFor } from '@/lib/hosts';
+import type { Machine } from '@/lib/hosts/types';
 import { runtimeAccessToken } from '@/lib/runtime-session';
 import type { Db } from '@/lib/supabase/admin';
 
 export type Liveness = 'active' | 'gone' | 'unknown';
-export type RunCheck = (spriteUrl: string, runId: string, projectId: string) => Promise<Liveness>;
+export type RunCheck = (m: Machine, runId: string, projectId: string) => Promise<Liveness>;
 
 const ASK_TIMEOUT_MS = 5_000;
 const ASK_INTERVAL_MS = 15_000;
 export const INTERRUPTED_ERROR = '執行環境中斷';
 
 /** 問 runtime 一個是非題，回答 body[field]；連不上、逾時、格式不對都是 null */
-async function askSprite(
-  url: string, field: string, dbToken: string, fetchImpl: typeof fetch, method = 'GET',
+async function askMachine(
+  m: Machine, path: string, field: string, dbToken: string, fetchImpl: typeof fetch, method = 'GET',
 ): Promise<boolean | null> {
   try {
-    const res = await fetchImpl(url, {
+    const res = await fetchImpl(`${m.url}${path}`, {
       method,
-      // authorization 給 Fly 驗證 Sprite 網址（驗證後拿掉，到不了 runtime）；runtime 自己用資料庫通行證確認專案
-      headers: { authorization: `Bearer ${env.spritesToken}`, 'x-agenthub-db-token': dbToken },
+      // 邊緣標頭給 Fly（驗證後拿掉，到不了 runtime）或 E2B 驗證網址；runtime 自己用資料庫通行證確認專案
+      headers: { ...hostFor(m.host).edgeHeaders(m), 'x-agenthub-db-token': dbToken },
       signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
     });
     if (!res.ok) return null;
@@ -29,11 +30,11 @@ async function askSprite(
 }
 
 /**
- * 直接問 Sprite 上的 runtime 這個 run 還在不在（runtime 的 GET /runs/:id）。
+ * 直接問機器上的 runtime 這個 run 還在不在（runtime 的 GET /runs/:id）。
  * 只有明確回答「不在」才是 gone；連不上、逾時、格式不對都是 unknown，不能拿來判定死亡。
  */
-export async function askRuntime(spriteUrl: string, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch): Promise<Liveness> {
-  const active = await askSprite(`${spriteUrl}/runs/${encodeURIComponent(runId)}`, 'active', dbToken, fetchImpl);
+export async function askRuntime(m: Machine, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch): Promise<Liveness> {
+  const active = await askMachine(m, `/runs/${encodeURIComponent(runId)}`, 'active', dbToken, fetchImpl);
   return active === null ? 'unknown' : active ? 'active' : 'gone';
 }
 
@@ -42,9 +43,9 @@ export async function askRuntime(spriteUrl: string, runId: string, dbToken: stri
  * 只有明確回答 stopped=false 才是 gone；舊版 runtime 沒有這個路由，和連不上一樣算 unknown。
  */
 export async function askStop(
-  spriteUrl: string, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch,
+  m: Machine, runId: string, dbToken: string, fetchImpl: typeof fetch = fetch,
 ): Promise<'stopped' | 'gone' | 'unknown'> {
-  const stopped = await askSprite(`${spriteUrl}/runs/${encodeURIComponent(runId)}/stop`, 'stopped', dbToken, fetchImpl, 'POST');
+  const stopped = await askMachine(m, `/runs/${encodeURIComponent(runId)}/stop`, 'stopped', dbToken, fetchImpl, 'POST');
   return stopped === null ? 'unknown' : stopped ? 'stopped' : 'gone';
 }
 
@@ -68,8 +69,8 @@ export async function markRunInterrupted(db: Db, runId: string): Promise<boolean
 }
 
 export function defaultRunCheck(db: Db): RunCheck {
-  return async (spriteUrl, runId, projectId) => {
+  return async (m, runId, projectId) => {
     if (!shouldAsk(runId)) return 'unknown';
-    return askRuntime(spriteUrl, runId, await runtimeAccessToken(db, projectId));
+    return askRuntime(m, runId, await runtimeAccessToken(db, projectId));
   };
 }

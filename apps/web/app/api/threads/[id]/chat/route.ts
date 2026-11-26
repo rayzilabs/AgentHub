@@ -14,6 +14,6 @@ export const POST = route(async (req: Request, { params }: { params: Promise<{ i
   const { project } = await getOwnThread(adminDb(), user.id, threadId);
   if (project.sprite_status !== 'ready' || !project.sprite_url) throw new HttpError(409, 'agent 環境還在準備中，請稍候再送出');
   const { text } = await readJson(req, z.object({ text: MessageTextSchema }));
-  const upstream = await forwardToRuntime(adminDb(), { id: project.id, sprite_url: project.sprite_url }, { thread_id: threadId, text });
+  const upstream = await forwardToRuntime(adminDb(), project.id, { thread_id: threadId, text });
   return new Response(upstream.body, { status: upstream.status, headers: upstreamHeaders(upstream.headers) });
 });

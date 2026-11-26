@@ -14,7 +14,5 @@ export const POST = route(async (req: Request, { params }: { params: Promise<{ i
   const { data: thread, error } = await db.from('threads').select('project_id').eq('id', threadId).maybeSingle();
   if (error) throw error;
   if (thread?.project_id !== projectId) throw new HttpError(404, '找不到這串對話');
-  const { data: project, error: projectError } = await db.from('projects').select('id, sprite_url').eq('id', projectId).single();
-  if (projectError) throw projectError;
-  await startQueuedRun(db, project, threadId);
+  await startQueuedRun(db, projectId, threadId);
 });

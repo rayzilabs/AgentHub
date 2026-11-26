@@ -1,7 +1,9 @@
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
+import { vi } from 'vitest';
 import type { HostedClient } from '@/lib/demo';
+import type { HostName, Liveness, Machine, RuntimeHost, ServiceSpec } from '@/lib/hosts/types';
 import {
   createVersion, listVersions, publishVersion, retireVersion, startDeploy, syncVersion,
   type DeployState, type HostedSpriteOps, type HostedVersion,
@@ -73,4 +75,33 @@ export function serviceHostedClient(db: Db, userId: string, sprites: HostedSprit
     publish: (_t, _m, v) => publishVersion(db, userId, v),
     retire: (_t, _m, v) => retireVersion(db, userId, v, sprites),
   };
+}
+
+/** 假的執行環境：每個方法都是 vi.fn，exec 預設回家目錄 /home/user */
+export function fakeRuntimeHost(name: HostName = 'e2b', created?: Machine) {
+  return {
+    name,
+    create: vi.fn(async (): Promise<Machine> => created ?? { host: name, name: 'sbx-new', url: 'https://new.example', token: 'new-tok' }),
+    destroy: vi.fn(async () => {}),
+    exec: vi.fn(async (_m: Machine, script: string, _opts?: { timeoutMs?: number }): Promise<string> => (script.startsWith('printf %s "$HOME"') ? '/home/user\n' : '')),
+    writeFile: vi.fn(async (_m: Machine, _path: string, _content: string) => {}),
+    startService: vi.fn(async (_m: Machine, _spec: ServiceSpec) => {}),
+    hasService: vi.fn(async () => true),
+    restartService: vi.fn(async () => {}),
+    serviceLog: vi.fn(async () => ''),
+    extend: vi.fn(async (_m: Machine, _ms: number): Promise<Liveness> => 'running'),
+    status: vi.fn(async (_m: Machine): Promise<Liveness> => 'running'),
+    edgeHeaders: vi.fn((m: Machine): Record<string, string> => (m.host === 'e2b' ? { 'e2b-traffic-access-token': m.token ?? '' } : { authorization: 'Bearer fly' })),
+  } satisfies RuntimeHost;
+}
+
+/** 讓機器的 /health 回答這個專案；其他請求（Supabase）照常送出。回傳只記錄 /health 的 mock */
+export function stubHealth(projectId: string) {
+  const realFetch = globalThis.fetch;
+  const health = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ project_id: projectId }));
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    return url.endsWith('/health') ? health(url, init) : realFetch(input, init);
+  });
+  return health;
 }

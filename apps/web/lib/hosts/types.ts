@@ -10,8 +10,8 @@ export interface RuntimeHost {
   create(claim: string, kind: MachineKind): Promise<Machine>;
   /** name 可以是機器名稱或 claim；已不在算成功；只刪本平台、前綴相符的 */
   destroy(name: string, prefix: 'agenthub-' | 'agenthub-mcp-'): Promise<void>;
-  /** 以 runtime 帳號（Sprite: sprite；E2B: user）跑 bash -lc，回傳 stdout；非 0 結束丟錯 */
-  exec(m: Machine, script: string): Promise<string>;
+  /** 以 runtime 帳號（Sprite: sprite；E2B: user）跑 bash -lc，回傳 stdout；非 0 結束丟錯。timeoutMs 未給時用各家 SDK 的預設 */
+  exec(m: Machine, script: string, opts?: { timeoutMs?: number }): Promise<string>;
   writeFile(m: Machine, path: string, content: string): Promise<void>;
   /** 建立或取代並（重新）啟動 */
   startService(m: Machine, spec: ServiceSpec): Promise<void>;

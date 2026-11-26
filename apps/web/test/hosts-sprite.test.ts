@@ -114,6 +114,23 @@ describe('createSpriteHost', () => {
     await expect(host.destroy('agenthub-p1', 'agenthub-')).resolves.toBeUndefined();
   });
 
+  it('writeFile 以根目錄的檔案系統寫入絕對路徑；exec 有 timeoutMs 時傳給 SDK', async () => {
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    const filesystem = vi.fn(() => ({ writeFile }));
+    const execFile = vi.fn().mockResolvedValue({ stdout: 'out', stderr: '' });
+    const client = { getSprite: async () => ({ filesystem, execFile }) as unknown as Sprite, createSprite: vi.fn(), deleteSprite: vi.fn() };
+    const host = createSpriteHost(client);
+
+    await host.writeFile(machine, '/home/sprite/agenthub/.env', 'A="1"\n');
+    expect(filesystem).toHaveBeenCalledWith('/');
+    expect(writeFile).toHaveBeenCalledWith('/home/sprite/agenthub/.env', 'A="1"\n');
+
+    expect(await host.exec(machine, 'echo hi')).toBe('out');
+    expect(execFile).toHaveBeenLastCalledWith('bash', ['-lc', 'echo hi'], undefined);
+    await host.exec(machine, 'long', { timeoutMs: 600_000 });
+    expect(execFile).toHaveBeenLastCalledWith('bash', ['-lc', 'long'], { timeout: 600_000 });
+  });
+
   it('create 沿用或建立 Sprite，回傳 Machine（token 為 null）', async () => {
     const client = { getSprite: async () => ({ url: 'https://x.example' }) as Sprite, createSprite: vi.fn(), deleteSprite: vi.fn() };
     const m = await createSpriteHost(client).create('agenthub-p1', 'project');

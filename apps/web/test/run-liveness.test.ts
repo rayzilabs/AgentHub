@@ -2,6 +2,7 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { env } from '@/lib/env';
+import type { Machine } from '@/lib/hosts/types';
 import { askRuntime, markRunInterrupted, shouldAsk } from '@/lib/run-liveness';
 import { createProject } from '@/lib/services/projects';
 import { createThread, getThreadMessages } from '@/lib/services/threads';
@@ -12,6 +13,7 @@ const db = testDb();
 describe('run 存活確認', () => {
   let server: Server;
   let base: string;
+  let m: Machine;
   const seen: { url?: string; headers: IncomingHttpHeaders }[] = [];
 
   beforeAll(async () => {
@@ -27,6 +29,7 @@ describe('run 存活確認', () => {
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    m = { host: 'sprite', name: 'agenthub-p', url: base, token: null };
   });
 
   afterAll(async () => {
@@ -35,18 +38,25 @@ describe('run 存活確認', () => {
   });
 
   it('askRuntime：依 Sprite 回答分成 active / gone / unknown，帶上資料庫通行證', async () => {
-    expect(await askRuntime(base, 'a', 't')).toBe('active');
+    expect(await askRuntime(m, 'a', 't')).toBe('active');
     expect(seen.at(-1)?.headers['x-agenthub-db-token']).toBe('t');
     // Sprite 的網址要先通過 Fly 驗證（和 forwardChat、health 一樣）；少了它一律被擋，永遠判斷不了（2026-10-31 正式站實測）
     expect(seen.at(-1)?.headers.authorization).toBe(`Bearer ${env.spritesToken}`);
-    expect(await askRuntime(base, 'g', 't')).toBe('gone');
-    expect(await askRuntime(base, 'e', 't')).toBe('unknown');
-    expect(await askRuntime(base, 'odd', 't')).toBe('unknown');
-    expect(await askRuntime('http://127.0.0.1:1', 'a', 't')).toBe('unknown');
+    expect(await askRuntime(m, 'g', 't')).toBe('gone');
+    expect(await askRuntime(m, 'e', 't')).toBe('unknown');
+    expect(await askRuntime(m, 'odd', 't')).toBe('unknown');
+    expect(await askRuntime({ ...m, url: 'http://127.0.0.1:1' }, 'a', 't')).toBe('unknown');
+  });
+
+  it('E2B 專案帶通行證標頭', async () => {
+    expect(await askRuntime({ host: 'e2b', name: 'sbx-1', url: base, token: 'traffic-tok' }, 'a', 't')).toBe('active');
+    expect(seen.at(-1)?.headers['e2b-traffic-access-token']).toBe('traffic-tok');
+    expect(seen.at(-1)?.headers['x-agenthub-db-token']).toBe('t');
+    expect(seen.at(-1)?.headers.authorization).toBeUndefined();
   });
 
   it('askRuntime：Sprite 超過 5 秒沒回應視為無法判斷', async () => {
-    expect(await askRuntime(base, 'slow', 't')).toBe('unknown');
+    expect(await askRuntime(m, 'slow', 't')).toBe('unknown');
   }, 10_000);
 
   it('shouldAsk：同一個 run 15 秒內只問一次', () => {
@@ -55,6 +65,8 @@ describe('run 存活確認', () => {
     expect(shouldAsk('r1', 15_000)).toBe(true);
     expect(shouldAsk('r2', 15_000)).toBe(true);
   });
+
+  const readyRow = (id: string) => ({ host: 'sprite', sprite_status: 'ready', sprite_name: `agenthub-${id}`, sprite_url: 'https://sprite.example' });
 
   async function setup() {
     const owner = await seedUser(db);
@@ -78,11 +90,11 @@ describe('run 存活確認', () => {
 
   it('getThreadMessages：Sprite 說不知道這個 run → 標成中斷；active 或無法判斷 → 照舊顯示執行中', async () => {
     const { owner, project, thread } = await setup();
-    await db.from('projects').update({ sprite_status: 'ready', sprite_url: 'https://sprite.example' }).eq('id', project.id);
+    await db.from('projects').update(readyRow(project.id)).eq('id', project.id);
     const { data: run } = await db.from('runs').insert({ thread_id: thread.id }).select('id').single();
     const asked: string[] = [];
-    const check = (answer: 'active' | 'gone' | 'unknown') => async (spriteUrl: string, runId: string) => {
-      asked.push(`${spriteUrl} ${runId}`);
+    const check = (answer: 'active' | 'gone' | 'unknown') => async (machine: Machine, runId: string) => {
+      asked.push(`${machine.host} ${machine.name} ${machine.url} ${runId}`);
       return answer;
     };
 
@@ -90,13 +102,14 @@ describe('run 存活確認', () => {
     expect(await getThreadMessages(db, owner.id, thread.id, check('unknown'))).toMatchObject({ running: true, error: null });
     const r = await getThreadMessages(db, owner.id, thread.id, check('gone'));
     expect(r).toMatchObject({ running: false, error: '執行環境中斷' });
-    expect(asked).toEqual([`https://sprite.example ${run!.id}`, `https://sprite.example ${run!.id}`, `https://sprite.example ${run!.id}`]);
+    const asking = `sprite agenthub-${project.id} https://sprite.example ${run!.id}`;
+    expect(asked).toEqual([asking, asking, asking]);
     expect((await db.from('runs').select('status').eq('id', run!.id).single()).data!.status).toBe('failed');
   });
 
   it('getThreadMessages：問 Sprite 的空檔裡 run 剛好正常完成 → 照實際結果回答，不報中斷', async () => {
     const { owner, project, thread } = await setup();
-    await db.from('projects').update({ sprite_status: 'ready', sprite_url: 'https://sprite.example' }).eq('id', project.id);
+    await db.from('projects').update(readyRow(project.id)).eq('id', project.id);
     const { data: run } = await db.from('runs').insert({ thread_id: thread.id }).select('id').single();
     // runtime 寫完「完成」、從進行中名單移除後才收到詢問，所以回答 gone（2026-10-31 正式站實測會發生）
     const finishedMeanwhile = async () => {
