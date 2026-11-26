@@ -4,7 +4,7 @@ import { signCreatorToken } from '@/lib/platform-tokens';
 import { MAX_ZIP_BYTES, RETIRABLE } from '@/lib/hosted-ui';
 import { defaultHost } from '@/lib/hosts';
 import type { HostName } from '@/lib/hosts/types';
-import { errorText } from '@/lib/sprites';
+import { errorText } from '@/lib/hosts/sprite';
 import type { Db } from '@/lib/supabase/admin';
 import { getEditableTemplate, publishedVersionCount } from './templates';
 

@@ -9,6 +9,7 @@ export const env = {
   get supabasePublishableKey() { return required('SUPABASE_PUBLISHABLE_KEY'); },
   get supabaseSecretKey() { return required('SUPABASE_SECRET_KEY'); },
   get spritesToken() { return required('FLY_SPRITES_TOKEN'); },
+  get e2bApiKey() { return required('E2B_API_KEY'); },
   get vertexKey() { return required('VERTEX_API_EXPRESS_MODE_KEY'); },
   /** 測試時可指向假的 Vertex */
   get vertexBaseUrl() { return process.env.VERTEX_BASE_URL || 'https://aiplatform.googleapis.com/v1/publishers/google'; },
