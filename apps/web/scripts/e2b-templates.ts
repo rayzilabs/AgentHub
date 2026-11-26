@@ -51,8 +51,11 @@ const PLAIN = 'plain() { id -u agenthub-check >/dev/null 2>&1 || sudo -n useradd
 const WORLD_WRITABLE = 'find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5';
 const SECURITY_CHECKS: [string, string][] = [
   ['沒有空密碼的帳號', `sudo -n test -s /etc/shadow && ! sudo -n awk -F: '$2 == ""' /etc/shadow | grep -q .`],
-  // 先確認一般帳號真的跑得起來，免得 sudo -u 本身失敗被當成 su 失敗
-  ['一般帳號 su root／user 不用密碼會失敗', `${PLAIN} test "$(plain id -un)" = agenthub-check && ! plain su root -c true </dev/null && ! plain su user -c true </dev/null`],
+  // 先確認一般帳號真的跑得起來；su 只認 Authentication failure，su 不存在或 sudo -u 失敗都不能算通過
+  [
+    '一般帳號 su root／user 不用密碼會失敗',
+    `${PLAIN} test "$(plain id -un)" = agenthub-check && for t in root user; do out=$(plain su $t -c id </dev/null 2>&1); echo "$t：$out"; printf '%s' "$out" | grep -q 'su: Authentication failure' && ! printf '%s' "$out" | grep -q 'uid=' || exit 1; done`,
+  ],
   ['沒有程序聽 22 埠', `out=$(ss -ltnH) || exit 1; ! printf '%s\\n' "$out" | awk '{print $4}' | grep -qE ':22$'`],
   ['系統目錄沒有其他帳號可寫的項目', `test -z "$(${WORLD_WRITABLE})"`],
   ['user 仍可 sudo -n', 'sudo -n true'],
@@ -110,7 +113,7 @@ async function verify(spec: Spec): Promise<void> {
     for (const [label, cmd] of spec.checks) {
       try {
         const r = await sbx.commands.run(cmd);
-        console.log(`  通過 ${label}：${r.stdout.trim().split('\n')[0]}`);
+        console.log(`  通過 ${label}：${r.stdout.trim().split('\n').slice(0, 3).join(' | ')}`);
       } catch (e) {
         failed++;
         console.error(`  失敗 ${label}：${e instanceof Error ? e.message : e}`);

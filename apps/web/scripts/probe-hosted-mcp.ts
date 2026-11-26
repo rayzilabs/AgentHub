@@ -59,6 +59,13 @@ async function sh(m: Machine, cmd: string): Promise<{ code: number; out: string 
   }
 }
 const asMcp = (cmd: string) => `sudo -n unshare --mount --propagation private -- ${HOSTED_RUN} /bin/sh -c ${JSON.stringify(cmd)}`;
+const RAN = '__probe_ran__';
+/**
+ * 腳本以 base64 傳入，$ 與跳脫字元原封不動交給 mcp 的 shell。最後印出標記：語法錯誤時 sh 直接結束、不會印，
+ * 所以沒有標記就不算通過。
+ */
+const script = (body: string) => `echo ${Buffer.from(`${body}\necho ${RAN}`).toString('base64')} | base64 -d | /bin/sh`;
+const ran = (out: string) => out.split('\n').includes(RAN);
 
 function zipDir(dir: string): Uint8Array {
   const files: Record<string, Uint8Array> = {};
@@ -149,11 +156,13 @@ async function probe(runtime: string, creatorId: string, decoy: Machine | null):
     }
     const runtimeUser = (await sh(m, 'id -un')).out.split('\n').at(-1)!;
     for (const target of [runtimeUser, 'root']) {
-      const su = await sh(m, asMcp(`su ${target} -c id </dev/null`));
-      record(`${runtime}：mcp 不能 su 成 ${target}`, su.code !== 0 && !/uid=/.test(su.out), su.out);
+      // su 從 stdin（/dev/null）讀密碼：只認 Authentication failure，su 不存在或指令沒跑到都不算通過
+      const su = await sh(m, asMcp(script(`su ${target} -c id </dev/null 2>&1`)));
+      record(`${runtime}：mcp 不能 su 成 ${target}`, ran(su.out) && /su: Authentication failure/.test(su.out) && !/uid=/.test(su.out), su.out.replace(/\n/g, ' '));
       if (hostName === 'e2b') {
-        const ssh = await sh(m, asMcp(`ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 ${target}@127.0.0.1 id </dev/null`));
-        record(`${runtime}：mcp 無法經 sshd 登入 ${target}`, ssh.code !== 0 && !/uid=/.test(ssh.out), ssh.out);
+        // 範本已移除 sshd（連線被拒）；sshd 若又出現則必須 Permission denied。ssh 不存在不算通過
+        const ssh = await sh(m, asMcp(script(`ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 ${target}@127.0.0.1 id </dev/null 2>&1`)));
+        record(`${runtime}：mcp 無法經 sshd 登入 ${target}`, ran(ssh.out) && /Connection refused|Permission denied/.test(ssh.out) && !/uid=/.test(ssh.out), ssh.out.replace(/\n/g, ' '));
       }
     }
     const write = await sh(m, asMcp('echo X=1 >> /srv/agenthub-mcp/env.sh'));
@@ -161,8 +170,8 @@ async function probe(runtime: string, creatorId: string, decoy: Machine | null):
     const sudo = await sh(m, asMcp('sudo -n true'));
     record(`${runtime}：mcp 沒有 sudo`, sudo.code !== 0, sudo.out);
     // 系統目錄可寫就能換掉部署腳本與服務會執行的 node、python（E2B 基底映像的 /usr/local 曾整棵可寫）
-    const writable = await sh(m, asMcp('find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5'));
-    record(`${runtime}：系統目錄沒有 mcp 可寫的項目`, writable.out === '', writable.out);
+    const writable = await sh(m, asMcp(script('find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5')));
+    record(`${runtime}：系統目錄沒有 mcp 可寫的項目`, writable.out === RAN, writable.out);
 
     const echo = await callEcho(m, { text: 'hi', show_headers: true, env_name: 'PROBE_KEY' });
     const headers = (echo.headers as string[]) ?? [];
@@ -181,7 +190,12 @@ async function probe(runtime: string, creatorId: string, decoy: Machine | null):
       dump.out.includes('AGENTHUB_MCP_URL=') && !platformSecrets.some((x) => dump.out.includes(x)),
       [...new Set(dump.out.split('\n').map((l) => /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(l)?.[1]).filter(Boolean))].join(','),
     );
-    if (decoy?.token && m.token) {
+    if (hostName === 'e2b' && !(decoy?.token && m.token)) {
+      // E2B 一定要有對照沙盒與兩邊的通行證，少了就是 §7 沒驗到，不能默默跳過
+      const why = `對照沙盒 ${decoy ? (decoy.token ? '有' : '沒有') + '通行證' : '沒建立'}；這台${m.token ? '有' : '沒有'}通行證`;
+      record(`${runtime}：程式看不到別台沙盒的通行證`, false, why);
+      record(`${runtime}：這台的通行證連不進別台沙盒`, false, why);
+    } else if (decoy?.token && m.token) {
       record(`${runtime}：程式看不到別台沙盒的通行證`, dump.out.includes('AGENTHUB_MCP_URL=') && !dump.out.includes(decoy.token), '');
       // 這台的通行證只能連回自己：拿去連別台，E2B 邊緣就擋掉
       const status = async (token: string) =>

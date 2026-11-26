@@ -25,8 +25,16 @@ const host = hostFor(hostName);
 const projectId = randomUUID();
 /** 機器的 claim：Sprite 用它當名稱，E2B 寫進 metadata；刪除時用它找回這次建立的全部機器 */
 const claim = `agenthub-probe-${projectId.slice(0, 8)}`;
-const results: { check: string; pass: boolean; detail: string }[] = [];
-const record = (check: string, pass: boolean, detail: string) => results.push({ check, pass, detail: detail.slice(0, 300) });
+const results: { check: string; pass: boolean; detail: string; show?: boolean }[] = [];
+/** show：通過時也印出細節（安全項目要看得到真的跑過） */
+const record = (check: string, pass: boolean, detail: string, show = false) => results.push({ check, pass, detail: detail.slice(0, 300), show });
+const RAN = '__probe_ran__';
+/**
+ * 腳本以 base64 傳入，$ 與跳脫字元原封不動交給執行帳號的 bash（外層的 runtime shell 不會先展開）。
+ * 最後印出標記：語法錯誤時 bash 直接結束、不會印，所以沒有標記就不算通過。
+ */
+const script = (body: string) => `echo ${Buffer.from(`${body}\necho ${RAN}`).toString('base64')} | base64 -d | bash`;
+const ran = (out: string) => out.split('\n').includes(RAN);
 console.log(`執行環境：${hostName}；runtime：${runtimeObject}；claim：${claim}`);
 
 /** Sprite 的 ~/.bashrc 在非互動 shell 會印 bind 警告，混進輸出會讓比對失準；濾掉 */
@@ -73,9 +81,10 @@ try {
   // 平台持有的金鑰本身也不能出現在沙盒看得到的任何地方（這些值從沒送進機器，只在本機比對）
   const platformSecrets = [env.spritesToken, env.e2bApiKey, process.env.SUPABASE_SECRET_KEY].filter((s): s is string => !!s);
   const leaked = (out: string) => leak.test(out) || platformSecrets.some((s) => out.includes(s));
+  // 指令本身失敗（讀不到）也算沒洩漏，但腳本一定要跑完（有標記），語法錯誤不能算通過
   const mustNotLeak = async (check: string, cmd: string) => {
-    const r = await sh(asAgent(cmd));
-    record(check, r.code !== 0 || !leaked(r.out), r.out);
+    const r = await sh(asAgent(script(cmd)));
+    record(check, ran(r.out) && !leaked(r.out), r.out);
   };
 
   const up = await health(m);
@@ -92,24 +101,48 @@ try {
   await mustNotLeak('env 看不到平台金鑰', 'env');
   await mustNotLeak('讀不到 .env', `cat '${base}/.env'`);
   await mustNotLeak('symlink 指向 .env 也讀不到', `ln -sf '${base}/.env' ${WORKSPACE}/shared/link && cat ${WORKSPACE}/shared/link`);
-  await mustNotLeak('讀不到 runtime 的 /proc environ', 'for p in $(pgrep node); do cat /proc/$p/environ 2>/dev/null | tr "\0" "\n"; done');
+  // 要真的找到 runtime 的 node 並逐一試讀，checked=0（沒找到程序）不算通過
+  const environ = await sh(asAgent(script([
+    'n=0',
+    'for p in $(pgrep -x node); do',
+    '  n=$((n+1))',
+    '  if cat /proc/$p/environ >/dev/null 2>&1; then echo "readable=$p"; tr "\\0" "\\n" < /proc/$p/environ; else echo "denied=$p"; fi',
+    'done',
+    'echo "checked=$n"',
+  ].join('\n'))));
+  record(
+    '讀不到 runtime 的 /proc environ',
+    ran(environ.out) && /^checked=[1-9]/m.test(environ.out) && !/^readable=/m.test(environ.out) && !leaked(environ.out),
+    environ.out.replace(/\n/g, ' '),
+    true,
+  );
   const sudo = await sh(asAgent('sudo -n true'));
   record('agent 不能 sudo', sudo.code !== 0, sudo.out);
   // 系統目錄可寫就能換掉 runtime 與 root 會執行的程式（E2B 基底映像的 /usr/local 曾整棵可寫）
-  const writable = await sh(asAgent('find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5'));
-  record('系統目錄沒有沙盒帳號可寫的項目', writable.out === '', writable.out);
+  const writable = await sh(asAgent(script('find /usr /etc /opt /bin /sbin /lib /code \\( -perm -0002 ! -type l ! -perm -1000 \\) -print 2>/dev/null | head -5')));
+  record('系統目錄沒有沙盒帳號可寫的項目', writable.out === RAN, writable.out);
   const sockCmd = 'curl -sf --max-time 3 --unix-socket /.sprite/api.sock http://sprite/v1/tasks';
   if (hostName === 'sprite') {
     const sock = await sh(asAgent(sockCmd));
     record('agent 碰不到 /.sprite/api.sock（它能建立以 runtime 帳號執行的服務）', sock.code !== 0, sock.out);
   }
   // 不只檢查 /.sprite/api.sock：找出沙盒看得到的每個 Unix socket，逐一試著呼叫內部 API
-  const anySock = await sh(asAgent(
-    'for s in $(find / \( -path /proc -o -path /sys \) -prune -o -type s -print 2>/dev/null); do ' +
-    'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 --unix-socket "$s" http://sprite/v1/tasks 2>/dev/null); ' +
-    'echo "$s $c"; done',
-  ));
-  record('沙盒看得到的 socket 都連不上內部 API', !/ 2\d\d$/m.test(anySock.out), anySock.out);
+  const anySock = await sh(asAgent(script([
+    'n=0',
+    'for s in $(find / \\( -path /proc -o -path /sys \\) -prune -o -type s -print 2>/dev/null); do',
+    '  n=$((n+1))',
+    '  c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 --unix-socket "$s" http://sprite/v1/tasks 2>/dev/null)',
+    '  echo "$s $c"',
+    'done',
+    'echo "sockets=$n"',
+  ].join('\n'))));
+  record(
+    '沙盒看得到的 socket 都連不上內部 API',
+    ran(anySock.out) && /^sockets=\d+$/m.test(anySock.out) && !/ 2\d\d$/m.test(anySock.out),
+    // 數量與標記放前面，細節截斷時仍看得到真的跑過
+    [...anySock.out.split('\n').filter((l) => l === RAN || l.startsWith('sockets=')), ...anySock.out.split('\n').filter((l) => / \d{3}$/.test(l))].join(' '),
+    true,
+  );
   if (hostName === 'sprite') {
     const sockRuntime = await sh(sockCmd);
     record('runtime 帳號仍然能用 /.sprite/api.sock（保持喚醒需要）', sockRuntime.code === 0, sockRuntime.out);
@@ -215,9 +248,15 @@ try {
   // ---- 顧問帳號不能經機器上的其他管道切換成別的帳號 ----
   const runtimeUser = (await sh('id -un')).out.split('\n').at(-1)!;
   for (const target of [runtimeUser, 'root', B]) {
-    // 帳號若是空密碼，su 不經 PAM 提示就會成功；沒有 tty 時 su 會失敗，結果一樣是登入不了
-    const su = await sh(asUser(A, `su ${target} -c id </dev/null`));
-    record(`顧問帳號不能 su 成 ${target === runtimeUser ? `runtime 帳號 ${target}` : target}`, su.code !== 0 && !/uid=/.test(su.out), su.out);
+    // su 從 stdin（/dev/null）讀密碼：對方是空密碼（PAM nullok）就不用密碼直接成功，鎖住的帳號則是 Authentication failure。
+    // 只認這個訊息：su 不存在、指令沒跑到都不能算通過
+    const su = await sh(asUser(A, script(`su ${target} -c id </dev/null 2>&1`)));
+    record(
+      `顧問帳號不能 su 成 ${target === runtimeUser ? `runtime 帳號 ${target}` : target}`,
+      ran(su.out) && /su: Authentication failure/.test(su.out) && !/uid=/.test(su.out),
+      su.out.replace(/\n/g, ' '),
+      true,
+    );
   }
   if (hostName === 'e2b') {
     // envd（E2B 在 VM 裡的管理程式，以 root 執行、聽 49983）：沒有 access token 就不能啟動程序
@@ -227,12 +266,18 @@ try {
       'curl -sS -m 5 -o /dev/null -w "health=%{http_code}\n" http://127.0.0.1:49983/health',
       `curl -sS -m 5 -o /dev/null -w "start=%{http_code}\n" -u root: -H "Content-Type: application/json" -H "Connect-Protocol-Version: 1" -d '${body}' http://127.0.0.1:49983/process.Process/Start`,
     ].join('; ')));
-    const ran = await sh(`sudo -n test -e ${mark} && echo created || echo absent`);
-    record('顧問帳號呼叫 envd 啟動程序被拒（401）', envd.out.includes('start=401') && ran.out.includes('absent'), `${envd.out} | ${ran.out}`);
-    // 沙盒內的 sshd 聽 22 埠：顧問帳號沒有金鑰，對方帳號也不能是空密碼
+    const created = await sh(`sudo -n test -e ${mark} && echo created || echo absent`);
+    record('顧問帳號呼叫 envd 啟動程序被拒（401）', envd.out.includes('start=401') && created.out.includes('absent'), `${envd.out} | ${created.out}`);
+    // 範本已移除 sshd（連線被拒）；若 sshd 又出現，顧問帳號沒有金鑰、對方也不能是空密碼（Permission denied）。
+    // ssh 不存在或指令沒跑到都不能算通過
     for (const target of [runtimeUser, 'root', B]) {
-      const ssh = await sh(asUser(A, `ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 ${target}@127.0.0.1 id </dev/null`));
-      record(`顧問帳號無法經 sshd 登入 ${target}（ssh -o BatchMode=yes 失敗）`, ssh.code !== 0 && !/uid=/.test(ssh.out), ssh.out);
+      const ssh = await sh(asUser(A, script(`ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 ${target}@127.0.0.1 id </dev/null 2>&1`)));
+      record(
+        `顧問帳號無法經 sshd 登入 ${target}（ssh -o BatchMode=yes 失敗）`,
+        ran(ssh.out) && /Connection refused|Permission denied/.test(ssh.out) && !/uid=/.test(ssh.out),
+        ssh.out.replace(/\n/g, ' '),
+        true,
+      );
     }
   }
 
@@ -342,5 +387,5 @@ try {
   }
 }
 
-for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.check}${r.pass ? '' : `\n      ${r.detail}`}`);
+for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.check}${!r.pass || r.show ? `\n      ${r.detail}` : ''}`);
 process.exit(results.length > 0 && results.every((r) => r.pass) ? 0 : 1);
