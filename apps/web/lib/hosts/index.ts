@@ -1,6 +1,7 @@
 import { env } from '@/lib/env';
 import type { HostedVersion } from '@/lib/services/hosted-mcp';
 import type { Db } from '@/lib/supabase/admin';
+import { createE2bHost } from './e2b';
 import { createSpriteHost } from './sprite';
 import type { HostName, Machine, RuntimeHost } from './types';
 
@@ -10,7 +11,7 @@ export function defaultHost(): HostName {
 
 export function hostFor(name: HostName): RuntimeHost {
   if (name === 'sprite') return createSpriteHost();
-  throw new Error('E2B 執行環境尚未實作');
+  return createE2bHost();
 }
 
 type MachineRow = { host: HostName; sprite_name: string | null; sprite_url: string | null; host_token: string | null };
