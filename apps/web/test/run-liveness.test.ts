@@ -3,10 +3,11 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { env } from '@/lib/env';
 import type { Machine } from '@/lib/hosts/types';
-import { askRuntime, markRunInterrupted, shouldAsk } from '@/lib/run-liveness';
+import { RUNTIME_GONE } from '@/lib/project-runtime';
+import { askRuntime, defaultRunCheck, markRunInterrupted, shouldAsk } from '@/lib/run-liveness';
 import { createProject } from '@/lib/services/projects';
 import { createThread, getThreadMessages } from '@/lib/services/threads';
-import { seedUser, testDb } from './helpers';
+import { fakeRuntimeHost, seedUser, testDb } from './helpers';
 
 const db = testDb();
 
@@ -118,6 +119,37 @@ describe('run 存活確認', () => {
     };
     expect(await getThreadMessages(db, owner.id, thread.id, finishedMeanwhile)).toMatchObject({ running: false, error: null });
     expect((await db.from('runs').select('status, error').eq('id', run!.id).single()).data).toEqual({ status: 'succeeded', error: null });
+  });
+
+  it('defaultRunCheck：runtime 沒回答且機器不見 → 專案標成 error（RUNTIME_GONE），run 標成中斷', async () => {
+    const { owner, project, thread } = await setup();
+    // 連不上的網址：runtime 一定沒有回答
+    await db.from('projects').update({ ...readyRow(project.id), sprite_url: 'http://127.0.0.1:1' }).eq('id', project.id);
+    const { data: run } = await db.from('runs').insert({ thread_id: thread.id }).select('id').single();
+    const host = fakeRuntimeHost('sprite');
+    host.status.mockResolvedValue('gone');
+
+    const r = await getThreadMessages(db, owner.id, thread.id, defaultRunCheck(db, () => host));
+    expect(r).toMatchObject({ running: false, error: '執行環境中斷' });
+    expect(host.status).toHaveBeenCalledWith({ host: 'sprite', name: `agenthub-${project.id}`, url: 'http://127.0.0.1:1', token: null });
+    expect((await db.from('runs').select('status').eq('id', run!.id).single()).data!.status).toBe('failed');
+    expect((await db.from('projects').select('sprite_status, sprite_error').eq('id', project.id).single()).data)
+      .toEqual({ sprite_status: 'error', sprite_error: RUNTIME_GONE });
+  });
+
+  it('defaultRunCheck：runtime 沒回答但機器還在 → 照舊無法判斷；runtime 有回答時不問執行環境', async () => {
+    const { owner, project, thread } = await setup();
+    await db.from('projects').update({ ...readyRow(project.id), sprite_url: 'http://127.0.0.1:1' }).eq('id', project.id);
+    await db.from('runs').insert({ thread_id: thread.id });
+    const host = fakeRuntimeHost('sprite');
+    expect(await getThreadMessages(db, owner.id, thread.id, defaultRunCheck(db, () => host))).toMatchObject({ running: true, error: null });
+    expect(host.status).toHaveBeenCalledOnce();
+    expect((await db.from('projects').select('sprite_status').eq('id', project.id).single()).data).toEqual({ sprite_status: 'ready' });
+
+    const answered = fakeRuntimeHost('sprite');
+    const m = { host: 'sprite' as const, name: 'agenthub-x', url: base, token: null };
+    expect(await defaultRunCheck(db, () => answered)(m, 'a', project.id)).toBe('active');
+    expect(answered.status).not.toHaveBeenCalled();
   });
 
   it('getThreadMessages：專案沒有 sprite_url 時不問', async () => {

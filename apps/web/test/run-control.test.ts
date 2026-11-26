@@ -107,13 +107,35 @@ describe('stopThreadRun', () => {
       .toEqual({ status: 'failed', error: INTERRUPTED_ERROR });
   });
 
-  it('連不上時回 502，run 維持 running', async () => {
-    const { owner, thread } = await setup();
+  it('連不上但機器還在時回 502，run 維持 running', async () => {
+    const { owner, project, thread, machine } = await setup();
     const runId = await startRun(thread.id);
-    const e = await stopThreadRun(db, owner.id, thread.id, async () => 'unknown').catch((err) => err);
+    const host = fakeRuntimeHost('sprite');
+    const e = await stopThreadRun(db, owner.id, thread.id, async () => 'unknown', () => host).catch((err) => err);
     expect(e).toBeInstanceOf(HttpError);
     expect(e).toMatchObject({ status: 502, message: '暫時無法停止，請再試一次' });
+    expect(host.status).toHaveBeenCalledWith(machine);
     expect((await db.from('runs').select('status').eq('id', runId).single()).data).toEqual({ status: 'running' });
+    expect((await db.from('projects').select('sprite_status').eq('id', project.id).single()).data).toEqual({ sprite_status: 'ready' });
+  });
+
+  it('連不上且機器不見：run 標成中斷、專案標成 error（RUNTIME_GONE），不丟錯', async () => {
+    const { owner, project, thread } = await setup();
+    const runId = await startRun(thread.id);
+    const host = fakeRuntimeHost('sprite');
+    host.status.mockResolvedValue('gone');
+    await stopThreadRun(db, owner.id, thread.id, async () => 'unknown', () => host);
+    expect((await db.from('runs').select('status, error').eq('id', runId).single()).data).toEqual({ status: 'failed', error: INTERRUPTED_ERROR });
+    expect((await db.from('projects').select('sprite_status, sprite_error').eq('id', project.id).single()).data)
+      .toEqual({ sprite_status: 'error', sprite_error: RUNTIME_GONE });
+  });
+
+  it('runtime 有回答時不問執行環境', async () => {
+    const { owner, thread } = await setup();
+    await startRun(thread.id);
+    const host = fakeRuntimeHost('sprite');
+    await stopThreadRun(db, owner.id, thread.id, async () => 'stopped', () => host);
+    expect(host.status).not.toHaveBeenCalled();
   });
 
   it('別人的對話回 404', async () => {
@@ -241,6 +263,15 @@ describe('startQueuedRun', () => {
     expect(forward).not.toHaveBeenCalled();
   });
 
+  it('還沒有機器時安靜結束，不呼叫 forward', async () => {
+    const { project, thread } = await setup();
+    await db.from('projects').update({ sprite_name: null, sprite_url: null }).eq('id', project.id).throwOnError();
+    await queue(thread.id, '補充');
+    const forward = fakeForward();
+    await expect(startQueuedRun(db, project.id, thread.id, forward)).resolves.toBeUndefined();
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it('forward 回 409 時不丟錯，排隊列保留', async () => {
     const { project, thread } = await setup();
     await queue(thread.id, '補充');
@@ -364,6 +395,28 @@ describe('forwardToRuntime', () => {
     await expect(forwardToRuntime(db, project.id, body, forward, () => host)).rejects.toMatchObject({ status: 502 });
     expect(host.startService).toHaveBeenCalledOnce();
     expect(forward).toHaveBeenCalledTimes(2);
+  });
+
+  it('Sprite 專案連不上但機器還在：不重啟（由 Sprite 的服務管理員負責），回原本的 502', async () => {
+    const { project, machine } = await setup();
+    const host = fakeRuntimeHost('sprite');
+    const forward = vi.fn<typeof forwardChat>(async () => { throw unreachable(); });
+
+    await expect(forwardToRuntime(db, project.id, body, forward, () => host)).rejects.toMatchObject({ status: 502, message: expect.stringContaining('agent 環境無法連線') });
+    expect(host.status).toHaveBeenCalledWith(machine);
+    expect(host.startService).not.toHaveBeenCalled();
+    expect(host.exec).not.toHaveBeenCalled();
+    expect(forward).toHaveBeenCalledOnce();
+    expect(await projectState(project.id)).toEqual({ sprite_status: 'ready', sprite_error: null });
+  });
+
+  it('Sprite 專案連不上且機器不見：同樣標成 error，回 410', async () => {
+    const { project } = await setup();
+    const host = fakeRuntimeHost('sprite');
+    host.status.mockResolvedValue('gone');
+    const forward = vi.fn<typeof forwardChat>(async () => { throw unreachable(); });
+    await expect(forwardToRuntime(db, project.id, body, forward, () => host)).rejects.toMatchObject({ status: 410, message: RUNTIME_GONE });
+    expect(await projectState(project.id)).toEqual({ sprite_status: 'error', sprite_error: RUNTIME_GONE });
   });
 
   it('還沒有機器時回 409，不轉送', async () => {

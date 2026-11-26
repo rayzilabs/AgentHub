@@ -165,6 +165,11 @@ export function sandboxSetupScript(base: string, host: HostName): string {
   ].join('\n');
 }
 
+/** 機器整台不見：標成錯誤，專案頁的「重新建立環境」會建新的一台 */
+export async function markRuntimeGone(db: Db, projectId: string): Promise<void> {
+  await setSpriteState(db, projectId, { sprite_status: 'error', sprite_error: RUNTIME_GONE });
+}
+
 /** 下載 runtime 與跑佈建腳本可能超過 E2B SDK 預設的 60 秒 */
 const PROVISION_EXEC_TIMEOUT_MS = 600_000;
 

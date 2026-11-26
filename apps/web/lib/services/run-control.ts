@@ -4,12 +4,12 @@ import { E2B_TIMEOUT_MS } from '@/lib/hosts/e2b';
 import type { HostName, Liveness, RuntimeHost } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import { signProjectToken } from '@/lib/platform-tokens';
-import { forwardChat, restartRuntime, RUNTIME_GONE } from '@/lib/project-runtime';
+import { forwardChat, markRuntimeGone, restartRuntime, RUNTIME_GONE } from '@/lib/project-runtime';
 import { ALREADY_READ } from '@/lib/queue';
-import { askStop, markRunInterrupted } from '@/lib/run-liveness';
+import { askStop, confirmMachineGone, markRunInterrupted } from '@/lib/run-liveness';
 import { runtimeAccessToken } from '@/lib/runtime-session';
 import type { Db } from '@/lib/supabase/admin';
-import { assertConsultantsUsable, setSpriteState } from './projects';
+import { assertConsultantsUsable } from './projects';
 import { getOwnThread, type QueuedView } from './threads';
 
 async function runningRunId(db: Db, threadId: string): Promise<string | null> {
@@ -19,26 +19,30 @@ async function runningRunId(db: Db, threadId: string): Promise<string | null> {
 }
 
 /** 要 runtime 停下這串對話正在跑的 run；已經沒有在跑就當成功，可重複呼叫 */
-export async function stopThreadRun(db: Db, userId: string, threadId: string, ask: typeof askStop = askStop): Promise<void> {
+export async function stopThreadRun(
+  db: Db, userId: string, threadId: string, ask: typeof askStop = askStop, hosts: (n: HostName) => RuntimeHost = hostFor,
+): Promise<void> {
   const { project } = await getOwnThread(db, userId, threadId);
   const runId = await runningRunId(db, threadId);
   if (!runId) return;
   const m = project.sprite_url ? await loadProjectMachine(db, project.id) : null;
-  const answer = m ? await ask(m, runId, await runtimeAccessToken(db, project.id)) : 'gone';
+  let answer = m ? await ask(m, runId, await runtimeAccessToken(db, project.id)) : 'gone';
+  // runtime 沒回答：機器整台不見時 run 也不在了，不必要使用者一直重試
+  if (answer === 'unknown' && m && (await confirmMachineGone(db, project.id, m, hosts))) answer = 'gone';
   if (answer === 'unknown') throw new HttpError(502, '暫時無法停止，請再試一次');
   if (answer === 'gone') await markRunInterrupted(db, runId);
 }
 
-/** 機器整台不見：標成錯誤，專案頁的「重新建立環境」會建新的一台 */
 async function runtimeGone(db: Db, projectId: string): Promise<never> {
-  await setSpriteState(db, projectId, { sprite_status: 'error', sprite_error: RUNTIME_GONE });
+  await markRuntimeGone(db, projectId);
   throw new HttpError(410, RUNTIME_GONE);
 }
 
 /**
  * 把一輪對話交給 runtime：附上專案通行證（呼叫模型代理與創作者 MCP，沒有它對話一定失敗）
  * 與 runtime 帳號的資料庫通行證（權限由 RLS 限定在這個專案）。
- * 連不上時問執行環境：機器不見就回 410；機器還在（例如冷開機後 runtime 沒在跑）就重啟服務一次再轉送。
+ * 連不上時問執行環境：機器不見就回 410；E2B 機器還在（例如冷開機後 runtime 沒在跑）就重啟服務一次再轉送。
+ * Sprite 由它自己的服務管理員重啟，不在這裡處理。
  */
 export async function forwardToRuntime(
   db: Db,
@@ -73,7 +77,7 @@ export async function forwardToRuntime(
     if (!(e instanceof HttpError) || e.status !== 502) throw e;
     const live = await host.status(m).catch(() => undefined);
     if (live === 'gone') return runtimeGone(db, projectId);
-    if (live !== 'running') throw e;
+    if (m.host !== 'e2b' || live !== 'running') throw e;
     try {
       await restartRuntime(host, m, projectId);
     } catch (restartError) {
@@ -97,7 +101,8 @@ export async function startQueuedRun(
   if (await runningRunId(db, threadId)) return;
   const { data, error } = await db.from('queued_messages').select('id').eq('thread_id', threadId).limit(1);
   if (error) throw error;
-  if (data.length === 0) return;
+  // runtime 每輪結束都會呼叫；還沒有機器（不該發生）時安靜結束
+  if (data.length === 0 || !(await loadProjectMachine(db, projectId))) return;
 
   const res = await forwardToRuntime(db, projectId, { thread_id: threadId }, forward);
   await res.body?.cancel();
