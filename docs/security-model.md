@@ -119,10 +119,11 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - 已知限制：顧問之間看得到彼此的程序清單（名稱與參數）；祕密一律不放在參數裡。
 - 語言工具（2026-10-30）：`/.sprite/bin` 的包裝腳本（python3、node、go、java、ruby…，共 40 多個）第一次執行時，要把各自的 `export` 行寫進 `sprite` 帳號的 `/etc/profile.d/languages_env`，沙盒帳號沒有寫入權限，寫不進去就失敗；10/13 改用沙盒帳號後，新建的 Sprite 除了 Node 之外全部會撞到。佈建時由 runtime 帳號從包裝腳本讀出這些行、補齊缺的（不執行語言工具），並以 root 把 numpy、pandas 裝進 pyenv 的 Python。包裝腳本也會把自己的路徑寫進 `/etc/profile.d/languages_paths`，寫不進去只印 `Permission denied`（2026-10-31 發現會混進顧問的輸出），佈建時一併以 `languages_env` 展開後補齊。`probe-sandbox.ts` 以沙盒帳號逐一檢查常用工具。
 - 顧問的 Python 套件（2026-10-30）：創作者在 skill 資料夾放 `requirements.txt`。上架時平台只接受 PyPI 上的具名套件（不接受選項、網址、`@`、本機路徑、環境標記），並向 PyPI 確認套件與版本存在。runtime 每次 run 以**該顧問的沙盒帳號**在工作目錄建 `.agenthub-venv`（`--system-site-packages`，看得到預裝的 numpy、pandas）並以 pip 安裝，所以套件的安裝腳本只有顧問自己的權限。各顧問同時安裝。以內容雜湊決定是否重裝，失敗的同一份一小時內不重試；pip 以 `timeout` 限制 180 秒（逾時會被終止）；同一位顧問同時兩個對話共用一次安裝。狀態檔（`.requirements-sha256`、`.requirements-failed`）在顧問可寫的目錄、由 runtime 帳號讀，是 symlink 就不採信。只讀有 `SKILL.md` 的資料夾裡的 `requirements.txt`（和上架檢查同一批檔案）。顧問的 bash 與 stdio MCP 把這個環境的 `bin` 排在 `PATH` 最前面；主管不用。創作者說明：`docs/creator/python-packages.md`。
-- 記憶體上限（2026-10-30 設計，2026-10-31 實測無法生效）：沙盒腳本在降權前嘗試把自己放進 cgroup v2 `agenthub-sandbox`（`memory.max` 6 GiB）。但 Sprite 的 cgroup 根目錄（命名空間的根）本身有程序，核心不准在那層啟用記憶體控制器（`EBUSY`）。原本設計成設定失敗就不執行，10/30 上線後讓已更新的 Sprite 上顧問的每個指令都失敗，10/31 改成設不起來就照常執行。目前沙盒程序沒有記憶體上限，吃光記憶體仍可能拖垮整台 Sprite（runtime 的存活檢查會把這種中斷標成失敗）。
-  - 2026-11-03 臨時 Sprite 實測：沙盒程式以約 0.5 GB/秒吃光記憶體（開始時可用約 7.3 GB）後，核心沒有砍單一程序，整個 Sprite 約 2.5 分鐘沒有回應，接著所有程序一起被重啟（pid 重新編號、核心開機時間連續，不是 VM 重開；另一次等了約 11 分鐘）。推測外層的記憶體群組是整組一起砍，所以沙盒腳本設的 `oom_score_adj=1000` 在這種情況下沒有作用。命名空間根目錄的 `cgroup.controllers` 有 `memory`、`memory.max` 是 `max`。
-  - 2026-11-03 修正：根目錄裡只有 Sprite 的 `tini`、`tail` 與 exec 開的 shell（服務各自在 `svc.<名稱>` 子群組）。沙盒腳本在啟用記憶體控制器前，先把根目錄的程序搬到 `init` 子群組，之後 exec 開的程序也落在 `init`，根目錄保持空的。Sprite 重啟後 cgroup 恢復原狀，所以每個沙盒指令都檢查一次。實測：exec、服務重啟、建立服務都照常；沙盒程式吃到 6 GiB 時核心只砍它（`memory.events` 的 `oom_kill` 加 1），runtime 與 Sprite 照常回應。`probe-sandbox.ts` 驗收這兩項。搬移時剛好有新程序進根目錄會讓那次設定失敗（照常執行、不在群組裡），下一個指令會再試。
-- runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。平台的請求要帶 Fly 驗證（`authorization`，Fly 驗證後拿掉）。限制：runtime 被砍時沙盒裡若還有指令在跑，Sprite 要等它們結束才重啟 runtime，期間判斷不了（2026-10-31 實測）。
+- 記憶體上限（2026-10-30 設計，2026-10-31 實測無法生效）：沙盒腳本（兩種執行環境共用，`SANDBOX_WRAPPER_SCRIPT`）在降權前嘗試把自己放進 cgroup v2 `agenthub-sandbox`（`memory.max` 6 GiB）。以下的失敗與修正過程是 Sprite 的：Sprite 的 cgroup 根目錄（命名空間的根）本身有程序，核心不准在那層啟用記憶體控制器（`EBUSY`）。原本設計成設定失敗就不執行，10/30 上線後讓已更新的 Sprite 上顧問的每個指令都失敗，10/31 改成設不起來就照常執行。目前沙盒程序沒有記憶體上限，吃光記憶體仍可能拖垮整台 Sprite（runtime 的存活檢查會把這種中斷標成失敗）。
+  - （Sprite）2026-11-03 臨時 Sprite 實測：沙盒程式以約 0.5 GB/秒吃光記憶體（開始時可用約 7.3 GB）後，核心沒有砍單一程序，整個 Sprite 約 2.5 分鐘沒有回應，接著所有程序一起被重啟（pid 重新編號、核心開機時間連續，不是 VM 重開；另一次等了約 11 分鐘）。推測外層的記憶體群組是整組一起砍，所以沙盒腳本設的 `oom_score_adj=1000` 在這種情況下沒有作用。命名空間根目錄的 `cgroup.controllers` 有 `memory`、`memory.max` 是 `max`。
+  - （Sprite）2026-11-03 修正：根目錄裡只有 Sprite 的 `tini`、`tail` 與 exec 開的 shell（服務各自在 `svc.<名稱>` 子群組）。沙盒腳本在啟用記憶體控制器前，先把根目錄的程序搬到 `init` 子群組，之後 exec 開的程序也落在 `init`，根目錄保持空的。Sprite 重啟後 cgroup 恢復原狀，所以每個沙盒指令都檢查一次。實測：exec、服務重啟、建立服務都照常；沙盒程式吃到 6 GiB 時核心只砍它（`memory.events` 的 `oom_kill` 加 1），runtime 與 Sprite 照常回應。`probe-sandbox.ts` 驗收這兩項。搬移時剛好有新程序進根目錄會讓那次設定失敗（照常執行、不在群組裡），下一個指令會再試。
+  - E2B：2026-11-25 評估時，同一套做法（把根目錄程序搬進 `init` 子群組後開 `+memory`）可用，超過上限只砍群組內的程序（exit 137）；`probe-sandbox.ts --host e2b` 也跑這兩項，E2B 沒有「整台停住再全部重啟」的行為紀錄。
+- runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。平台的請求要帶 Fly 驗證（`authorization`，Fly 驗證後拿掉）。限制（Sprite）：runtime 被砍時沙盒裡若還有指令在跑，Sprite 要等它們結束才重啟 runtime，期間判斷不了（2026-10-31 實測）。
 - runtime 的 `POST /runs/:id/stop`（2026-11-05）：使用者按停止時平台呼叫，驗證方式與 `GET /runs/:id` 相同，查得到才中止，回答 `{ stopped }`。
 
 - E2B 沙盒（2026-11-27，細節見 `docs/superpowers/specs/2026-11-25-e2b-runtime-host-design.md`）：帳號與目錄規則同上，但 runtime 與服務以 `user` 帳號執行，沒有 `/.sprite/api.sock`；服務由 `agenthub-svc` 看守迴圈管理（迴圈以 root 跑、指令降權成 `user`）。
@@ -141,18 +142,18 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 
 | 帳號 | 用途 | sudo |
 |---|---|---|
-| `sprite` | 平台的部署腳本（下載套件、寫狀態） | 有 |
+| `sprite`（E2B 上是 `user`） | 平台的部署腳本（下載套件、寫狀態） | 有 |
 | `mcp` | 創作者的程式：解壓、讀 `mcp.json`、安裝相依套件、執行 | 沒有 |
 
 ```text
 /srv/agenthub-mcp/           755 root
-/srv/agenthub-mcp/deploy/    700 sprite     部署腳本（含一次性下載網址）、state.json、log.txt；mcp 進不去
+/srv/agenthub-mcp/deploy/    700 sprite（E2B：user） 部署腳本（含一次性下載網址）、state.json、log.txt；mcp 進不去
 /srv/agenthub-mcp/app/       700 mcp        創作者的程式與 .venv／node_modules
 /srv/agenthub-mcp/env.sh     440 root:mcp   創作者金鑰與平台變數；mcp 只能讀，改不了
-/srv/agenthub-mcp/path       644 root       node、python 的真實路徑（不經過 /.sprite/bin 的包裝腳本）
+/srv/agenthub-mcp/path       644 root       node、python 的真實路徑（Sprite：不經過 /.sprite/bin 的包裝腳本；E2B 沒有 /.sprite）
 ```
 
-- 執行路徑：`sudo unshare --mount` → `/usr/local/bin/agenthub-mcp-run` 確認在獨立的掛載命名空間、用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `mcp` → `env -i` 清空環境 → 降權**之後**才載入 `env.sh`。
+- 執行路徑：`sudo unshare --mount` → `/usr/local/bin/agenthub-mcp-run` 確認在獨立的掛載命名空間、用 `/dev/null` 蓋掉 `/.sprite/api.sock`（只在 Sprite；E2B 沒有這個 socket，自然略過）→ `setpriv` 降權成 `mcp` → `env -i` 清空環境 → 降權**之後**才載入 `env.sh`。
 - 閘道的邊緣驗證依執行環境：Sprite 以平台的 Sprites token 通過 Fly 驗證（Fly 驗證後拿掉 `Authorization`）；E2B 不送 `Authorization`，改帶這台自己的 `e2b-traffic-access-token`。兩種都用 `X-AgentHub-Token` 帶創作者通行證；程式以 `AGENTHUB_MCP_URL` 為 `aud` 驗證。
 - 原則：**平台共用的憑證（Fly token、E2B API key）不能到達程式；E2B 每台自己的通行證可以。** E2B 會把通行證標頭原封不動轉進沙盒（實測），創作者的程式看得到自己那台的通行證，但它只能開自己那台，拿不到別台的、也拿不到平台金鑰（2026-11-26 決定）。
 - 下架由資料庫函式 `retire_hosted_mcp_version` 鎖住版本後檢查有沒有專案在用，與 `hire_agent`（對版本 `for share`）互斥。
