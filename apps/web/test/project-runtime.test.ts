@@ -5,7 +5,7 @@ import { createE2bHost } from '@/lib/hosts/e2b';
 import type { Machine } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import {
-  destroyProjectMachine, forwardChat, installRuntime, provisionProject, RUNTIME_SUPERVISOR, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT,
+  destroyProjectMachine, forwardChat, installRuntime, provisionProject, redeployRuntime, RUNTIME_SUPERVISOR, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT,
   SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, shellQuote, spriteName, startRuntimeService,
 } from '@/lib/project-runtime';
 import { createProject } from '@/lib/services/projects';
@@ -142,6 +142,37 @@ describe('installRuntime', () => {
     const sprite = fakeRuntimeHost('sprite');
     await installRuntime(signedUrlDb, sprite, spriteMachine, 'p1');
     expect(sprite.writeFile.mock.calls[0][2]).toContain('RUNTIME_HOST="sprite"');
+  });
+});
+
+describe('redeployRuntime', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  function stubEnv() {
+    for (const k of ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'VERTEX_API_EXPRESS_MODE_KEY', 'SUPABASE_PUBLISHABLE_KEY']) vi.stubEnv(k, 'x');
+  }
+
+  it('原本暫停中的沙盒：裝好 runtime 後讓它 15 秒後就暫停（逐台更新時才不會同時醒著超過 10 台）', async () => {
+    stubEnv();
+    const e2b = fakeRuntimeHost('e2b');
+    e2b.status.mockResolvedValue('paused');
+    await redeployRuntime(signedUrlDb, e2b, e2bMachine, 'p1');
+    expect(e2b.extend.mock.calls).toEqual([[e2bMachine, 15_000]]);
+    expect(e2b.extend.mock.invocationCallOrder[0]).toBeGreaterThan(e2b.startService.mock.invocationCallOrder[0]);
+  });
+
+  it('原本醒著的不縮短（可能有人正在對話）；安裝失敗也不縮短', async () => {
+    stubEnv();
+    const running = fakeRuntimeHost('e2b');
+    await redeployRuntime(signedUrlDb, running, e2bMachine, 'p1');
+    expect(running.startService).toHaveBeenCalled();
+    expect(running.extend).not.toHaveBeenCalled();
+
+    const broken = fakeRuntimeHost('e2b');
+    broken.status.mockResolvedValue('paused');
+    broken.startService.mockRejectedValue(new Error('服務 runtime 沒有啟動'));
+    await expect(redeployRuntime(signedUrlDb, broken, e2bMachine, 'p1')).rejects.toThrow('沒有啟動');
+    expect(broken.extend).not.toHaveBeenCalled();
   });
 });
 

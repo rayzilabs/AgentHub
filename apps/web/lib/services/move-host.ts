@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { createHostedOps } from '@/lib/hosted-runtime';
-import { hostFor, projectMachine, versionMachine } from '@/lib/hosts';
+import { hostFor, projectMachine, sleepSoon, versionMachine } from '@/lib/hosts';
 import { errorText } from '@/lib/hosts/sprite';
 import type { HostName, Machine, RuntimeHost } from '@/lib/hosts/types';
 import { bringUpProject, destroyProjectMachine, spriteName } from '@/lib/project-runtime';
@@ -84,6 +84,8 @@ export async function moveProject(
   let m: Machine;
   try {
     m = await bringUpProject(db, hosts(to), projectId);
+    // 換列之前還沒有對話會打到這台：讓它先睡，--all 逐台搬時才不會同時醒著超過 Hobby 的 10 台
+    await sleepSoon(hosts(to), m);
     const { error: swapError } = await db.from('projects').update({
       host: to, sprite_name: m.name, sprite_url: m.url, host_token: m.token, sprite_status: 'ready', sprite_error: null,
     }).eq('id', projectId);
@@ -157,6 +159,8 @@ export async function moveHostedVersion(
     m = await ops.provision({ ...version, host: to }, vars, signed.signedUrl);
     // 部署腳本上限 9 分鐘，再留一點給程式啟動；本機腳本沒有 Vercel 的 300 秒限制
     await waitForTools(ops, m, version.template_id, deps.pollMs ?? 5000, deps.timeoutMs ?? HOSTED_LIMITS.deployMs);
+    // 檢查完、換列之前沒有請求會打到這台：讓它先睡（同上，避免同時醒著太多台）
+    await sleepSoon(ops, m);
     const { data: swapped, error: swapError } = await db.from('hosted_mcp_versions')
       .update({ host: to, sprite_name: m.name, sprite_url: m.url, host_token: m.token })
       .eq('id', version.id).eq('host', version.host).in('status', MOVABLE_VERSION_STATUSES).select('id').maybeSingle();

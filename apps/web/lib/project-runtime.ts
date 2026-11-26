@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { env } from '@/lib/env';
-import { hostFor, projectMachine } from '@/lib/hosts';
+import { hostFor, projectMachine, sleepSoon } from '@/lib/hosts';
 import { errorText } from '@/lib/hosts/sprite';
 import type { HostName, Machine, RuntimeHost } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
@@ -198,6 +198,16 @@ export async function installRuntime(db: Db, host: RuntimeHost, m: Machine, proj
   await host.exec(m, sandboxSetupScript(base, m.host), { timeoutMs: PROVISION_EXEC_TIMEOUT_MS });
   await startRuntimeService(host, m, base);
   return base;
+}
+
+/**
+ * 既有專案換新版 runtime（redeploy-runtime.ts）。原本暫停中的（沒人在用）裝好就讓它很快再睡，
+ * 否則逐台更新會同時叫醒很多台、撞到 E2B Hobby 同時 10 台的上限；原本醒著的不動，可能有人正在對話。
+ */
+export async function redeployRuntime(db: Db, host: RuntimeHost, m: Machine, projectId: string): Promise<void> {
+  const wasPaused = (await host.status(m)) === 'paused';
+  await installRuntime(db, host, m, projectId);
+  if (wasPaused) await sleepSoon(host, m);
 }
 
 /** 建立或取代 runtime 服務並（重新）啟動，載入剛下載的 main.js 與 .env */

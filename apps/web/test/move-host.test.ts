@@ -110,10 +110,16 @@ describe('moveProject', () => {
     });
     const updates: unknown[] = [];
     const spyDb = recordingDb(() => {}, (table, patch) => { if (table === 'projects') updates.push(patch); });
+    const hostAtSleep: string[] = [];
+    e2b.extend.mockImplementation(async () => { hostAtSleep.push((await projectRow(id)).host); return 'running'; });
 
     expect(await moveProject(spyDb, id, 'e2b', { hosts })).toBe('moved');
 
     expect(e2b.create).toHaveBeenCalledExactlyOnceWith(spriteName(id), 'project');
+    // 健康檢查通過後讓新沙盒 15 秒後就暫停（逐台搬時才不會同時醒著超過 Hobby 的 10 台）；換列之前做，沒有對話會打到正要睡的機器
+    expect(e2b.extend.mock.calls).toEqual([[{ host: 'e2b', name: 'sbx-moved', url: 'https://8080-sbx-moved.e2b.app', token: 'moved-tok' }, 15_000]]);
+    expect(e2b.extend.mock.invocationCallOrder[0]).toBeGreaterThan(realHealth.mock.invocationCallOrder[0]);
+    expect(hostAtSleep).toEqual(['sprite']);
     expect(health).toHaveBeenCalledWith('sprite');
     expect(realHealth).toHaveBeenCalledWith('https://8080-sbx-moved.e2b.app/health', expect.objectContaining({ headers: { 'e2b-traffic-access-token': 'moved-tok' } }));
     expect(updates).toEqual([
@@ -158,6 +164,24 @@ describe('moveProject', () => {
     // E2B 依 claim 刪掉同專案的全部新沙盒；舊的 Sprite 不碰
     expect(e2b.destroy.mock.calls).toEqual([[spriteName(id), 'agenthub-']]);
     expect(sprite.destroy).not.toHaveBeenCalled();
+    // 新沙盒反正要刪，不用縮短存活時間
+    expect(e2b.extend).not.toHaveBeenCalled();
+  });
+
+  it('縮短新沙盒的存活時間失敗只警告，仍算 moved', async () => {
+    const { id } = await projectOn('sprite', {});
+    await db.from('projects').update(spriteOld(id)).eq('id', id).throwOnError();
+    const { e2b, hosts } = twoHosts();
+    e2b.extend.mockRejectedValue(new Error('setTimeout 503'));
+    stubHealth(id);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await moveProject(db, id, 'e2b', { hosts })).toBe('moved');
+
+    expect((await projectRow(id)).host).toBe('e2b');
+    const message = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(message).toContain('sbx-moved');
+    expect(message).toContain('setTimeout 503');
   });
 
   it('專案正在佈建中：不搬、不改資料列', async () => {
@@ -210,6 +234,7 @@ describe('moveProject', () => {
     });
     // 不能依 claim 刪（會刪到新沙盒）
     expect(e2b.destroy.mock.calls).toEqual([['sbx-here', 'agenthub-']]);
+    expect(e2b.extend.mock.calls.map((c) => [c[0].name, c[1]])).toEqual([['sbx-moved', 15_000]]);
   });
 
   it('同一家而且沒有機器：重新部署；Sprite 新舊同名時不刪', async () => {
@@ -303,7 +328,10 @@ describe('moveHostedVersion', () => {
       expect(await versionRow(id)).toMatchObject({
         status, host: 'e2b', sprite_name: 'sbx-fake', sprite_url: 'https://8080-sbx-fake.e2b.app', host_token: 'fake-traffic-token',
       });
-      // 換列之後才刪舊機器
+      // listTools 成功後才讓新沙盒 15 秒後就暫停（換列之前，沒有請求會打到正要睡的機器）；換列之後才刪舊機器
+      const fns = calls.map((c) => c.fn);
+      expect(calls.filter((c) => c.fn === 'extend').map((c) => c.args)).toEqual([[newMachine, 15_000]]);
+      expect(fns.indexOf('extend')).toBeGreaterThan(fns.lastIndexOf('listTools'));
       expect(calls.filter((c) => c.fn === 'destroy').map((c) => c.args)).toEqual([['sprite', old.sprite_name]]);
       expect(calls.at(-1)!.fn).toBe('destroy');
     }
@@ -325,8 +353,9 @@ describe('moveHostedVersion', () => {
       await expect(moveHostedVersion(db, id, 'e2b', { ...opts, ...extra, ops })).rejects.toThrow(expected);
 
       expect(await versionRow(id)).toEqual(before);
-      // E2B 依 claim 刪掉這個版本的新沙盒；舊的 Sprite 不碰
+      // E2B 依 claim 刪掉這個版本的新沙盒；舊的 Sprite 不碰；反正要刪，不縮短存活時間
       expect(calls.filter((c) => c.fn === 'destroy').map((c) => c.args)).toEqual([['e2b', hostedSpriteName(id)]]);
+      expect(calls.some((c) => c.fn === 'extend')).toBe(false);
     }
   });
 
@@ -343,6 +372,21 @@ describe('moveHostedVersion', () => {
     const message = warn.mock.calls.map((c) => c.join(' ')).join('\n');
     expect(message).toContain(old.sprite_name);
     expect(message).toContain('403 Forbidden');
+  });
+
+  it('縮短新沙盒的存活時間失敗只警告，仍算 moved', async () => {
+    vi.stubEnv('MCP_SIGNING_KEY', testSigningKey());
+    const { id } = await versionOn('sprite', 'published');
+    const { ops } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    ops.extendError = new Error('setTimeout 503');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await moveHostedVersion(db, id, 'e2b', { ...opts, ops })).toBe('moved');
+
+    expect((await versionRow(id)).host).toBe('e2b');
+    const message = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(message).toContain('sbx-fake');
+    expect(message).toContain('setTimeout 503');
   });
 
   it('已在目標 host 且機器還在（running／paused）：already-there，不動任何東西', async () => {
@@ -367,7 +411,7 @@ describe('moveHostedVersion', () => {
 
     expect(await moveHostedVersion(db, id, 'e2b', { ...opts, ops })).toBe('moved');
 
-    expect(calls.map((c) => c.fn)).toEqual(['status', 'provision', 'readState', 'startService', 'listTools', 'destroy']);
+    expect(calls.map((c) => c.fn)).toEqual(['status', 'provision', 'readState', 'startService', 'listTools', 'extend', 'destroy']);
     expect(await versionRow(id)).toMatchObject({
       host: 'e2b', sprite_name: 'sbx-fake', sprite_url: 'https://8080-sbx-fake.e2b.app', host_token: 'fake-traffic-token',
     });

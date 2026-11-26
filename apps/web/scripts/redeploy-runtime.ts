@@ -4,7 +4,7 @@ process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 
 const { adminDb } = await import('@/lib/supabase/admin');
 const { hostFor, projectMachine } = await import('@/lib/hosts');
-const { installRuntime } = await import('@/lib/project-runtime');
+const { redeployRuntime } = await import('@/lib/project-runtime');
 
 const db = adminDb();
 const { data: projects, error } = await db.from('projects').select('id, host, sprite_name, sprite_url, host_token').eq('sprite_status', 'ready');
@@ -15,8 +15,8 @@ for (const p of projects) {
   try {
     const m = projectMachine(p);
     if (!m) throw new Error('專案沒有機器名稱或網址');
-    // installRuntime 會重新啟動 runtime 服務，載入新的 main.js
-    await installRuntime(db, hostFor(m.host), m, p.id);
+    // 重新啟動 runtime 服務，載入新的 main.js；原本暫停的 E2B 沙盒裝完會很快再暫停
+    await redeployRuntime(db, hostFor(m.host), m, p.id);
     console.log(`已更新 ${p.id}`);
   } catch (e) {
     failed.push(p.id);

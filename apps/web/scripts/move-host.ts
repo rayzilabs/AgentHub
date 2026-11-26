@@ -1,7 +1,7 @@
 // 用法：cd apps/web && pnpm exec tsx scripts/move-host.ts --to <sprite|e2b> (--project <id> | --version <id> | --all)
 //   --project <id>   搬一個專案的機器
 //   --version <id>   搬一個代管 MCP 版本（只搬 published、ready）
-//   --all            先搬全部專案，再搬全部代管 MCP 版本；一次一台（E2B Hobby 同時最多 10 台執行中）
+//   --all            先搬全部專案，再搬全部代管 MCP 版本；一次一台，搬好的 E2B 沙盒 15 秒後暫停（E2B Hobby 同時最多 10 台執行中）
 // 每台印一行結果，最後列出跳過與失敗的；有失敗時 exit 1
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { HostName } from '@/lib/hosts/types';
