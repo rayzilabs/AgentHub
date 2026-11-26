@@ -119,7 +119,15 @@ export async function getVersion(db: Db, userId: string, templateId: string, mcp
   return version;
 }
 
-export type HostedVersionView = HostedVersion & { projects: number };
+/** 送給瀏覽器的版本：host_token 只在伺服器端使用 */
+export type PublicHostedVersion = Omit<HostedVersion, 'host_token'>;
+
+export function publicVersion(v: HostedVersion): PublicHostedVersion {
+  const { host_token: _hostToken, ...rest } = v;
+  return rest;
+}
+
+export type HostedVersionView = PublicHostedVersion & { projects: number };
 
 /** 附上每個版本有幾個專案在用（頁面據此決定能不能下架） */
 export async function listVersions(db: Db, userId: string, templateId: string, mcpName: string): Promise<HostedVersionView[]> {
@@ -134,7 +142,7 @@ export async function listVersions(db: Db, userId: string, templateId: string, m
   if (targetError) throw targetError;
   const counts = new Map<string, number>();
   for (const t of targets as { hosted_version_id: string }[]) counts.set(t.hosted_version_id, (counts.get(t.hosted_version_id) ?? 0) + 1);
-  return versions.map((v) => ({ ...v, projects: counts.get(v.id) ?? 0 }));
+  return versions.map((v) => ({ ...publicVersion(v), projects: counts.get(v.id) ?? 0 }));
 }
 
 /** 只回傳名稱：值寫入後不再顯示 */

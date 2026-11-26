@@ -88,9 +88,13 @@ describe('代管 MCP API', () => {
     const { version, signedUrl } = await created.json();
     expect(version).toMatchObject({ version: 1, status: 'pending' });
     expect(signedUrl).toMatch(/^https:\/\//);
+    // 資料庫列有 host_token 時，任何回給瀏覽器的版本物件都不能帶出來
+    await db.from('hosted_mcp_versions').update({ host_token: 'SECRET-HOST-TOKEN' }).eq('id', version.id);
+    expect('host_token' in version).toBe(false);
 
     const list = await (await listRoute(req(creatorToken), ctx(p))).json();
     expect(list.map((v: { id: string }) => v.id)).toEqual([version.id]);
+    expect(JSON.stringify(list)).not.toContain('SECRET-HOST-TOKEN');
 
     const vp = { ...p, versionId: version.id };
     expect((await readRoute(req(otherToken), ctx(vp))).status).toBe(404);
@@ -100,13 +104,16 @@ describe('代管 MCP API', () => {
     const zip = new Blob([new Uint8Array([80, 75, 5, 6])]);
     expect((await fetch(signedUrl, { method: 'PUT', body: zip, headers: { 'content-type': 'application/zip', 'x-upsert': 'true' } })).ok).toBe(true);
     const deploy = await deployRoute(req(creatorToken, 'POST'), ctx(vp));
-    expect((await deploy.json()).status).toBe('deploying');
+    const deployed = await deploy.json();
+    expect(deployed.status).toBe('deploying');
+    expect('host_token' in deployed).toBe(false);
     expect(hoisted.afterTasks).toHaveLength(1);
     await hoisted.afterTasks[0]();
     expect(hoisted.calls).toEqual(['provision', 'readState']);
 
     const read = await (await readRoute(req(creatorToken), ctx(vp))).json();
     expect(read).toMatchObject({ status: 'deploying', sprite_name: `agenthub-mcp-${version.id.replace(/-/g, '').slice(0, 12)}`, log_tail: 'pip' });
+    expect(JSON.stringify(read)).not.toContain('SECRET-HOST-TOKEN');
     expect(hoisted.calls.at(-1)).toBe('readState');
     expect((await retireRoute(req(creatorToken, 'DELETE'), ctx(vp))).status).toBe(409);
   });

@@ -1,7 +1,7 @@
 import { requireUser } from '@/lib/auth';
 import { createHostedSpriteOps } from '@/lib/hosted-sprite';
 import { route } from '@/lib/http';
-import { getVersion, retireVersion, syncVersion } from '@/lib/services/hosted-mcp';
+import { getVersion, publicVersion, retireVersion, syncVersion } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';
 
 export const maxDuration = 300;
@@ -14,7 +14,7 @@ export const GET = route(async (req: Request, { params }: Ctx) => {
   const { id, mcp, versionId } = await params;
   const db = adminDb();
   const version = await getVersion(db, user.id, id, mcp, versionId);
-  return version.status === 'deploying' ? syncVersion(db, version.id, createHostedSpriteOps()) : version;
+  return publicVersion(version.status === 'deploying' ? await syncVersion(db, version.id, createHostedSpriteOps()) : version);
 });
 
 export const DELETE = route(async (req: Request, { params }: Ctx) => {
@@ -22,5 +22,5 @@ export const DELETE = route(async (req: Request, { params }: Ctx) => {
   const { id, mcp, versionId } = await params;
   const db = adminDb();
   const version = await getVersion(db, user.id, id, mcp, versionId);
-  return retireVersion(db, user.id, version.id, createHostedSpriteOps());
+  return publicVersion(await retireVersion(db, user.id, version.id, createHostedSpriteOps()));
 });
