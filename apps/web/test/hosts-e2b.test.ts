@@ -218,16 +218,39 @@ describe('服務', () => {
     expect(E2B_SERVICE_SCRIPT).toContain(`printf '%s\\0'`);
   });
 
+  it('服務腳本：同名服務的停止與「停舊的、記自己的 pid」以 flock 排隊，迴圈開始前放掉鎖', () => {
+    const lines = E2B_SERVICE_SCRIPT.split('\n');
+    const at = (text: string) => {
+      const i = lines.findIndex((l) => l.includes(text));
+      expect(i, text).toBeGreaterThanOrEqual(0);
+      return i;
+    };
+    // 鎖檔放在只有 root 進得去的目錄，沙盒帳號不能搶鎖卡住服務
+    expect(E2B_SERVICE_SCRIPT).toContain('chmod 700 /var/log/agenthub /run/agenthub/locks');
+    expect(E2B_SERVICE_SCRIPT).toContain('exec 9> "/run/agenthub/locks/$1.lock" && flock 9');
+    // --stop 也要先拿鎖
+    expect(at('lock "$2" || exit 1')).toBeLessThan(at('stop "$2"'));
+    // 啟動：拿鎖 → 停舊的 → 記 pid → 放鎖 → 迴圈
+    const order = ['lock "$name" || exit 1', 'stop "$name" || exit 1', 'echo $$ > "/run/agenthub/$name.pid"', 'exec 9>&-', 'while true; do'].map(at);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('服務腳本：日誌目錄 700、日誌檔 600（顧問帳號讀不到 runtime.log）', () => {
+    expect(E2B_SERVICE_SCRIPT).toContain('touch "$log" && chmod 600 "$log"');
+    expect(E2B_SERVICE_SCRIPT).toContain('tail -n 1000 "$log" > "$log.tmp" && chmod 600 "$log.tmp" && mv "$log.tmp" "$log"');
+  });
+
   it('startService 拒絕不合法的服務名稱', async () => {
     const { host } = setup();
     await expect(host.startService(machine, { name: 'a; rm -rf /', cmd: 'x', args: [] })).rejects.toThrow('服務名稱');
   });
 
-  it('serviceLog 讀 tail -n', async () => {
+  it('serviceLog 以 root 讀 tail -n（日誌只限 root）', async () => {
     const { run, host } = setup();
     run.mockResolvedValue({ stdout: 'l1\nl2\n', stderr: '', exitCode: 0 });
     await expect(host.serviceLog(machine, 'runtime', 50)).resolves.toBe('l1\nl2');
     expect(run.mock.calls[0][0]).toContain('tail -n 50 /var/log/agenthub/runtime.log');
+    expect(run.mock.calls[0][1]).toEqual({ user: 'root' });
   });
 
   it('hasService 依 pid 檔與程序是否存在', async () => {

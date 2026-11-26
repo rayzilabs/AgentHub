@@ -11,22 +11,30 @@ const SVC_PATH = '/usr/local/bin/agenthub-svc';
  * E2B 沒有服務管理員：以迴圈執行指令（降權成 user），結束後等 2 秒重啟。
  * 用法：agenthub-svc <名稱> <指令> [參數…]｜--restart <名稱>｜--stop <名稱>
  * 以 root、並由 setsid 讓本腳本成為程序群組領頭，pid 檔記的就是群組 id，--stop 才送得到整組。
- * 輸出附加到 /var/log/agenthub/<名稱>.log（每次重啟只留最後 1000 行）。
+ * 同名服務的「停舊的、記自己的 pid」與 --stop 以 flock 排隊：兩個啟動交錯（A 停、B 停、A 起、B 起）時，
+ * 後起的會先停掉先起的，不會留下沒記在 pid 檔、停不掉的迴圈。迴圈開始前放掉鎖，之後的停止與重啟才進得來。
+ * 輸出附加到 /var/log/agenthub/<名稱>.log（每次重啟只留最後 1000 行）；目錄 700、檔案 600，只有 root 讀得到。
  */
 export const E2B_SERVICE_SCRIPT = `#!/bin/bash
 dir=/var/lib/agenthub/svc
-mkdir -p /var/log/agenthub /run/agenthub "$dir"
-if [ "$1" = "--stop" ]; then
-  pidf="/run/agenthub/$2.pid"
-  [ -f "$pidf" ] || exit 0
+mkdir -p /var/log/agenthub /run/agenthub/locks "$dir"
+chmod 700 /var/log/agenthub /run/agenthub/locks
+lock() { exec 9> "/run/agenthub/locks/$1.lock" && flock 9; }
+stop() {
+  local pidf="/run/agenthub/$1.pid" pid
+  [ -f "$pidf" ] || return 0
   pid=$(cat "$pidf")
   if kill -0 "$pid" 2>/dev/null; then
-    kill -TERM -- "-$pid" || { echo "停不掉服務 $2：找不到程序群組 $pid" >&2; exit 1; }
+    kill -TERM -- "-$pid" || { echo "停不掉服務 $1：找不到程序群組 $pid" >&2; return 1; }
     for _ in $(seq 20); do kill -0 -- "-$pid" 2>/dev/null || break; sleep 0.5; done
     if kill -0 -- "-$pid" 2>/dev/null; then kill -KILL -- "-$pid"; sleep 0.5; fi
   fi
   rm -f "$pidf"
-  exit 0
+}
+if [ "$1" = "--stop" ]; then
+  lock "$2" || exit 1
+  stop "$2"
+  exit
 fi
 if [ "$1" = "--restart" ]; then
   mapfile -d '' -t saved < "$dir/$2.args" || exit 1
@@ -34,10 +42,14 @@ if [ "$1" = "--restart" ]; then
 fi
 name="$1"; shift
 log="/var/log/agenthub/$name.log"
+lock "$name" || exit 1
+stop "$name" || exit 1
 echo $$ > "/run/agenthub/$name.pid"
 printf '%s\\0' "$@" > "$dir/$name.args.tmp" && mv "$dir/$name.args.tmp" "$dir/$name.args"
+touch "$log" && chmod 600 "$log"
+exec 9>&-
 while true; do
-  if [ -f "$log" ]; then tail -n 1000 "$log" > "$log.tmp" && mv "$log.tmp" "$log"; fi
+  tail -n 1000 "$log" > "$log.tmp" && chmod 600 "$log.tmp" && mv "$log.tmp" "$log"
   sudo -n -u user -H -- "$@" >> "$log" 2>&1
   sleep 2
 done
@@ -213,7 +225,8 @@ chown root:root ${tmp} && chmod 755 ${tmp} && if cmp -s ${tmp} ${SVC_PATH}; then
 
     async serviceLog(m, name, lines) {
       checkServiceName(name);
-      const out = await run(m, `tail -n ${Math.max(1, Math.floor(lines))} /var/log/agenthub/${name}.log 2>/dev/null || true`);
+      // 日誌只限 root 讀（顧問帳號讀不到）
+      const out = await run(m, `tail -n ${Math.max(1, Math.floor(lines))} /var/log/agenthub/${name}.log 2>/dev/null || true`, { user: 'root' });
       return out.trimEnd();
     },
 
