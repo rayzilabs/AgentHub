@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth';
-import { createHostedSpriteOps } from '@/lib/hosted-runtime';
+import { createHostedOps } from '@/lib/hosted-runtime';
 import { readJson, route } from '@/lib/http';
 import { listHostedSecretKeys, setHostedSecrets } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';
@@ -23,6 +23,6 @@ export const PUT = route(async (req: Request, { params }: Ctx) => {
   const user = await requireUser(req);
   const { id, mcp } = await params;
   const { secrets } = await readJson(req, Body);
-  await setHostedSecrets(adminDb(), user.id, id, mcp, secrets, createHostedSpriteOps());
+  await setHostedSecrets(adminDb(), user.id, id, mcp, secrets, createHostedOps());
   return { ok: true };
 });

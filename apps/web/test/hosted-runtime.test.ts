@@ -1,10 +1,13 @@
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  createHostedSpriteOps, deployScript, envScript, HOSTED_RUN, HOSTED_RUN_SCRIPT, HOSTED_SETUP_SCRIPT, listToolsOver,
+  createHostedOps, deployScript, envScript, HOSTED_RUN, HOSTED_RUN_SCRIPT, HOSTED_SETUP_SCRIPT, listToolsOver,
 } from '@/lib/hosted-runtime';
+import { createE2bHost, E2B_TEMPLATES } from '@/lib/hosts/e2b';
+import type { Machine } from '@/lib/hosts/types';
 import { hostedSpriteName, type HostedVersion } from '@/lib/services/hosted-mcp';
+import { fakeRuntimeHost } from './helpers';
 
 const SANDBOXED = `sudo -n unshare --mount --propagation private -- ${HOSTED_RUN}`;
 
@@ -73,66 +76,60 @@ describe('名稱與腳本', () => {
   });
 });
 
-describe('createHostedSpriteOps', () => {
-  function fakeClient() {
-    const calls: string[] = [];
-    const scripts: string[] = [];
-    const sprite = {
-      url: 'https://agenthub-mcp-abc.sprites.app',
-      execFile: async (_cmd: string, args: string[]) => {
-        scripts.push(args[1]);
-        const s = args[1];
-        calls.push(s.includes('env.sh.new') ? 'env' : s.includes('deploy/deploy.sh') ? 'script' : s.startsWith('set -euo pipefail') ? 'setup' : 'exec');
-        return { stdout: '' };
-      },
-      createService: async (name: string, config: { cmd: string; args?: string[]; httpPort?: number }) => {
-        calls.push(`create:${name}:${config.cmd}:${(config.args ?? []).join(' ')}:${config.httpPort ?? ''}`);
-        return { processAll: async () => {} };
-      },
-      getService: async (name: string) => {
-        calls.push(`get:${name}`);
-        throw Object.assign(new Error('service not found'), { statusCode: 404 });
-      },
-      restartService: async (name: string) => { calls.push(`restart:${name}`); return { processAll: async () => {} }; },
-    };
-    const client = {
-      getSprite: async (name: string) => { calls.push(`get-sprite:${name}`); throw Object.assign(new Error('sprite not found'), { statusCode: 404 }); },
-      createSprite: async (name: string, opts: unknown) => { calls.push(`create-sprite:${name}:${JSON.stringify(opts)}`); return sprite; },
-      deleteSprite: async (name: string) => { calls.push(`delete-sprite:${name}`); },
-    };
-    return { client, calls, scripts, sprite };
-  }
+describe('createHostedOps', () => {
+  const version = { id: '123e4567-e89b-12d3-a456-426614174000', host: 'sprite' } as HostedVersion;
+  const spriteMachine: Machine = { host: 'sprite', name: 'agenthub-mcp-123e4567e89b', url: 'https://agenthub-mcp-abc.sprites.app', token: null };
+  const e2bMachine: Machine = { host: 'e2b', name: 'sbx-1', url: 'https://8080-sbx-1.e2b.app', token: 'tok-1' };
+  const opsWith = (host: ReturnType<typeof fakeRuntimeHost>, fetchImpl?: typeof fetch) => createHostedOps({ hosts: () => host, fetchImpl });
+  const scriptOf = (call: unknown[]) => call[1] as string;
+  const envOf = (script: string) => Buffer.from(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(script)![1], 'base64').toString();
 
-  const version = { id: '123e4567-e89b-12d3-a456-426614174000' } as HostedVersion;
-
-  it('provision：建立 Sprite → setup → 寫 env.sh 與部署腳本 → 以服務 deploy 啟動', async () => {
-    const { client, calls, scripts } = fakeClient();
-    const ops = createHostedSpriteOps({ client: client as never, spritesToken: 't' });
-    const out = await ops.provision(version, { API_KEY: 'k', PORT: '8080' }, 'https://signed/bundle');
-    expect(out).toEqual({ spriteName: 'agenthub-mcp-123e4567e89b', spriteUrl: 'https://agenthub-mcp-abc.sprites.app' });
-    expect(calls).toEqual([
-      'get-sprite:agenthub-mcp-123e4567e89b',
-      'create-sprite:agenthub-mcp-123e4567e89b:{"urlSettings":{"auth":"sprite"}}',
-      'setup', 'env', 'script',
-      'create:deploy:bash:/srv/agenthub-mcp/deploy/deploy.sh:',
-    ]);
+  it('provision：以 claim 建立 mcp 機器 → setup → 寫 env.sh 與部署腳本 → 以服務 deploy 啟動，回傳機器', async () => {
+    const host = fakeRuntimeHost('sprite', spriteMachine);
+    const m = await opsWith(host).provision(version, { API_KEY: 'k', PORT: '8080' }, 'https://signed/bundle');
+    expect(m).toEqual(spriteMachine);
+    expect(host.create).toHaveBeenCalledWith('agenthub-mcp-123e4567e89b', 'mcp');
+    const scripts = host.exec.mock.calls.map(scriptOf);
+    expect(scripts).toHaveLength(3);
+    expect(scripts[0]).toBe(HOSTED_SETUP_SCRIPT);
     // env.sh 補上此版本的對外網址；以 root 擁有、mcp 群組可讀，mcp 改不了
-    const envCmd = scripts[1];
-    const b64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(envCmd)![1];
-    expect(Buffer.from(b64, 'base64').toString()).toBe(
-      "API_KEY='k'\nPORT='8080'\nAGENTHUB_MCP_URL='https://agenthub-mcp-abc.sprites.app/mcp'\n",
-    );
-    expect(envCmd).toContain('sudo chown root:mcp /srv/agenthub-mcp/env.sh.new');
-    expect(envCmd).toContain('sudo chmod 440 /srv/agenthub-mcp/env.sh.new');
-    // 部署腳本（含一次性下載網址）只寫在 deploy/
-    // 先寫暫存檔再 mv：不改寫部署服務正在讀的那個檔
+    expect(envOf(scripts[1])).toBe("API_KEY='k'\nPORT='8080'\nAGENTHUB_MCP_URL='https://agenthub-mcp-abc.sprites.app/mcp'\n");
+    expect(scripts[1]).toContain('sudo chown root:mcp /srv/agenthub-mcp/env.sh.new');
+    expect(scripts[1]).toContain('sudo chmod 440 /srv/agenthub-mcp/env.sh.new');
+    // 部署腳本（含一次性下載網址）只寫在 deploy/；先寫暫存檔再 mv：不改寫部署服務正在讀的那個檔
     expect(scripts[2]).toContain('> /srv/agenthub-mcp/deploy/deploy.sh.tmp');
     expect(scripts[2]).toContain('mv -f /srv/agenthub-mcp/deploy/deploy.sh.tmp /srv/agenthub-mcp/deploy/deploy.sh');
+    expect(host.startService).toHaveBeenCalledWith(spriteMachine, { name: 'deploy', cmd: 'bash', args: ['/srv/agenthub-mcp/deploy/deploy.sh'] });
+  });
+
+  it('provision 在 E2B 上：建立時逾時 15 分鐘、以 agenthub-svc 啟動 deploy 服務', async () => {
+    process.env.E2B_API_KEY = 'test-e2b-key';
+    const run = vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    const sbx = { sandboxId: 'sbx-new', getHost: (p: number) => `${p}-sbx-new.e2b.app`, trafficAccessToken: 'traffic-tok', commands: { run } };
+    const sdk = { create: vi.fn().mockResolvedValue(sbx), connect: vi.fn().mockResolvedValue(sbx) };
+    const ops = createHostedOps({ hosts: () => createE2bHost(sdk as never) });
+    const m = await ops.provision({ ...version, host: 'e2b' }, { PORT: '8080' }, 'https://signed/bundle');
+    expect(m).toEqual({ host: 'e2b', name: 'sbx-new', url: 'https://8080-sbx-new.e2b.app', token: 'traffic-tok' });
+    expect(sdk.create).toHaveBeenCalledTimes(1);
+    expect(sdk.create.mock.calls[0][0]).toBe(E2B_TEMPLATES.mcp);
+    expect(sdk.create.mock.calls[0][1]).toMatchObject({
+      timeoutMs: 15 * 60_000, metadata: { app: 'agenthub', kind: 'mcp', claim: 'agenthub-mcp-123e4567e89b' },
+    });
+    const cmds = run.mock.calls.map((c) => c[0] as string);
+    expect(cmds).toContain(`sudo -n setsid -f agenthub-svc 'deploy' 'bash' '/srv/agenthub-mcp/deploy/deploy.sh'`);
+    // env.sh 的網址是沙盒的對外網址
+    const env = Buffer.from("PORT='8080'\nAGENTHUB_MCP_URL='https://8080-sbx-new.e2b.app/mcp'\n").toString('base64');
+    expect(cmds.some((c) => c.includes('env.sh.new') && c.includes(env))).toBe(true);
   });
 
   it('readState：解析 state.json 與日誌；還沒有 state 時視為安裝中', async () => {
-    const make = (stdout: string) => ({ getSprite: async () => ({ execFile: async () => ({ stdout }) }) });
-    const read = (stdout: string) => createHostedSpriteOps({ client: make(stdout) as never, spritesToken: 't' }).readState('agenthub-mcp-x');
+    const read = async (stdout: string) => {
+      const host = fakeRuntimeHost('e2b');
+      host.exec.mockResolvedValue(stdout);
+      const state = await opsWith(host).readState(e2bMachine);
+      expect(host.exec.mock.calls[0][0]).toBe(e2bMachine);
+      return state;
+    };
     expect(await read('{"phase":"installed","start":"python server.py"}\n---agenthub-log---\nok\n'))
       .toEqual({ phase: 'installed', start: 'python server.py', log: 'ok' });
     expect(await read('{"phase":"failed","error":"安裝失敗"}\n---agenthub-log---\nE\n'))
@@ -142,54 +139,76 @@ describe('createHostedSpriteOps', () => {
   });
 
   it('startService：服務 mcp 在沙盒以 mcp 執行 start，httpPort 8080；已存在就不重建', async () => {
-    const { client, calls } = fakeClient();
-    client.getSprite = (async () => (await client.createSprite('x', {}))) as never;
-    const ops = createHostedSpriteOps({ client: client as never, spritesToken: 't' });
-    await ops.startService('agenthub-mcp-x', 'python server.py');
-    expect(calls.at(-1)).toBe(
-      `create:mcp:sudo:-n unshare --mount --propagation private -- ${HOSTED_RUN} /bin/bash -c cd /srv/agenthub-mcp/app && exec python server.py:8080`,
-    );
+    const host = fakeRuntimeHost('e2b');
+    host.hasService.mockResolvedValue(false);
+    await opsWith(host).startService(e2bMachine, 'python server.py');
+    expect(host.hasService).toHaveBeenCalledWith(e2bMachine, 'mcp');
+    expect(host.startService).toHaveBeenCalledWith(e2bMachine, {
+      name: 'mcp',
+      cmd: 'sudo',
+      args: ['-n', 'unshare', '--mount', '--propagation', 'private', '--', HOSTED_RUN, '/bin/bash', '-c', 'cd /srv/agenthub-mcp/app && exec python server.py'],
+      httpPort: 8080,
+    });
 
-    const second = fakeClient();
-    const existing = { ...second.sprite, getService: async () => ({ name: 'mcp', state: { status: 'running' } }) };
-    const ops2 = createHostedSpriteOps({ client: { getSprite: async () => existing } as never, spritesToken: 't' });
-    await ops2.startService('agenthub-mcp-x', 'python server.py');
-    expect(second.calls.filter((c) => c.startsWith('create:'))).toEqual([]);
+    // E2B 的 startService 會取代既有服務：已存在時不能呼叫（會重啟正在啟動的程式）
+    const running = fakeRuntimeHost('e2b');
+    await opsWith(running).startService(e2bMachine, 'python server.py');
+    expect(running.startService).not.toHaveBeenCalled();
   });
 
-  it('applyEnv：改寫 env.sh；服務已存在才重啟（部署中還沒有服務）；destroy 只刪 agenthub- 開頭的 Sprite', async () => {
-    const { client, calls, sprite } = fakeClient();
-    client.getSprite = (async () => sprite) as never;
-    const ops = createHostedSpriteOps({ client: client as never, spritesToken: 't' });
-    await ops.applyEnv('agenthub-mcp-x', { API_KEY: 'v1' });
-    expect(calls.slice(-2)).toEqual(['env', 'get:mcp']);
+  it('applyEnv：改寫 env.sh；服務已存在才重啟（部署中還沒有服務）', async () => {
+    const host = fakeRuntimeHost('e2b');
+    host.hasService.mockResolvedValue(false);
+    await opsWith(host).applyEnv(e2bMachine, { API_KEY: 'v1' });
+    expect(envOf(scriptOf(host.exec.mock.calls[0]))).toBe("API_KEY='v1'\n");
+    expect(host.restartService).not.toHaveBeenCalled();
 
-    const running = { ...sprite, getService: async (name: string) => { calls.push(`get:${name}`); return { name }; } };
-    client.getSprite = (async () => running) as never;
-    await ops.applyEnv('agenthub-mcp-x', { API_KEY: 'v2' });
-    expect(calls.slice(-3)).toEqual(['env', 'get:mcp', 'restart:mcp']);
-    await ops.destroy('agenthub-mcp-x');
-    expect(calls.at(-1)).toBe('delete-sprite:agenthub-mcp-x');
-    await expect(ops.destroy('other')).rejects.toThrow('拒絕刪除');
+    host.hasService.mockResolvedValue(true);
+    await opsWith(host).applyEnv(e2bMachine, { API_KEY: 'v2' });
+    expect(host.restartService).toHaveBeenCalledWith(e2bMachine, 'mcp');
   });
-});
 
-describe('serviceLog', () => {
-  it('取 mcp 服務最後 100 行的 stdout／stderr', async () => {
-    const seen: unknown[] = [];
-    const sprite = {
-      getServiceLogs: async (name: string, opts: unknown) => {
-        seen.push([name, opts]);
-        return {
-          processAll: async (fn: (e: { type: string; data?: string }) => void) => {
-            for (const e of [{ type: 'started' }, { type: 'stdout', data: 'booting\n' }, { type: 'stderr', data: 'Traceback\n' }, { type: 'exit' }]) fn(e);
-          },
-        };
-      },
-    };
-    const ops = createHostedSpriteOps({ client: { getSprite: async () => sprite } as never, spritesToken: 't' });
-    expect(await ops.serviceLog('agenthub-mcp-x')).toBe('booting\nTraceback');
-    expect(seen).toEqual([['mcp', { lines: 100, duration: '1s' }]]);
+  it('serviceLog、extend、destroy：交給版本所在的執行環境', async () => {
+    const sprite = fakeRuntimeHost('sprite');
+    const e2b = fakeRuntimeHost('e2b');
+    e2b.serviceLog.mockResolvedValue('Traceback');
+    e2b.extend.mockResolvedValue('paused');
+    const ops = createHostedOps({ hosts: (n) => (n === 'e2b' ? e2b : sprite) });
+    expect(await ops.serviceLog(e2bMachine)).toBe('Traceback');
+    expect(e2b.serviceLog).toHaveBeenCalledWith(e2bMachine, 'mcp', 100);
+    expect(await ops.extend(e2bMachine, 300_000)).toBe('paused');
+    expect(e2b.extend).toHaveBeenCalledWith(e2bMachine, 300_000);
+    await ops.destroy('e2b', 'sbx-1');
+    await ops.destroy('sprite', 'agenthub-mcp-x');
+    expect(e2b.destroy).toHaveBeenCalledWith('sbx-1', 'agenthub-mcp-');
+    expect(sprite.destroy).toHaveBeenCalledWith('agenthub-mcp-x', 'agenthub-mcp-');
+  });
+
+  it('listTools：邊緣驗證標頭依機器而定；E2B 不送 authorization', async () => {
+    const seen: Headers[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      seen.push(new Headers(init.headers));
+      const body = JSON.parse(init.body as string) as { id?: number; method: string };
+      if (body.id === undefined) return new Response(null, { status: 202 });
+      const result = body.method === 'tools/list' ? { tools: [{ name: 'rate' }] } : {};
+      return Response.json({ jsonrpc: '2.0', id: body.id, result });
+    }) as unknown as typeof fetch;
+    const ops = createHostedOps({ hosts: (n) => fakeRuntimeHost(n), fetchImpl: fakeFetch });
+
+    expect(await ops.listTools(e2bMachine, 'creator')).toEqual([{ name: 'rate' }]);
+    expect(seen).toHaveLength(3);
+    for (const h of seen) {
+      expect(h.get('x-agenthub-token')).toBe('creator');
+      expect(h.get('e2b-traffic-access-token')).toBe('tok-1');
+      expect(h.get('authorization')).toBeNull();
+    }
+    seen.length = 0;
+    await ops.listTools(spriteMachine, 'creator');
+    expect(seen).toHaveLength(3);
+    for (const h of seen) {
+      expect(h.get('authorization')).toBe('Bearer fly');
+      expect(h.get('e2b-traffic-access-token')).toBeNull();
+    }
   });
 });
 

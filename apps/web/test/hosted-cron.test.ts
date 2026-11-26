@@ -7,7 +7,7 @@ vi.mock('@/lib/services/hosted-mcp', async (importOriginal) => ({
   cleanupFailed: async () => { hoisted.calls.push('cleanupFailed'); return ['agenthub-mcp-a']; },
   removeOrphanBundles: async () => { hoisted.calls.push('removeOrphanBundles'); return ['x/fin/1.zip']; },
 }));
-vi.mock('@/lib/hosted-runtime', () => ({ createHostedSpriteOps: () => ({}) }));
+vi.mock('@/lib/hosted-runtime', () => ({ createHostedOps: () => ({}) }));
 
 const { GET } = await import('@/app/api/cron/hosted-cleanup/route');
 const call = (auth?: string) => GET(new Request('https://p.test/api/cron/hosted-cleanup', { headers: auth ? { authorization: auth } : {} }), {});

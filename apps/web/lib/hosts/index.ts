@@ -22,7 +22,7 @@ export function projectMachine(p: MachineRow): Machine | null {
   return { host: p.host, name: p.sprite_name, url: p.sprite_url, token: p.host_token };
 }
 
-export function versionMachine(v: HostedVersion): Machine | null {
+export function versionMachine(v: Pick<HostedVersion, 'host' | 'sprite_name' | 'sprite_url' | 'host_token'>): Machine | null {
   return projectMachine(v);
 }
 

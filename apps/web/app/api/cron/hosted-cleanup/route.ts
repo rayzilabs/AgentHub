@@ -1,5 +1,5 @@
 import { env } from '@/lib/env';
-import { createHostedSpriteOps } from '@/lib/hosted-runtime';
+import { createHostedOps } from '@/lib/hosted-runtime';
 import { HttpError, route } from '@/lib/http';
 import { cleanupFailed, removeOrphanBundles } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';
@@ -17,7 +17,7 @@ export const GET = route(async (req: Request) => {
     throw new HttpError(401, '未授權');
   }
   const db = adminDb();
-  const sprites = await cleanupFailed(db, createHostedSpriteOps());
+  const sprites = await cleanupFailed(db, createHostedOps());
   const bundles = await removeOrphanBundles(db);
   const names = sprites.length ? `（${sprites.join(', ')}）` : '';
   console.log(`[cron] hosted-cleanup 完成：刪除 Sprite ${sprites.length} 台${names}、套件 ${bundles.length} 個`);

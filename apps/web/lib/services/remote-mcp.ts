@@ -1,10 +1,14 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { env } from '@/lib/env';
+import { hostFor, versionMachine } from '@/lib/hosts';
+import type { HostName, Liveness, Machine, RuntimeHost } from '@/lib/hosts/types';
 import { HttpError, upstreamHeaders } from '@/lib/http';
 import type { Db } from '@/lib/supabase/admin';
 
-/** edgeToken：平台代管時用來通過 Fly 驗證的 Sprites token（Fly 驗證後就拿掉，不會到達創作者的程式） */
-export type RemoteTarget = { url: string; templateId: string | null; creatorId: string | null; edgeToken?: string };
+/** edge：平台代管時版本所在的機器，轉送時向它的執行環境取邊緣驗證標頭；versionId 只用來記 log */
+export type RemoteTarget = { url: string; templateId: string | null; creatorId: string | null; edge?: Machine; versionId?: string };
+
+/** 閘道每次轉送前把 E2B 代管沙盒延長這麼久：連續使用時不會中途暫停，閒置後暫停 */
+export const HOSTED_EXTEND_MS = 5 * 60_000;
 
 /** 找出顧問鎖定的創作者 MCP 網址；顧問不存在、不屬於這個專案或沒有這個 MCP 時拒絕 */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,19 +39,40 @@ export async function resolveRemoteTarget(db: Db, instanceId: string, mcpName: s
   if (target?.kind === 'hosted' && target.hosted_version_id) {
     const { data: version, error: versionError } = await db
       .from('hosted_mcp_versions')
-      .select('status, sprite_url')
+      .select('status, host, sprite_name, sprite_url, host_token')
       .eq('id', target.hosted_version_id)
       .maybeSingle();
     if (versionError) throw versionError;
     if (version?.status === 'disabled') throw new HttpError(503, '這個工具服務已被暫停');
     // 租用時鎖定的是已發布版本；之後只會變成下架或停用
-    if (!version || !['published', 'ready'].includes(version.status) || !version.sprite_url) {
+    const edge = version && versionMachine(version);
+    if (!version || !['published', 'ready'].includes(version.status) || !edge) {
       throw new HttpError(404, '找不到這個工具服務');
     }
-    return { ...base, url: `${version.sprite_url}/mcp`, edgeToken: env.spritesToken };
+    return { ...base, url: `${edge.url}/mcp`, edge, versionId: target.hosted_version_id as string };
   }
   if (!target || target.kind !== 'self' || !target.url) throw new HttpError(404, '找不到這個工具服務');
   return { ...base, url: target.url };
+}
+
+/**
+ * E2B 的逾時不看流量：轉送前延長代管沙盒。延長失敗只警告、照樣轉送（請求本身會叫醒暫停的沙盒）；
+ * 沙盒已不存在回 503，由營運重新部署。Sprite 不需要。
+ */
+export async function keepHostedAlive(
+  edge: Machine, versionId: string | undefined, hosts: (n: HostName) => RuntimeHost = hostFor,
+): Promise<void> {
+  if (edge.host !== 'e2b') return;
+  let live: Liveness | undefined;
+  try {
+    live = await hosts(edge.host).extend(edge, HOSTED_EXTEND_MS);
+  } catch (e) {
+    console.warn('[mcp] 延長代管沙盒存活失敗，照樣轉送', versionId, e);
+  }
+  if (live === 'gone') {
+    console.error('[mcp] 代管沙盒已不存在，需要重新部署', versionId);
+    throw new HttpError(503, '這個工具服務暫時無法使用');
+  }
 }
 
 /** JSON-RPC 本文是 tools/call 時回傳工具名稱（批次取第一個），其餘回傳 null */
@@ -92,10 +117,10 @@ function rpcFailed(text: string): boolean {
 const WAKING = new Set([502, 503]);
 const WAKE_ATTEMPTS = 3;
 
-async function wake(url: string, edgeToken: string, signal: AbortSignal, delayMs: number): Promise<void> {
+async function wake(url: string, edgeHeaders: Record<string, string>, signal: AbortSignal, delayMs: number): Promise<void> {
   for (let i = 0; i < WAKE_ATTEMPTS && !signal.aborted; i++) {
     const res = await fetch(url, {
-      method: 'HEAD', headers: { authorization: `Bearer ${edgeToken}` }, redirect: 'manual',
+      method: 'HEAD', headers: edgeHeaders, redirect: 'manual',
       signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
     }).catch(() => null);
     await res?.body?.cancel();
@@ -107,10 +132,11 @@ async function wake(url: string, edgeToken: string, signal: AbortSignal, delayMs
 /**
  * 把 MCP 請求轉給創作者，回應以串流原樣傳回。
  * onEnd 在回應結束時才呼叫（含串流時間與工具是否回報錯誤）；呼叫端自己中途取消時不呼叫。
- * opts.edgeToken：Authorization 改用它（平台代管的 Sprite），創作者通行證只放 X-AgentHub-Token。
- * opts.retries：休眠中的代管 Sprite 喚醒時可能先回 502／503，重試這麼多次。只給不會產生副作用的請求用。
- * opts.wakeFirst：tools/call 不能重送（Fly 回 502 時程式可能已經執行過）；先送一個不帶創作者通行證的
- * HEAD 把 Sprite 叫醒（程式會以 401 拒絕，不會執行任何工具），醒了再送一次 tools/call。
+ * opts.edgeHeaders：平台代管時的邊緣驗證標頭（Sprite 是 Fly token 的 Authorization，E2B 是這台沙盒的通行證），
+ * 有它就不送 Authorization 給創作者，創作者通行證只放 X-AgentHub-Token；沒有它時 Authorization 帶創作者通行證。
+ * opts.retries：休眠中的代管機器喚醒時可能先回 502／503，重試這麼多次。只給不會產生副作用的請求用。
+ * opts.wakeFirst：tools/call 不能重送（回 502 時程式可能已經執行過）；先送一個不帶創作者通行證的
+ * HEAD 把機器叫醒（程式會以 401 拒絕，不會執行任何工具），醒了再送一次 tools/call。
  */
 export async function forwardToCreator(
   req: Request,
@@ -118,18 +144,19 @@ export async function forwardToCreator(
   url: string,
   token: string,
   onEnd?: (ok: boolean) => Promise<void>,
-  opts: { edgeToken?: string; retries?: number; retryDelayMs?: number; wakeFirst?: boolean } = {},
+  opts: { edgeHeaders?: Record<string, string>; retries?: number; retryDelayMs?: number; wakeFirst?: boolean } = {},
 ): Promise<Response> {
   const headers = new Headers();
   req.headers.forEach((v, k) => {
     if (FORWARD.includes(k) || k.startsWith('mcp-param-')) headers.set(k, v);
   });
   headers.set('x-agenthub-token', token);
-  headers.set('authorization', `Bearer ${opts.edgeToken ?? token}`);
+  if (opts.edgeHeaders) for (const [k, v] of Object.entries(opts.edgeHeaders)) headers.set(k, v);
+  else headers.set('authorization', `Bearer ${token}`);
 
   let upstream: Response;
   try {
-    if (opts.wakeFirst && opts.edgeToken) await wake(url, opts.edgeToken, req.signal, opts.retryDelayMs ?? 1000);
+    if (opts.wakeFirst && opts.edgeHeaders) await wake(url, opts.edgeHeaders, req.signal, opts.retryDelayMs ?? 1000);
     // 不跟隨轉址：避免帶著通行證被導到 http 或其他主機
     upstream = await fetch(url, { method: req.method, headers, body, signal: req.signal, redirect: 'manual' });
     for (let i = 0; i < (opts.retries ?? 0) && WAKING.has(upstream.status) && !req.signal.aborted; i++) {

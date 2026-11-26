@@ -10,7 +10,7 @@ import { TemplateInputSchema } from '@/lib/schemas';
 import { HOSTED_BUCKET, listVersions } from '@/lib/services/hosted-mcp';
 import { createTemplate, listMyTemplates, listPublishedTemplates } from '@/lib/services/templates';
 import { parseSkillsZip } from '@/lib/skills-zip';
-import { fakeSprites, seedUser, serviceHostedClient, testDb, testSigningKey } from './helpers';
+import { fakeHostedOps, seedUser, serviceHostedClient, testDb, testSigningKey } from './helpers';
 
 const SKILLS: Record<string, string[]> = {
   credit: ['credit-5p', 'ratio-check'],
@@ -130,7 +130,7 @@ describe('平台代管 MCP 套件', () => {
   async function firstPublish() {
     const creator = await seedUser(db);
     const { agents, hosted } = await fixture();
-    const { ops, calls } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
+    const { ops, calls } = fakeHostedOps({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
     const publish = async () => (await publishDemoAgents(db, creator.id, await loadDemoAgents(agents, hosted), serviceHostedClient(db, creator.id, ops)))[0];
     const first = await publish();
     const versions = async () => (await listVersions(db, creator.id, first.id, 'law')).map((v) => [v.version, v.status]);
@@ -172,12 +172,12 @@ describe('平台代管 MCP 套件', () => {
       { template_id: t.id, mcp_name: 'law', version: 2, status: 'failed', bundle_path: `${t.id}/law/2.zip`, sprite_name: 'agenthub-mcp-leftover00000' },
     ]);
     if (error) throw error;
-    const { ops, calls } = fakeSprites({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
+    const { ops, calls } = fakeHostedOps({ phase: 'installed', start: 'node server.mjs', log: 'ok' });
 
     const [again] = await publishDemoAgents(db, creator.id, [agent], serviceHostedClient(db, creator.id, ops));
     expect(again).toMatchObject({ id: t.id, created: false, deployed: [] });
     expect((await listVersions(db, creator.id, t.id, 'law')).map((v) => [v.version, v.status])).toEqual([[2, 'retired'], [1, 'published']]);
-    expect(calls.filter((c) => c.fn === 'destroy').map((c) => c.args[0])).toEqual(['agenthub-mcp-leftover00000']);
+    expect(calls.filter((c) => c.fn === 'destroy').map((c) => c.args)).toEqual([['sprite', 'agenthub-mcp-leftover00000']]);
   });
 
   it('有代管 MCP 卻沒給 HostedClient 時說明要怎麼做', async () => {

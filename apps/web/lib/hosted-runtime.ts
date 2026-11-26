@@ -1,8 +1,7 @@
-import { SpritesClient, type Sprite } from '@fly/sprites';
-import { env } from '@/lib/env';
-import { hostedSpriteName, type DeployState, type HostedSpriteOps, type HostedVersion } from '@/lib/services/hosted-mcp';
-import { deleteSpriteIfExists, findService, getOrCreateSprite, retryTransient } from '@/lib/hosts/sprite';
+import { hostFor } from '@/lib/hosts';
+import type { HostName, RuntimeHost } from '@/lib/hosts/types';
 import { shellQuote } from '@/lib/project-runtime';
+import { hostedSpriteName, type DeployState, type HostedOps, type HostedVersion } from '@/lib/services/hosted-mcp';
 
 const ROOT = '/srv/agenthub-mcp';
 const APP = `${ROOT}/app`;
@@ -188,7 +187,7 @@ export async function listToolsOver(
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
-      // 請求帶著平台的 Sprites token：不跟去別的網址
+      // 請求帶著平台或沙盒的通行證：不跟去別的網址
       redirect: 'error',
     });
     if (!res.ok) throw new Error(`MCP 回應 ${res.status}：${(await res.text()).slice(0, 200)}`);
@@ -206,74 +205,67 @@ export async function listToolsOver(
   return tools.map((t) => (t.description === undefined ? { name: t.name } : { name: t.name, description: t.description }));
 }
 
-export function createHostedSpriteOps(
-  deps: { client?: Pick<SpritesClient, 'getSprite' | 'createSprite' | 'deleteSprite'>; spritesToken?: string; fetchImpl?: typeof fetch } = {},
-): HostedSpriteOps {
-  const client = () => deps.client ?? new SpritesClient(env.spritesToken);
-  const token = () => deps.spritesToken ?? env.spritesToken;
-  const sprite = (name: string): Promise<Sprite> => retryTransient(() => client().getSprite(name));
+export function createHostedOps(
+  deps: { hosts?: (n: HostName) => RuntimeHost; fetchImpl?: typeof fetch } = {},
+): HostedOps {
+  const hosts = deps.hosts ?? hostFor;
 
   return {
+    /** 以 hostedSpriteName 當 claim 建立機器：Sprite 用它當名稱，E2B 寫進 metadata 供清理時找回 */
     async provision(version: HostedVersion, vars: Record<string, string>, bundleUrl: string) {
-      const name = hostedSpriteName(version.id);
-      const s = await retryTransient(() => getOrCreateSprite(client(), name));
-      if (!s.url) throw new Error('代管 Sprite 沒有對外網址');
-      await s.execFile('bash', ['-lc', HOSTED_SETUP_SCRIPT]);
-      await s.execFile('bash', ['-lc', writeEnvCommand({ ...vars, AGENTHUB_MCP_URL: `${s.url}/mcp` })]);
-      await s.execFile('bash', ['-lc', writeDeployCommand(deployScript(bundleUrl))]);
-      const logs = await s.createService('deploy', { cmd: 'bash', args: [DEPLOY_SCRIPT] }, '1s');
-      await logs.processAll(() => {});
-      return { spriteName: name, spriteUrl: s.url };
+      const host = hosts(version.host);
+      const m = await host.create(hostedSpriteName(version.id), 'mcp');
+      await host.exec(m, HOSTED_SETUP_SCRIPT);
+      await host.exec(m, writeEnvCommand({ ...vars, AGENTHUB_MCP_URL: `${m.url}/mcp` }));
+      await host.exec(m, writeDeployCommand(deployScript(bundleUrl)));
+      await host.startService(m, { name: 'deploy', cmd: 'bash', args: [DEPLOY_SCRIPT] });
+      return m;
     },
 
-    async readState(name: string) {
-      const s = await sprite(name);
-      const { stdout } = await s.execFile('bash', ['-lc',
-        `cat ${DEPLOY}/state.json 2>/dev/null; printf '\\n${LOG_MARK}\\n'; tail -n 100 ${DEPLOY}/log.txt 2>/dev/null; true`]);
-      return parseState(String(stdout));
+    async readState(m) {
+      const stdout = await hosts(m.host).exec(m,
+        `cat ${DEPLOY}/state.json 2>/dev/null; printf '\\n${LOG_MARK}\\n'; tail -n 100 ${DEPLOY}/log.txt 2>/dev/null; true`);
+      return parseState(stdout);
     },
 
-    /** 可重複呼叫：服務已存在就不重建（重建會重啟正在啟動的程式） */
-    async startService(name: string, start: string) {
-      const s = await sprite(name);
-      if (await findService(s, 'mcp')) return;
-      const logs = await s.createService('mcp', {
+    /** 可重複呼叫：服務已存在就不重建（重建會重啟正在啟動的程式；E2B 的 startService 會取代既有服務） */
+    async startService(m, start) {
+      const host = hosts(m.host);
+      if (await host.hasService(m, 'mcp')) return;
+      await host.startService(m, {
+        name: 'mcp',
         cmd: 'sudo',
         args: ['-n', 'unshare', '--mount', '--propagation', 'private', '--', HOSTED_RUN, '/bin/bash', '-c', `cd ${APP} && exec ${start}`],
         httpPort: 8080,
-      }, '5s');
-      await logs.processAll(() => {});
+      });
     },
 
-    async listTools(spriteUrl: string, creatorToken: string) {
-      return listToolsOver(deps.fetchImpl ?? fetch, `${spriteUrl}/mcp`, {
+    async listTools(m, creatorToken) {
+      // 邊緣驗證標頭：Sprite 是 Fly token（Fly 驗證後就拿掉，不會到達創作者的程式）；E2B 是這台沙盒自己的通行證
+      return listToolsOver(deps.fetchImpl ?? fetch, `${m.url}/mcp`, {
         'x-agenthub-token': creatorToken,
-        // Fly 驗證後就拿掉，不會到達創作者的程式
-        authorization: `Bearer ${token()}`,
+        ...hosts(m.host).edgeHeaders(m),
       });
     },
 
-    async serviceLog(name: string) {
-      const s = await sprite(name);
-      const logs = await s.getServiceLogs('mcp', { lines: 100, duration: '1s' });
-      const out: string[] = [];
-      await logs.processAll((e) => {
-        if ((e.type === 'stdout' || e.type === 'stderr') && e.data) out.push(e.data);
-      });
-      return out.join('').trimEnd();
+    async serviceLog(m) {
+      return hosts(m.host).serviceLog(m, 'mcp', 100);
     },
 
-    async applyEnv(name: string, vars: Record<string, string>) {
-      const s = await sprite(name);
-      await s.execFile('bash', ['-lc', writeEnvCommand(vars)]);
+    async applyEnv(m, vars) {
+      const host = hosts(m.host);
+      await host.exec(m, writeEnvCommand(vars));
       // 部署中還沒有 mcp 服務：寫好 env.sh 就夠了，啟動時會讀到
-      if (!(await findService(s, 'mcp'))) return;
-      const logs = await s.restartService('mcp', '5s');
-      await logs.processAll(() => {});
+      if (!(await host.hasService(m, 'mcp'))) return;
+      await host.restartService(m, 'mcp');
     },
 
-    async destroy(name: string) {
-      await deleteSpriteIfExists(client(), name, 'agenthub-mcp-');
+    async extend(m, ms) {
+      return hosts(m.host).extend(m, ms);
+    },
+
+    async destroy(host, name) {
+      await hosts(host).destroy(name, 'agenthub-mcp-');
     },
   };
 }

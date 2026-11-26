@@ -2,8 +2,9 @@ import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import { signCreatorToken } from '@/lib/platform-tokens';
 import { MAX_ZIP_BYTES, RETIRABLE } from '@/lib/hosted-ui';
-import { defaultHost } from '@/lib/hosts';
-import type { HostName } from '@/lib/hosts/types';
+import { defaultHost, versionMachine } from '@/lib/hosts';
+import { E2B_TIMEOUT_MS } from '@/lib/hosts/e2b';
+import type { HostName, Liveness, Machine } from '@/lib/hosts/types';
 import { errorText } from '@/lib/hosts/sprite';
 import type { Db } from '@/lib/supabase/admin';
 import { getEditableTemplate, publishedVersionCount } from './templates';
@@ -31,19 +32,23 @@ export type DeployState =
   | { phase: 'installed'; start: string; log: string }
   | { phase: 'failed'; error: string; log: string };
 
-export type HostedSpriteOps = {
-  provision(version: HostedVersion, env: Record<string, string>, bundleUrl: string): Promise<{ spriteName: string; spriteUrl: string }>;
-  readState(spriteName: string): Promise<DeployState>;
-  startService(spriteName: string, start: string): Promise<void>;
-  listTools(spriteUrl: string, creatorToken: string): Promise<{ name: string; description?: string }[]>;
+/** 代管 MCP 在機器上的操作；依版本的執行環境（Sprite／E2B）實作在 lib/hosted-runtime.ts */
+export type HostedOps = {
+  /** 以 hostedSpriteName 認領建立機器並開始部署 */
+  provision(version: HostedVersion, env: Record<string, string>, bundleUrl: string): Promise<Machine>;
+  readState(m: Machine): Promise<DeployState>;
+  startService(m: Machine, start: string): Promise<void>;
+  listTools(m: Machine, creatorToken: string): Promise<{ name: string; description?: string }[]>;
   /** mcp 服務（創作者程式）最後的輸出 */
-  serviceLog(spriteName: string): Promise<string>;
+  serviceLog(m: Machine): Promise<string>;
   /** 改寫 env.sh；mcp 服務已存在才重啟 */
-  applyEnv(spriteName: string, env: Record<string, string>): Promise<void>;
-  destroy(spriteName: string): Promise<void>;
+  applyEnv(m: Machine, env: Record<string, string>): Promise<void>;
+  extend(m: Machine, ms: number): Promise<Liveness>;
+  /** name 是機器名稱或 claim（E2B 依 claim 刪掉同版本的全部沙盒） */
+  destroy(host: HostName, name: string): Promise<void>;
 };
 
-/** 名稱固定：先寫進資料庫認領，再建立 Sprite，不會重複建立或留下沒有紀錄的 Sprite */
+/** 名稱固定：先寫進資料庫認領，再建立機器，不會重複建立或留下沒有紀錄的機器（E2B 的 claim 在 metadata） */
 export function hostedSpriteName(versionId: string): string {
   return `agenthub-mcp-${versionId.replace(/-/g, '').slice(0, 12)}`;
 }
@@ -213,7 +218,7 @@ export async function startDeploy(db: Db, userId: string, versionId: string): Pr
   return updateVersion(db, version.id, 'pending', { status: 'deploying', deploy_started_at: new Date().toISOString() });
 }
 
-export async function syncVersion(db: Db, versionId: string, sprites: HostedSpriteOps, now = Date.now()): Promise<HostedVersion> {
+export async function syncVersion(db: Db, versionId: string, ops: HostedOps, now = Date.now()): Promise<HostedVersion> {
   let version = await loadVersion(db, versionId);
   if (version.status !== 'deploying') return version;
   const fail = (reason: string, log: string) =>
@@ -237,35 +242,45 @@ export async function syncVersion(db: Db, versionId: string, sprites: HostedSpri
       const { data: signed, error } = await db.storage.from(HOSTED_BUCKET).createSignedUrl(version.bundle_path, 900);
       if (error) throw error;
       const vars = await hostedEnv(db, version.template_id, version.mcp_name);
-      const { spriteUrl } = await sprites.provision(version, vars, signed.signedUrl);
-      version = await updateVersion(db, version.id, 'deploying', { sprite_url: spriteUrl });
+      const m = await ops.provision(version, vars, signed.signedUrl);
+      // Sprite 的名稱就是 claim；E2B 換成 sandboxId
+      version = await updateVersion(db, version.id, 'deploying', { sprite_name: m.name, sprite_url: m.url, host_token: m.token });
     } catch (e) {
-      // sprite_name 留著：Sprite 可能已建立一半，清理腳本找得到它
+      // sprite_name 留著 claim：機器可能已建立一半，清理時依它找得到（E2B 依 metadata 的 claim）
       return fail(`建立代管環境失敗：${errorText(e)}`, '');
     }
   }
+  const m = versionMachine(version);
   // 另一個請求正在建立
-  if (!version.sprite_url) return version;
-  const spriteName = version.sprite_name!;
-  const state = await sprites.readState(spriteName);
+  if (!m) return version;
+  if (m.host === 'e2b') {
+    // E2B 的逾時不看流量：部署由讀取推進，每次讀取都延長，避免安裝做到一半被暫停
+    let live: Liveness | undefined;
+    try {
+      live = await ops.extend(m, E2B_TIMEOUT_MS.mcp);
+    } catch (e) {
+      console.warn('[hosted-deploy] 延長沙盒存活失敗，照樣推進', version.id, e);
+    }
+    if (live === 'gone') return fail('代管環境已不存在，請重新部署', version.log_tail);
+  }
+  const state = await ops.readState(m);
   if (state.phase === 'failed') return fail(state.error, state.log);
   if (state.phase === 'installing') {
     return timedOut ? fail(TIMEOUT, state.log) : updateVersion(db, version.id, 'deploying', { log_tail: tail(state.log) });
   }
 
-  await sprites.startService(spriteName, state.start);
-  const spriteUrl = version.sprite_url!;
+  await ops.startService(m, state.start);
   const token = signCreatorToken(
-    { iss: env.platformUrl, aud: `${spriteUrl}/mcp`, sub: 'deploy-check', project_id: 'deploy-check', template_id: version.template_id },
+    { iss: env.platformUrl, aud: `${m.url}/mcp`, sub: 'deploy-check', project_id: 'deploy-check', template_id: version.template_id },
     env.mcpSigningKey,
   );
   let tools: { name: string; description?: string }[];
   try {
-    tools = await sprites.listTools(spriteUrl, token);
+    tools = await ops.listTools(m, token);
   } catch (e) {
     // 程式可能還在啟動；下次讀取再試，超過 10 分鐘會標成逾時
     const reason = errorText(e);
-    const program = await sprites.serviceLog(spriteName).catch(() => '');
+    const program = await ops.serviceLog(m).catch(() => '');
     const log = `${state.log}\n== 程式輸出\n${program}\n等待程式回應：${reason}`;
     return timedOut ? fail(TIMEOUT, log) : updateVersion(db, version.id, 'deploying', { log_tail: tail(log) });
   }
@@ -283,7 +298,7 @@ export async function publishVersion(db: Db, userId: string, versionId: string):
   return updateVersion(db, version.id, 'ready', { status: 'published', published_at: new Date().toISOString() });
 }
 
-export async function retireVersion(db: Db, userId: string, versionId: string, sprites: HostedSpriteOps): Promise<HostedVersion> {
+export async function retireVersion(db: Db, userId: string, versionId: string, ops: HostedOps): Promise<HostedVersion> {
   const version = await ownVersion(db, userId, versionId);
   if (!RETIRABLE.includes(version.status)) throw new HttpError(409, '這個版本不能下架');
   if (version.status === 'published') await assertNotLastPublished(db, version);
@@ -294,7 +309,7 @@ export async function retireVersion(db: Db, userId: string, versionId: string, s
   if (error) throw error;
   let retired = await loadVersion(db, version.id);
   if (version.sprite_name) {
-    await sprites.destroy(version.sprite_name);
+    await ops.destroy(version.host, version.sprite_name);
     retired = await updateVersion(db, version.id, 'retired', { sprite_name: null });
   }
   return retired;
@@ -308,7 +323,7 @@ async function assertNotLastPublished(db: Db, version: HostedVersion): Promise<v
 }
 
 export async function setHostedSecrets(
-  db: Db, userId: string, templateId: string, mcpName: string, secrets: Record<string, string>, sprites: HostedSpriteOps,
+  db: Db, userId: string, templateId: string, mcpName: string, secrets: Record<string, string>, ops: HostedOps,
 ): Promise<void> {
   await ownHostedMcp(db, userId, templateId, mcpName);
   for (const key of Object.keys(secrets)) {
@@ -320,30 +335,30 @@ export async function setHostedSecrets(
     if (error) throw error;
   }
   // 部署中的也要：程式啟動時才拿得到新金鑰（applyEnv 只在服務已存在時重啟）
-  const { data: running, error } = await db.from('hosted_mcp_versions').select('sprite_name, sprite_url')
+  const { data: running, error } = await db.from('hosted_mcp_versions').select('host, sprite_name, sprite_url, host_token')
     .eq('template_id', templateId).eq('mcp_name', mcpName).in('status', ['deploying', 'ready', 'published'])
     .not('sprite_name', 'is', null).not('sprite_url', 'is', null);
   if (error) throw error;
-  const rows = running as { sprite_name: string; sprite_url: string }[];
-  if (rows.length === 0) return;
+  const machines = running.map(versionMachine).filter((m) => m !== null);
+  if (machines.length === 0) return;
   const vars = await hostedEnv(db, templateId, mcpName);
-  for (const v of rows) await sprites.applyEnv(v.sprite_name, { ...vars, AGENTHUB_MCP_URL: `${v.sprite_url}/mcp` });
+  for (const m of machines) await ops.applyEnv(m, { ...vars, AGENTHUB_MCP_URL: `${m.url}/mcp` });
 }
 
 /** opts.templateId 只給測試用：測試打正式資料庫，不能碰到真實版本 */
 export async function cleanupFailed(
-  db: Db, ops: HostedSpriteOps, opts: { templateId?: string; now?: number } = {},
+  db: Db, ops: HostedOps, opts: { templateId?: string; now?: number } = {},
 ): Promise<string[]> {
   const cutoff = new Date((opts.now ?? Date.now()) - KEEP_FAILED_MS).toISOString();
-  let query = db.from('hosted_mcp_versions').select('id, sprite_name')
+  let query = db.from('hosted_mcp_versions').select('id, host, sprite_name')
     .not('sprite_name', 'is', null)
     .or(`status.eq.retired,and(status.eq.failed,deploy_started_at.lt.${cutoff})`);
   if (opts.templateId) query = query.eq('template_id', opts.templateId);
   const { data, error } = await query;
   if (error) throw error;
   const done: string[] = [];
-  for (const v of data as { id: string; sprite_name: string }[]) {
-    await ops.destroy(v.sprite_name);
+  for (const v of data as { id: string; host: HostName; sprite_name: string }[]) {
+    await ops.destroy(v.host, v.sprite_name);
     const { error: updateError } = await db.from('hosted_mcp_versions').update({ sprite_name: null }).eq('id', v.id);
     if (updateError) throw updateError;
     done.push(v.sprite_name);

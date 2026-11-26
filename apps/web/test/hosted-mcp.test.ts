@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { E2B_TIMEOUT_MS } from '@/lib/hosts/e2b';
+import type { Machine } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import {
   checkBundle, createVersion, HOSTED_LIMITS, listHostedSecretKeys, listVersions, parseMcpJson, publishVersion, retireVersion, setHostedSecrets,
@@ -7,7 +9,7 @@ import {
 } from '@/lib/services/hosted-mcp';
 import { createProject, deleteOwnProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate, updateTemplate } from '@/lib/services/templates';
-import { fakeSprites, seedUser, testDb } from './helpers';
+import { fakeHostedOps, seedUser, testDb } from './helpers';
 
 const db = testDb();
 
@@ -132,12 +134,14 @@ describe('代管版本：建立與部署', () => {
 describe('代管版本：狀態推進', () => {
   const pem = generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 
-  async function deployingVersion(startedAt = new Date().toISOString()) {
+  async function deployingVersion(startedAt = new Date().toISOString(), extra: Record<string, unknown> = {}) {
     const creator = await seedUser(db);
     const t = await hostedTemplate(creator.id);
-    const id = await insertVersion(t.id, 1, 'deploying', { deploy_started_at: startedAt });
+    const id = await insertVersion(t.id, 1, 'deploying', { deploy_started_at: startedAt, ...extra });
     return { creator, t, id };
   }
+
+  const sprite = (name: string, url: string): Machine => ({ host: 'sprite', name, url, token: null });
 
   it('第一次同步：建立 Sprite，env 含金鑰與平台變數', async () => {
     vi.stubEnv('PLATFORM_URL', 'https://platform.test');
@@ -145,7 +149,7 @@ describe('代管版本：狀態推進', () => {
     // 正式流程在 startDeploy 前已上傳；這裡直接插入版本，所以自己放一個套件
     const { error } = await db.storage.from('mcp-bundles').upload(`${t.id}/fin/1.zip`, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
     if (error) throw error;
-    const { ops, calls } = fakeSprites();
+    const { ops, calls } = fakeHostedOps();
     await setHostedSecrets(db, creator.id, t.id, 'fin', { API_KEY: 'k1' }, ops);
     const v = await syncVersion(db, id, ops);
     const [, env, bundleUrl] = calls.find((c) => c.fn === 'provision')!.args as [string, Record<string, string>, string];
@@ -158,17 +162,65 @@ describe('代管版本：狀態推進', () => {
     vi.unstubAllEnvs();
   });
 
+  it('第一次同步：以 hostedSpriteName 認領，建立後把 sprite_name 改成機器名稱並存 host_token', async () => {
+    const { t, id } = await deployingVersion(undefined, { host: 'e2b' });
+    const { error } = await db.storage.from('mcp-bundles').upload(`${t.id}/fin/1.zip`, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
+    if (error) throw error;
+    const { ops } = fakeHostedOps();
+    const provision = ops.provision;
+    let claimed: HostedVersion | undefined;
+    ops.provision = async (v, env, url) => {
+      claimed = await readVersion(id);
+      return provision(v, env, url);
+    };
+    const v = await syncVersion(db, id, ops);
+    expect(claimed!.sprite_name).toBe(`agenthub-mcp-${id.replace(/-/g, '').slice(0, 12)}`);
+    expect(await readVersion(id)).toMatchObject({
+      status: 'deploying', host: 'e2b', sprite_name: 'sbx-fake', sprite_url: 'https://8080-sbx-fake.e2b.app', host_token: 'fake-traffic-token',
+    });
+    expect(v.sprite_name).toBe('sbx-fake');
+  });
+
+  it('部署中每次同步對 E2B 版本 extend 15 分鐘', async () => {
+    const machine: Machine = { host: 'e2b', name: 'sbx-d', url: 'https://8080-sbx-d.e2b.app', token: 'tok-d' };
+    const { id } = await deployingVersion(undefined, { host: 'e2b', sprite_name: machine.name, sprite_url: machine.url, host_token: machine.token });
+    const { ops, calls } = fakeHostedOps({ phase: 'installing', log: 'pip' });
+    await syncVersion(db, id, ops);
+    await syncVersion(db, id, ops);
+    expect(calls.map((c) => c.fn)).toEqual(['extend', 'readState', 'extend', 'readState']);
+    expect(calls[0].args).toEqual([machine, E2B_TIMEOUT_MS.mcp]);
+    expect(E2B_TIMEOUT_MS.mcp).toBe(15 * 60_000);
+    expect(calls[1].args).toEqual([machine]);
+
+    // 延長失敗只警告，照樣推進
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    ops.extendError = new Error('E2B API 500');
+    expect((await syncVersion(db, id, ops)).status).toBe('deploying');
+    expect(calls.at(-1)!.fn).toBe('readState');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+
+    // 沙盒已不存在：標成失敗，不再碰它
+    ops.extendError = null;
+    ops.live = 'gone';
+    const before = calls.length;
+    const gone = await syncVersion(db, id, ops);
+    expect(gone.status).toBe('failed');
+    expect(gone.log_tail).toContain('代管環境已不存在');
+    expect(calls.slice(before).map((c) => c.fn)).toEqual(['extend']);
+  });
+
   it('安裝完成：啟動服務、取得工具清單 → ready；沒有工具 → failed', async () => {
     vi.stubEnv('MCP_SIGNING_KEY', pem);
     for (const [tools, status] of [[[{ name: 'rate' }], 'ready'], [[], 'failed']] as const) {
       const { id } = await deployingVersion();
       await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-a', sprite_url: 'https://a.sprites.app' }).eq('id', id);
-      const { ops, calls } = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+      const { ops, calls } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
       ops.tools = [...tools];
       const v = await syncVersion(db, id, ops);
       expect(calls.map((c) => c.fn)).toEqual(['readState', 'startService', 'listTools']);
-      expect(calls[1].args).toEqual(['agenthub-mcp-a', 'python server.py']);
-      expect(calls[2].args[0]).toBe('https://a.sprites.app');
+      expect(calls[1].args).toEqual([sprite('agenthub-mcp-a', 'https://a.sprites.app'), 'python server.py']);
+      expect(calls[2].args[0]).toEqual(sprite('agenthub-mcp-a', 'https://a.sprites.app'));
       expect(v.status).toBe(status);
       if (status === 'ready') expect(v.tools).toEqual([{ name: 'rate' }]);
       else expect(v.log_tail).toContain('沒有任何工具');
@@ -180,7 +232,7 @@ describe('代管版本：狀態推進', () => {
     const { id } = await deployingVersion();
     await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-a', sprite_url: 'https://a.sprites.app' }).eq('id', id);
     const log = Array.from({ length: 150 }, (_, i) => `line ${i}`).join('\n');
-    const { ops } = fakeSprites({ phase: 'failed', error: '安裝失敗', log });
+    const { ops } = fakeHostedOps({ phase: 'failed', error: '安裝失敗', log });
     const v = await syncVersion(db, id, ops);
     expect(v.status).toBe('failed');
     const lines = v.log_tail.split('\n');
@@ -192,7 +244,7 @@ describe('代管版本：狀態推進', () => {
   it('超過 10 分鐘還在部署：failed「部署逾時」，不再碰 Sprite', async () => {
     const started = Date.now() - HOSTED_LIMITS.deployMs - 1000;
     const { id } = await deployingVersion(new Date(started).toISOString());
-    const { ops, calls } = fakeSprites();
+    const { ops, calls } = fakeHostedOps();
     const v = await syncVersion(db, id, ops);
     expect(v.status).toBe('failed');
     expect(v.log_tail).toContain('部署逾時');
@@ -203,7 +255,7 @@ describe('代管版本：狀態推進', () => {
     vi.stubEnv('MCP_SIGNING_KEY', pem);
     const { id } = await deployingVersion(new Date(Date.now() - 15 * 60_000).toISOString());
     await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-a', sprite_url: 'https://a.sprites.app' }).eq('id', id);
-    const { ops } = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    const { ops } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
     const v = await syncVersion(db, id, ops);
     expect(v.status).toBe('ready');
     expect(v.tools).toEqual([{ name: 'rate', description: '匯率' }]);
@@ -211,11 +263,11 @@ describe('代管版本：狀態推進', () => {
     // 逾時後還在安裝，或程式起不來：才標逾時（不再等下一輪）
     const late = await deployingVersion(new Date(Date.now() - 15 * 60_000).toISOString());
     await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-b', sprite_url: 'https://b.sprites.app' }).eq('id', late.id);
-    const installing = fakeSprites({ phase: 'installing', log: 'pip' });
+    const installing = fakeHostedOps({ phase: 'installing', log: 'pip' });
     expect((await syncVersion(db, late.id, installing.ops)).log_tail).toContain('部署逾時');
     const crashed = await deployingVersion(new Date(Date.now() - 15 * 60_000).toISOString());
     await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-c', sprite_url: 'https://c.sprites.app' }).eq('id', crashed.id);
-    const down = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    const down = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
     down.ops.listToolsError = new Error('MCP 回應 502');
     const failed = await syncVersion(db, crashed.id, down.ops);
     expect(failed.status).toBe('failed');
@@ -227,7 +279,7 @@ describe('代管版本：狀態推進', () => {
     vi.stubEnv('MCP_SIGNING_KEY', pem);
     const { id } = await deployingVersion();
     await db.from('hosted_mcp_versions').update({ sprite_name: 'agenthub-mcp-a', sprite_url: 'https://a.sprites.app' }).eq('id', id);
-    const { ops } = fakeSprites({ phase: 'installed', start: 'python server.py', log: 'ok' });
+    const { ops } = fakeHostedOps({ phase: 'installed', start: 'python server.py', log: 'ok' });
     ops.listToolsError = new Error('MCP 回應 502');
     const v = await syncVersion(db, id, ops);
     expect(v.status).toBe('deploying');
@@ -240,7 +292,7 @@ describe('代管版本：狀態推進', () => {
     const { t, id } = await deployingVersion();
     const { error } = await db.storage.from('mcp-bundles').upload(`${t.id}/fin/1.zip`, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
     if (error) throw error;
-    const { ops, calls } = fakeSprites();
+    const { ops, calls } = fakeHostedOps();
     ops.provisionDelayMs = 500;
     await Promise.all([syncVersion(db, id, ops), syncVersion(db, id, ops)]);
     expect(calls.filter((c) => c.fn === 'provision')).toHaveLength(1);
@@ -253,7 +305,7 @@ describe('代管版本：狀態推進', () => {
     const { t, id } = await deployingVersion();
     const { error } = await db.storage.from('mcp-bundles').upload(`${t.id}/fin/1.zip`, new Uint8Array([80, 75, 5, 6]), { contentType: 'application/zip' });
     if (error) throw error;
-    const { ops } = fakeSprites();
+    const { ops } = fakeHostedOps();
     ops.provisionError = new Error('Sprites API 500');
     const v = await syncVersion(db, id, ops);
     expect(v.status).toBe('failed');
@@ -265,7 +317,7 @@ describe('代管版本：狀態推進', () => {
     const creator = await seedUser(db);
     const t = await hostedTemplate(creator.id);
     const id = await insertVersion(t.id, 1, 'ready');
-    const { ops, calls } = fakeSprites();
+    const { ops, calls } = fakeHostedOps();
     expect((await syncVersion(db, id, ops)).status).toBe('ready');
     expect(calls).toEqual([]);
   });
@@ -275,7 +327,7 @@ describe('代管版本：發布、下架、金鑰', () => {
   it('等上傳的版本可以下架；過期的等上傳與逾時的部署不再擋住新版本', async () => {
     const creator = await seedUser(db);
     const t = await hostedTemplate(creator.id);
-    const { ops, calls } = fakeSprites();
+    const { ops, calls } = fakeHostedOps();
     const { version } = await createVersion(db, creator.id, t.id, 'fin');
     expect((await retireVersion(db, creator.id, version.id, ops)).status).toBe('retired');
     expect(calls).toEqual([]);
@@ -304,7 +356,7 @@ describe('代管版本：發布、下架、金鑰', () => {
     // 新增的代管 MCP 要先存檔才能建立版本；只檢查原本就在的代管 MCP
     expect((await updateTemplate(db, creator.id, t.id, { mcp_servers: servers })).mcp_servers.map((s) => s.name)).toEqual(['fin', 'more']);
 
-    const { ops } = fakeSprites();
+    const { ops } = fakeHostedOps();
     await expectStatus(retireVersion(db, creator.id, v1, ops), 409, '這是已上架範本唯一的已發布版本，請先發布新版本');
     await insertVersion(t.id, 2, 'published');
     expect((await retireVersion(db, creator.id, v1, ops)).status).toBe('retired');
@@ -324,7 +376,7 @@ describe('代管版本：發布、下架、金鑰', () => {
       expect(list.map((v) => [v.version, v.projects])).toEqual([[2, 0], [1, 1]]);
       expect(list.find((v) => v.id === v1)!.projects).toBe(1);
 
-      const { ops } = fakeSprites();
+      const { ops } = fakeHostedOps();
       await setHostedSecrets(db, creator.id, t.id, 'fin', { ZETA: 'z', API_KEY: 'k' }, ops);
       expect(await listHostedSecretKeys(db, creator.id, t.id, 'fin')).toEqual(['API_KEY', 'ZETA']);
       await expectStatus(listHostedSecretKeys(db, renter.id, t.id, 'fin'), 404);
@@ -374,7 +426,7 @@ describe('代管版本：發布、下架、金鑰', () => {
     await hireAgent(db, renter.id, p.id, t.id, {});
     // 租用鎖定版本 1 之後才發布版本 2：版本 1 不是唯一的已發布版本，擋下它的是「還有專案在用」
     await insertVersion(t.id, 2, 'published');
-    const { ops, calls } = fakeSprites();
+    const { ops, calls } = fakeHostedOps();
     try {
       await expectStatus(retireVersion(db, creator.id, id, ops), 409, '還有專案在使用這個版本');
       expect(calls).toEqual([]);
@@ -383,7 +435,7 @@ describe('代管版本：發布、下架、金鑰', () => {
       await deleteOwnProject(db, renter.id, p.id);
     }
     expect((await retireVersion(db, creator.id, id, ops)).status).toBe('retired');
-    expect(calls).toEqual([{ fn: 'destroy', args: ['agenthub-mcp-r'] }]);
+    expect(calls).toEqual([{ fn: 'destroy', args: ['sprite', 'agenthub-mcp-r'] }]);
     expect((await readVersion(id)).status).toBe('retired');
   });
 
@@ -395,7 +447,8 @@ describe('代管版本：發布、下架、金鑰', () => {
     await insertVersion(t.id, 2, 'failed', { sprite_name: 'agenthub-mcp-f', sprite_url: 'https://f.sprites.app' });
     // 部署中、Sprite 已建好：env 也要改寫，程式啟動時才拿得到新金鑰
     await insertVersion(t.id, 3, 'deploying', { sprite_name: 'agenthub-mcp-d', sprite_url: 'https://d.sprites.app', deploy_started_at: new Date().toISOString() });
-    const { ops, calls } = fakeSprites();
+    await insertVersion(t.id, 4, 'ready', { host: 'e2b', sprite_name: 'sbx-e', sprite_url: 'https://8080-sbx-e.e2b.app', host_token: 'tok-e' });
+    const { ops, calls } = fakeHostedOps();
     await expectStatus(setHostedSecrets(db, creator.id, t.id, 'fin', { api_key: 'x' }, ops), 400);
     await expectStatus(setHostedSecrets(db, creator.id, t.id, 'fin', { PORT: '1' }, ops), 400);
     await expectStatus(setHostedSecrets(db, creator.id, t.id, 'fin', { AGENTHUB_MCP_URL: 'x' }, ops), 400);
@@ -406,8 +459,13 @@ describe('代管版本：發布、下架、金鑰', () => {
     await setHostedSecrets(db, creator.id, t.id, 'fin', { API_KEY: 'v2' }, ops);
     const { data } = await db.rpc('get_hosted_mcp_secrets', { p_template_id: t.id, p_mcp_name: 'fin' });
     expect(data).toEqual([{ key: 'API_KEY', value: 'v2' }, { key: 'OTHER', value: 'o' }]);
-    expect(calls.map((c) => c.args[0]).sort()).toEqual(['agenthub-mcp-d', 'agenthub-mcp-d', 'agenthub-mcp-p', 'agenthub-mcp-p']);
-    expect(calls.filter((c) => c.args[0] === 'agenthub-mcp-p').at(-1)!.args[1]).toEqual({
+    const target = (c: { args: unknown[] }) => (c.args[0] as Machine).name;
+    expect(calls.map(target).sort()).toEqual(['agenthub-mcp-d', 'agenthub-mcp-d', 'agenthub-mcp-p', 'agenthub-mcp-p', 'sbx-e', 'sbx-e']);
+    // E2B 版本：帶著自己的機器（含通行證），AGENTHUB_MCP_URL 是沙盒網址
+    const e2b = calls.filter((c) => target(c) === 'sbx-e').at(-1)!;
+    expect(e2b.args[0]).toEqual({ host: 'e2b', name: 'sbx-e', url: 'https://8080-sbx-e.e2b.app', token: 'tok-e' });
+    expect((e2b.args[1] as Record<string, string>).AGENTHUB_MCP_URL).toBe('https://8080-sbx-e.e2b.app/mcp');
+    expect(calls.filter((c) => target(c) === 'agenthub-mcp-p').at(-1)!.args[1]).toEqual({
       API_KEY: 'v2', OTHER: 'o', PORT: '8080',
       AGENTHUB_MCP_URL: 'https://p.sprites.app/mcp', AGENTHUB_PLATFORM_URL: 'https://platform.test',
     });

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
 
@@ -9,8 +9,12 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/hosted-runtime', () => ({
-  createHostedSpriteOps: () => ({
-    provision: async () => { hoisted.calls.push('provision'); return { spriteName: 'agenthub-mcp-fake', spriteUrl: 'https://fake.sprites.app' }; },
+  createHostedOps: () => ({
+    provision: async (v: { host: string }) => {
+      hoisted.calls.push('provision');
+      return { host: v.host, name: 'sbx-fake', url: 'https://8080-sbx-fake.e2b.app', token: 'SECRET-HOST-TOKEN' };
+    },
+    extend: async () => { hoisted.calls.push('extend'); return 'running'; },
     readState: async () => { hoisted.calls.push('readState'); return { phase: 'installing', log: 'pip' }; },
     startService: async () => { hoisted.calls.push('startService'); },
     listTools: async () => [],
@@ -53,6 +57,7 @@ describe('代管 MCP API', () => {
   let templateId: string;
 
   beforeAll(async () => {
+    vi.stubEnv('DEFAULT_RUNTIME_HOST', 'e2b');
     const creator = await seedUser(db);
     const other = await seedUser(db);
     [creatorToken, otherToken] = await Promise.all([tokenFor(creator), tokenFor(other)]);
@@ -63,6 +68,7 @@ describe('代管 MCP API', () => {
     templateId = t.id;
     // 建兩個帳號並登入都要連雲端；全套平行跑時偶爾超過預設的 10 秒
   }, 30_000);
+  afterAll(() => { vi.unstubAllEnvs(); });
 
   it('沒登入：每個路由都 401', async () => {
     const v = { id: templateId, mcp: 'fin', versionId: '00000000-0000-0000-0000-000000000000' };
@@ -109,10 +115,14 @@ describe('代管 MCP API', () => {
     expect('host_token' in deployed).toBe(false);
     expect(hoisted.afterTasks).toHaveLength(1);
     await hoisted.afterTasks[0]();
-    expect(hoisted.calls).toEqual(['provision', 'readState']);
+    // 新版本開在 E2B：部署中每次同步先延長沙盒
+    expect(hoisted.calls).toEqual(['provision', 'extend', 'readState']);
 
     const read = await (await readRoute(req(creatorToken), ctx(vp))).json();
-    expect(read).toMatchObject({ status: 'deploying', sprite_name: `agenthub-mcp-${version.id.replace(/-/g, '').slice(0, 12)}`, log_tail: 'pip' });
+    expect(read).toMatchObject({ status: 'deploying', host: 'e2b', sprite_name: 'sbx-fake', log_tail: 'pip' });
+    // 資料庫裡有 provision 存下的通行證，但不會回給瀏覽器
+    const { data: row } = await db.from('hosted_mcp_versions').select('host_token').eq('id', version.id).single();
+    expect(row!.host_token).toBe('SECRET-HOST-TOKEN');
     expect(JSON.stringify(read)).not.toContain('SECRET-HOST-TOKEN');
     expect(hoisted.calls.at(-1)).toBe('readState');
     expect((await retireRoute(req(creatorToken, 'DELETE'), ctx(vp))).status).toBe(409);

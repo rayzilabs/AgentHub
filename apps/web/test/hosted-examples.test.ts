@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from '../scripts/hosted-mcp';
 import { createTemplate } from '@/lib/services/templates';
-import { cleanupFailed, parseMcpJson, removeOrphanBundles, type HostedSpriteOps } from '@/lib/services/hosted-mcp';
+import { cleanupFailed, parseMcpJson, removeOrphanBundles, type HostedOps } from '@/lib/services/hosted-mcp';
 import { seedUser, testDb } from './helpers';
 
 const examples = fileURLToPath(new URL('../../../docs/creator/examples/', import.meta.url));
@@ -51,16 +51,18 @@ describe('營運腳本 hosted-mcp.ts', () => {
       { version: 2, status: 'failed', sprite_name: 'agenthub-mcp-new', deploy_started_at: new Date().toISOString() },
       { version: 3, status: 'retired', sprite_name: 'agenthub-mcp-leak', deploy_started_at: old },
       { version: 4, status: 'published', sprite_name: 'agenthub-mcp-live', deploy_started_at: old },
+      { version: 5, status: 'failed', host: 'e2b', sprite_name: 'sbx-old', deploy_started_at: old },
     ];
-    const { error } = await db.from('hosted_mcp_versions').insert(rows.map((r) => ({ ...r, template_id: t.id, mcp_name: 'fin', bundle_path: 'x' })));
+    const { error } = await db.from('hosted_mcp_versions').insert(rows.map((r) => ({ host: 'sprite', ...r, template_id: t.id, mcp_name: 'fin', bundle_path: 'x' })));
     if (error) throw error;
     const destroyed: string[] = [];
-    const ops = { destroy: async (name: string) => { destroyed.push(name); } } as unknown as HostedSpriteOps;
+    const ops = { destroy: async (host: string, name: string) => { destroyed.push(`${host}:${name}`); } } as unknown as HostedOps;
     // 測試打正式資料庫：只清這個範本，不碰真實版本
     await cleanupFailed(db, ops, { templateId: t.id });
-    expect(destroyed.sort()).toEqual(['agenthub-mcp-leak', 'agenthub-mcp-old']);
+    // 依版本的執行環境刪除
+    expect(destroyed.sort()).toEqual(['e2b:sbx-old', 'sprite:agenthub-mcp-leak', 'sprite:agenthub-mcp-old']);
     const { data } = await db.from('hosted_mcp_versions').select('version, sprite_name').eq('template_id', t.id).order('version');
-    expect(data!.map((r) => r.sprite_name)).toEqual([null, 'agenthub-mcp-new', null, 'agenthub-mcp-live']);
+    expect(data!.map((r) => r.sprite_name)).toEqual([null, 'agenthub-mcp-new', null, 'agenthub-mcp-live', null]);
   });
 
   it('removeOrphanBundles：刪掉範本已不存在的套件，留下還在的範本的套件', async () => {

@@ -1,6 +1,6 @@
 import { after } from 'next/server';
 import { requireUser } from '@/lib/auth';
-import { createHostedSpriteOps } from '@/lib/hosted-runtime';
+import { createHostedOps } from '@/lib/hosted-runtime';
 import { route } from '@/lib/http';
 import { getVersion, publicVersion, startDeploy, syncVersion } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';
@@ -16,6 +16,6 @@ export const POST = route(async (req: Request, { params }: Ctx) => {
   await getVersion(db, user.id, id, mcp, versionId);
   const version = await startDeploy(db, user.id, versionId);
   // 建立 Sprite、啟動部署腳本後就返回；之後由讀取版本的請求推進
-  after(() => syncVersion(adminDb(), version.id, createHostedSpriteOps()).catch((e) => console.error('[hosted-deploy]', version.id, e)));
+  after(() => syncVersion(adminDb(), version.id, createHostedOps()).catch((e) => console.error('[hosted-deploy]', version.id, e)));
   return publicVersion(version);
 });

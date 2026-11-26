@@ -8,7 +8,14 @@ import { publicJwk, signProjectToken } from '@/lib/platform-tokens';
 import { forwardToCreator, resolveRemoteTarget, toolCallName } from '@/lib/services/remote-mcp';
 import { createProject, deleteOwnProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
-import { seedUser, testDb } from './helpers';
+import { fakeRuntimeHost, seedUser, testDb } from './helpers';
+
+// 閘道對 E2B 版本用的執行環境換成假的（不連真的 E2B）；Sprite 照用真的實作（只取驗證標頭）
+const e2b = vi.hoisted(() => ({ host: null as unknown }));
+vi.mock('@/lib/hosts/e2b', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/hosts/e2b')>()),
+  createE2bHost: () => e2b.host,
+}));
 
 const db = testDb();
 const pem = generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
@@ -74,9 +81,23 @@ describe('forwardToCreator', () => {
 
   it('代管：Authorization 用平台的 Sprites token，創作者通行證只放 X-AgentHub-Token', async () => {
     reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{}}'] };
-    const res = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator-token', undefined, { edgeToken: 'sprites-token' });
+    const res = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator-token', undefined, { edgeHeaders: { authorization: 'Bearer sprites-token' } });
     await res.text();
     expect(seen.at(-1)!.authorization).toBe('Bearer sprites-token');
+    expect(seen.at(-1)!['x-agenthub-token']).toBe('creator-token');
+  });
+
+  it('代管 E2B：不帶 Authorization，改帶沙盒通行證；叫醒的 HEAD 也一樣', async () => {
+    reply = { chunks: ['{"jsonrpc":"2.0","id":1,"result":{}}'] };
+    queue.push({ status: 401, chunks: [] });
+    const res = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator-token', undefined,
+      { edgeHeaders: { 'e2b-traffic-access-token': 'sbx-tok' }, wakeFirst: true, retries: 0, retryDelayMs: 0 });
+    await res.text();
+    for (const h of seen.slice(-2)) {
+      expect(h.authorization).toBeUndefined();
+      expect(h['e2b-traffic-access-token']).toBe('sbx-tok');
+    }
+    expect(seen.at(-2)!['x-agenthub-token']).toBeUndefined();
     expect(seen.at(-1)!['x-agenthub-token']).toBe('creator-token');
   });
 
@@ -111,7 +132,7 @@ describe('forwardToCreator', () => {
     queue.push({ status: 502, chunks: ['waking'] }, { status: 401, chunks: [] });
     const before = methods.length;
     const ok = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator', undefined,
-      { edgeToken: 'sprites', wakeFirst: true, retries: 0, retryDelayMs: 0 });
+      { edgeHeaders: { authorization: 'Bearer sprites' }, wakeFirst: true, retries: 0, retryDelayMs: 0 });
     expect(ok.status).toBe(200);
     await ok.text();
     expect(methods.slice(before)).toEqual(['HEAD', 'HEAD', 'POST']);
@@ -122,7 +143,7 @@ describe('forwardToCreator', () => {
     queue.push({ status: 401, chunks: [] }, { status: 502, chunks: ['crashed'] });
     const mark = methods.length;
     const crashed = await forwardToCreator(request(), '{}', `${base}/mcp`, 'creator', undefined,
-      { edgeToken: 'sprites', wakeFirst: true, retries: 0, retryDelayMs: 0 });
+      { edgeHeaders: { authorization: 'Bearer sprites' }, wakeFirst: true, retries: 0, retryDelayMs: 0 });
     expect(crashed.status).toBe(502);
     await crashed.text();
     expect(methods.slice(mark)).toEqual(['HEAD', 'POST']);
@@ -319,7 +340,7 @@ describe('遠端 MCP 閘道', () => {
   });
 
   /** 代管版本的 sprite_url 指向本機假伺服器；版本被引用時不能刪，測試結束前先刪掉租用專案 */
-  async function hiredHosted() {
+  async function hiredHosted(machine: Record<string, unknown> = { sprite_name: 'agenthub-mcp-t' }) {
     const creator = await seedUser(db);
     const owner = await seedUser(db);
     const t = await createTemplate(db, creator.id, {
@@ -328,7 +349,7 @@ describe('遠端 MCP 閘道', () => {
     });
     const spriteUrl = mcpUrl.slice(0, -'/mcp'.length);
     const { data: v, error } = await db.from('hosted_mcp_versions').insert({
-      template_id: t.id, mcp_name: 'fin', version: 1, status: 'published', bundle_path: 'x', sprite_name: 'agenthub-mcp-t', sprite_url: spriteUrl,
+      template_id: t.id, mcp_name: 'fin', version: 1, status: 'published', bundle_path: 'x', sprite_url: spriteUrl, ...machine,
     }).select('id').single();
     if (error) throw error;
     await publishTemplate(db, creator.id, t.id);
@@ -356,6 +377,89 @@ describe('遠端 MCP 閘道', () => {
       expect(decode(pl)).toMatchObject({ aud: `${h.spriteUrl}/mcp`, sub: h.instanceId, project_id: h.projectId, template_id: h.templateId });
       const { data } = await db.from('mcp_usage').select('tool, ok, creator_id').eq('instance_id', h.instanceId);
       expect(data).toEqual([{ tool: 'rate', ok: true, creator_id: h.creatorId }]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  const E2B_VERSION = { host: 'e2b', sprite_name: 'sbx-gw', host_token: 'sbx-gw-token' };
+
+  it('E2B 代管版本：轉送帶 e2b-traffic-access-token、x-agenthub-token，不帶 authorization', async () => {
+    e2b.host = fakeRuntimeHost('e2b');
+    const h = await hiredHosted(E2B_VERSION);
+    try {
+      const before = received.length;
+      const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET));
+      expect(res.status).toBe(200);
+      await res.text();
+      const sent = received.slice(before);
+      expect(sent.map((r) => r.method)).toEqual(['HEAD', 'POST']);
+      for (const r of sent) {
+        expect(r.headers.authorization).toBeUndefined();
+        expect(r.headers['e2b-traffic-access-token']).toBe('sbx-gw-token');
+      }
+      const pl = (sent[1].headers['x-agenthub-token'] as string).split('.')[1];
+      expect(decode(pl)).toMatchObject({ aud: `${h.spriteUrl}/mcp`, sub: h.instanceId, project_id: h.projectId });
+      // Fly token 不會送到 E2B
+      expect(JSON.stringify(sent.map((r) => r.headers))).not.toContain('sprites-test');
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it('閘道轉送前對 E2B 版本 extend 5 分鐘；extend 丟錯仍轉送', async () => {
+    const host = fakeRuntimeHost('e2b');
+    e2b.host = host;
+    const h = await hiredHosted(E2B_VERSION);
+    try {
+      const token = signProjectToken(h.projectId, SECRET);
+      expect((await call(h.instanceId, 'fin', token)).status).toBe(200);
+      expect(host.extend).toHaveBeenCalledTimes(1);
+      expect(host.extend.mock.calls[0]).toEqual([
+        { host: 'e2b', name: 'sbx-gw', url: h.spriteUrl, token: 'sbx-gw-token' }, 5 * 60_000,
+      ]);
+
+      host.extend.mockRejectedValueOnce(new Error('E2B API 500'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const before = received.length;
+      const res = await call(h.instanceId, 'fin', token);
+      expect(res.status).toBe(200);
+      await res.text();
+      expect(received.length - before).toBe(2);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it('extend 回 gone：回 503「這個工具服務暫時無法使用」並 console.error 版本 id', async () => {
+    const host = fakeRuntimeHost('e2b');
+    host.extend.mockResolvedValue('gone');
+    e2b.host = host;
+    const h = await hiredHosted(E2B_VERSION);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const before = received.length;
+      const res = await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET));
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: '這個工具服務暫時無法使用' });
+      expect(received.length).toBe(before);
+      expect(error.mock.calls.some((c) => c.join(' ').includes(h.versionId))).toBe(true);
+    } finally {
+      error.mockRestore();
+      await h.cleanup();
+    }
+  });
+
+  it('代管 Sprite 版本不呼叫 E2B', async () => {
+    const host = fakeRuntimeHost('e2b');
+    e2b.host = host;
+    const h = await hiredHosted();
+    try {
+      await (await call(h.instanceId, 'fin', signProjectToken(h.projectId, SECRET))).text();
+      expect(host.extend).not.toHaveBeenCalled();
+      expect(received.at(-1)!.headers['e2b-traffic-access-token']).toBeUndefined();
     } finally {
       await h.cleanup();
     }
