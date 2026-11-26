@@ -161,26 +161,40 @@ describe('exec / writeFile', () => {
 });
 
 describe('服務', () => {
-  it('startService：腳本不存在才安裝、停舊的、再以背景與 timeoutMs 0 啟動', async () => {
+  const cmds = (run: ReturnType<typeof vi.fn>) => run.mock.calls.map((c) => c[0] as string);
+
+  it('startService：每次安裝腳本（內容不同才替換）、先停舊的、再以 setsid -f 背景啟動並等 pid 檔', async () => {
     const { run, host } = setup();
-    run.mockImplementation(async (cmd: string) => {
-      if (cmd.startsWith('test -x')) throw new CommandExitError({ stdout: '', stderr: '', exitCode: 1, error: 'x' });
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
     await host.startService(machine, { name: 'runtime', cmd: 'node', args: ['main.js', "it's"] });
-    const cmds = run.mock.calls.map((c) => c[0] as string);
-    expect(cmds[1]).toContain('/usr/local/bin/agenthub-svc');
-    expect(cmds[1]).toContain(E2B_SERVICE_SCRIPT);
-    expect(run.mock.calls[1][1]).toEqual({ user: 'root' });
-    expect(cmds[2]).toContain('/run/agenthub/runtime.pid');
-    expect(cmds[3]).toBe(`sudo -n setsid agenthub-svc 'runtime' 'node' 'main.js' 'it'\\''s'`);
-    expect(run.mock.calls[3][1]).toEqual({ background: true, timeoutMs: 0 });
+    const c = cmds(run);
+    expect(c).toHaveLength(4);
+    expect(c[0]).toContain(E2B_SERVICE_SCRIPT);
+    expect(c[0]).toContain('cmp -s /usr/local/bin/agenthub-svc.new /usr/local/bin/agenthub-svc');
+    expect(c[0]).toContain('mv -f');
+    expect(c[0]).toContain('chmod 755');
+    expect(run.mock.calls[0][1]).toEqual({ user: 'root' });
+    expect(c[1]).toBe(`sudo -n agenthub-svc --stop 'runtime'`);
+    expect(c[2]).toBe(`sudo -n setsid -f agenthub-svc 'runtime' 'node' 'main.js' 'it'\\''s'`);
+    expect(run.mock.calls[2][1]).toEqual({ background: true, timeoutMs: 0 });
+    expect(c[3]).toContain('/run/agenthub/runtime.pid');
   });
 
-  it('startService：腳本已存在就不再安裝', async () => {
+  it('stop 失敗（找不到程序群組）要丟錯，不啟動新的', async () => {
     const { run, host } = setup();
-    await host.startService(machine, { name: 'runtime', cmd: 'node', args: [] });
-    expect(run.mock.calls.map((c) => c[0] as string).some((c) => c.includes('AGENTHUB_SVC_EOF'))).toBe(false);
+    run.mockImplementation(async (cmd: string) => {
+      if (cmd.includes('--stop')) throw new CommandExitError({ stdout: '', stderr: '停不掉服務', exitCode: 1, error: 'x' });
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    await expect(host.startService(machine, { name: 'runtime', cmd: 'node', args: [] })).rejects.toThrow('停不掉服務');
+    expect(cmds(run).some((c) => c.includes('setsid -f'))).toBe(false);
+  });
+
+  it('服務腳本：以群組領頭記 pid、停止會等待並升級成 KILL、降權成 user 執行', () => {
+    expect(E2B_SERVICE_SCRIPT).toContain('echo $$ > "/run/agenthub/$name.pid"');
+    expect(E2B_SERVICE_SCRIPT).toContain('kill -TERM -- "-$pid" ||');
+    expect(E2B_SERVICE_SCRIPT).toContain('kill -KILL -- "-$pid"');
+    expect(E2B_SERVICE_SCRIPT).toContain('sudo -n -u user -H -- "$@"');
+    expect(E2B_SERVICE_SCRIPT).toContain(`printf '%s\\0'`);
   });
 
   it('startService 拒絕不合法的服務名稱', async () => {
@@ -202,12 +216,13 @@ describe('服務', () => {
     await expect(host.hasService(machine, 'runtime')).resolves.toBe(false);
   });
 
-  it('restartService 先停再用記下的參數背景啟動；沒啟動過就丟錯', async () => {
+  it('restartService：先 --stop，再以 setsid -f 呼叫 --restart（不經 xargs）；沒啟動過就丟錯', async () => {
     const { run, host } = setup();
     await host.restartService(machine, 'runtime');
-    const last = run.mock.calls.at(-1)!;
-    expect(last[0]).toContain('xargs -0 -a /var/lib/agenthub/svc/runtime.args agenthub-svc');
-    expect(last[1]).toEqual({ background: true, timeoutMs: 0 });
+    const c = cmds(run);
+    expect(c[1]).toBe(`sudo -n agenthub-svc --stop 'runtime'`);
+    expect(c[2]).toBe(`sudo -n setsid -f agenthub-svc '--restart' 'runtime'`);
+    expect(run.mock.calls[2][1]).toEqual({ background: true, timeoutMs: 0 });
     run.mockRejectedValue(new CommandExitError({ stdout: '', stderr: '', exitCode: 1, error: 'x' }));
     await expect(host.restartService(machine, 'runtime')).rejects.toThrow('尚未啟動');
   });
