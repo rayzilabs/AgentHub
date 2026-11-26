@@ -4,9 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 
 // 組織端到端驗證：admin 建組織 → helper 經 admin 邀請加入 → helper 邀 member、member 接受、admin 核准
 // → member 建組織範本並上架 → 局外人看不到 → member 建專案、租用、對話 → admin 移出 member 後對話回 409
-// → admin 重新邀請、member 接受 → 對話恢復。結束時刪掉專案（含 Sprite）、範本、組織與測試帳號。
+// → admin 重新邀請、member 接受 → 對話恢復。結束時刪掉專案（含機器，Sprite 或 E2B）、範本、組織與測試帳號。
 // 用法：BASE_URL=https://… pnpm exec tsx scripts/e2e-orgs.ts（預設正式站）
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
+const { loadProjectMachine } = await import('@/lib/hosts');
 const BASE = process.env.BASE_URL ?? 'https://agenthub-kappa-pink.vercel.app';
 const url = process.env.SUPABASE_URL!;
 const db = createClient(url, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } });
@@ -142,13 +143,14 @@ try {
   const again = await chat('歡迎回來，請再打個招呼。');
   record('重新加入後送訊息成功', again.status === 200 && 'reply' in again && !!again.reply && !again.error, JSON.stringify(again));
 } finally {
-  // 中途失敗時照樣清乾淨：刪專案會先刪 Sprite；刪不掉就印出來，避免刪掉使用者後找不到它
+  // 中途失敗時照樣清乾淨：刪專案會先刪機器；刪不掉就印出機器，避免刪掉使用者後找不到它
   let projectLeft = false;
   if (projectId && memberUser) {
+    const m = await loadProjectMachine(db, projectId).catch(() => null);
     const res = await fetch(`${BASE}/api/projects/${projectId}`, { method: 'DELETE', headers: memberUser.headers }).catch((e: unknown) => e);
     if (!(res instanceof Response && res.ok)) {
       projectLeft = true;
-      console.error(`⚠ 刪除專案失敗，測試使用者與組織先保留。請用 ${memberUser.email}（${memberUser.id}）重試 DELETE /api/projects/${projectId}，並確認 Sprite agenthub-${projectId} 已刪；組織 ${orgId ?? '-'}`);
+      console.error(`⚠ 刪除專案失敗，測試使用者與組織先保留。請用 ${memberUser.email}（${memberUser.id}）重試 DELETE /api/projects/${projectId}，並確認機器（${m ? `${m.host} ${m.name}` : `claim agenthub-${projectId}`}）已刪；組織 ${orgId ?? '-'}`);
     }
   }
   if (templateId) {

@@ -1,6 +1,6 @@
 // 用法：cd apps/web && pnpm exec tsx scripts/hosted-mcp.ts <指令>
 //   disable <版本 id>   停用代管 MCP 版本：停掉程式、狀態改 disabled，閘道回 503（濫用或費用異常時）
-//   cleanup-failed      刪除失敗超過 24 小時的代管 Sprite，以及下架後沒刪成功的 Sprite
+//   cleanup-failed      刪除失敗超過 24 小時的代管機器（Sprite／E2B），以及下架後沒刪成功的機器
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Db } from '@/lib/supabase/admin';
 
@@ -14,19 +14,24 @@ export function parseArgs(argv: string[]): { cmd: 'disable'; id: string } | { cm
 }
 
 async function disable(db: Db, id: string): Promise<void> {
-  const { SpritesClient } = await import('@fly/sprites');
-  const { env } = await import('@/lib/env');
+  const { hostFor, versionMachine } = await import('@/lib/hosts');
   const { data: v, error } = await db.from('hosted_mcp_versions').update({ status: 'disabled' }).eq('id', id)
-    .select('sprite_name').maybeSingle();
+    .select('host, sprite_name, sprite_url, host_token').maybeSingle();
   if (error) throw error;
   if (!v) throw new Error(`找不到版本 ${id}`);
   console.log(`已停用 ${id}，閘道之後回 503`);
-  if (v.sprite_name) {
-    const sprite = await new SpritesClient(env.spritesToken).getSprite(v.sprite_name);
-    const logs = await sprite.stopService('mcp');
+  const m = versionMachine(v);
+  if (!m) return;
+  if (m.host === 'sprite') {
+    const { SpritesClient } = await import('@fly/sprites');
+    const { env } = await import('@/lib/env');
+    const logs = await (await new SpritesClient(env.spritesToken).getSprite(m.name)).stopService('mcp');
     await logs.processAll(() => {});
-    console.log(`已停止 ${v.sprite_name} 的 mcp 服務`);
+  } else {
+    // E2B 的服務由 agenthub-svc 迴圈看守（見 lib/hosts/e2b.ts），--stop 停掉整個程序群組且不再重啟
+    await hostFor('e2b').exec(m, 'sudo -n agenthub-svc --stop mcp');
   }
+  console.log(`已停止 ${m.host} ${m.name} 的 mcp 服務`);
 }
 
 async function main(): Promise<void> {
@@ -40,7 +45,7 @@ async function main(): Promise<void> {
     const { createHostedOps } = await import('@/lib/hosted-runtime');
     const { cleanupFailed } = await import('@/lib/services/hosted-mcp');
     const done = await cleanupFailed(db, createHostedOps());
-    console.log(done.length ? `已刪除：${done.join(', ')}` : '沒有需要清理的 Sprite');
+    console.log(done.length ? `已刪除：${done.join(', ')}` : '沒有需要清理的機器');
   }
 }
 

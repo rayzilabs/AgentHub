@@ -1,46 +1,59 @@
-// 用法：cd apps/web && pnpm exec tsx scripts/probe-sandbox.ts main-<sha>.js
-// 建一台暫時的 Sprite，照正式流程佈建（含舊版工作區搬移），以 agent 帳號逐項嘗試拿平台金鑰；
-// 全部擋下且功能正常才算通過。結束時一定刪除這台 Sprite。
+// 用法：cd apps/web && pnpm exec tsx scripts/probe-sandbox.ts [--host sprite|e2b] [main-<sha>.js]
+// 在指定的執行環境（預設 E2B）建一台暫時的機器，照正式流程佈建（含舊版工作區搬移），以沙盒帳號逐項嘗試拿平台金鑰、
+// 越權到其他帳號；全部擋下且功能正常才算通過。runtime 物件未指定時用新專案預設的 main.js。結束時一定刪除這台機器。
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { SpritesClient, type Sprite } from '@fly/sprites';
+import type { HostName, Machine } from '@/lib/hosts/types';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('@/lib/supabase/admin');
-const { createSpriteHost } = await import('@/lib/hosts/sprite');
-const { installRuntime, SANDBOX_ADDUSER, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/project-runtime');
+const { env } = await import('@/lib/env');
+const { hostFor } = await import('@/lib/hosts');
+const { errorText } = await import('@/lib/hosts/sprite');
+const { installRuntime, RUNTIME_OBJECT, SANDBOX_ADDUSER, SANDBOX_WRAPPER, shellQuote, WORKSPACE } = await import('@/lib/project-runtime');
 
-const runtimeObject = process.argv[2];
-if (!runtimeObject) throw new Error('請指定 runtime 物件名稱，例如 main-abc1234.js');
+function parseArgs(argv: string[]): { hostName: HostName; runtimeObject: string } {
+  const i = argv.indexOf('--host');
+  const hostName = i < 0 ? 'e2b' : argv[i + 1];
+  if (hostName !== 'sprite' && hostName !== 'e2b') throw new Error('--host 只能是 sprite 或 e2b');
+  const rest = i < 0 ? argv : [...argv.slice(0, i), ...argv.slice(i + 2)];
+  return { hostName, runtimeObject: rest[0] ?? RUNTIME_OBJECT };
+}
 
+const { hostName, runtimeObject } = parseArgs(process.argv.slice(2));
+const host = hostFor(hostName);
 const projectId = randomUUID();
-const name = `agenthub-probe-${projectId.slice(0, 8)}`;
-const token = process.env.FLY_SPRITES_TOKEN!;
-const client = new SpritesClient(token);
+/** 機器的 claim：Sprite 用它當名稱，E2B 寫進 metadata；刪除時用它找回這次建立的全部機器 */
+const claim = `agenthub-probe-${projectId.slice(0, 8)}`;
 const results: { check: string; pass: boolean; detail: string }[] = [];
 const record = (check: string, pass: boolean, detail: string) => results.push({ check, pass, detail: detail.slice(0, 300) });
+console.log(`執行環境：${hostName}；runtime：${runtimeObject}；claim：${claim}`);
 
 /** Sprite 的 ~/.bashrc 在非互動 shell 會印 bind 警告，混進輸出會讓比對失準；濾掉 */
 const clean = (s: string) => s.split('\n').filter((l) => !/\.bashrc: line \d+: bind: warning/.test(l)).join('\n').trim();
 
-async function sh(sprite: Sprite, cmd: string): Promise<{ code: number; out: string }> {
+let machine: Machine | null = null;
+const RC = '__probe_rc=';
+/** 以 runtime 帳號執行；結束碼與 stderr 都從輸出帶回（兩家 exec 在非 0 結束時丟的錯誤格式不同） */
+async function sh(cmd: string): Promise<{ code: number; out: string }> {
   try {
-    const r = await sprite.execFile('bash', ['-lc', cmd]);
-    return { code: 0, out: clean(`${r.stdout ?? ''}${r.stderr ?? ''}`) };
+    const raw = await host.exec(machine!, `bash -lc ${shellQuote(cmd)} 2>&1; echo "${RC}$?"`, { timeoutMs: 600_000 });
+    const at = raw.lastIndexOf(RC);
+    if (at < 0) return { code: 1, out: clean(raw) };
+    return { code: Number(raw.slice(at + RC.length).trim()), out: clean(raw.slice(0, at)) };
   } catch (e) {
-    const err = e as { exitCode?: number; stdout?: unknown; stderr?: unknown; message?: string };
-    return { code: err.exitCode ?? 1, out: clean(`${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`) };
+    return { code: 1, out: errorText(e) };
   }
 }
 // 與 runtime 的 sandbox.ts 相同的執行路徑：root 開獨立掛載命名空間 → 沙盒腳本蓋掉內部 API → 降權成 agent
 const sandboxPrefix = () => `SANDBOX_PATH="$PATH" sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} agent`;
 const asAgent = (cmd: string) => `${sandboxPrefix()} bash -c ${JSON.stringify(cmd)}`;
 
-async function health(url: string): Promise<string> {
+async function health(m: Machine): Promise<string> {
   const deadline = Date.now() + 60_000;
   let last = '';
   while (Date.now() < deadline) {
-    last = await fetch(`${url}/health`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) })
+    last = await fetch(`${m.url}/health`, { headers: host.edgeHeaders(m), signal: AbortSignal.timeout(5000) })
       .then(async (r) => `${r.status} ${await r.text()}`)
       .catch((e: Error) => e.message);
     if (last.includes(projectId)) return last;
@@ -50,44 +63,58 @@ async function health(url: string): Promise<string> {
 }
 
 try {
-  const sprite = await client.createSprite(name, { urlSettings: { auth: 'sprite' } });
-  // 家目錄單獨一行輸出，不會跟 .bashrc 的警告黏在同一行
-  const base = `${(await sh(sprite, 'printf "%s\\n" "$HOME"')).out.split('\n')[0]}/agenthub`;
-
-  await installRuntime(adminDb(), createSpriteHost(), { host: 'sprite', name, url: sprite.url!, token: null }, projectId, runtimeObject);
+  machine = await host.create(claim, 'project');
+  const m = machine;
+  console.log(`已建立 ${m.name}`);
+  // installRuntime 以 host.writeFile 寫 <base>/.env（絕對路徑），下面以 cat 讀回確認寫在正確位置
+  const base = await installRuntime(adminDb(), host, m, projectId, runtimeObject);
 
   const leak = /SUPABASE|VERTEX|sb_secret/;
+  // 平台持有的金鑰本身也不能出現在沙盒看得到的任何地方（這些值從沒送進機器，只在本機比對）
+  const platformSecrets = [env.spritesToken, env.e2bApiKey, process.env.SUPABASE_SECRET_KEY].filter((s): s is string => !!s);
+  const leaked = (out: string) => leak.test(out) || platformSecrets.some((s) => out.includes(s));
   const mustNotLeak = async (check: string, cmd: string) => {
-    const r = await sh(sprite, asAgent(cmd));
-    record(check, r.code !== 0 || !leak.test(r.out), r.out);
+    const r = await sh(asAgent(cmd));
+    record(check, r.code !== 0 || !leaked(r.out), r.out);
   };
 
-  record('runtime 服務起得來（含沙盒帳號啟動檢查）', (await health(sprite.url!)).includes(projectId), await health(sprite.url!));
+  const up = await health(m);
+  record('runtime 服務起得來（含沙盒帳號啟動檢查）', up.includes(projectId), up);
   // 子專案 1-C：.env 本身就不該有平台金鑰（資料庫用 runtime 帳號通行證、模型走平台代理）
-  const envFile = await sh(sprite, `cat '${base}/.env'`);
-  record('.env 不含平台金鑰', envFile.code === 0 && !/sb_secret_|SUPABASE_SECRET_KEY|VERTEX/.test(envFile.out), envFile.out.replace(/=.*/g, '=…'));
+  const envFile = await sh(`ls -l '${base}/.env' && cat '${base}/.env'`);
+  console.log(`${base}/.env 讀回：\n${envFile.out.replace(/=.*/g, '=…')}\n含本次專案 id：${envFile.out.includes(`PROJECT_ID="${projectId}"`)}`);
+  record(
+    '.env 寫在 runtime 目錄（絕對路徑）、不含平台金鑰',
+    envFile.code === 0 && envFile.out.includes(`PROJECT_ID="${projectId}"`) && !/sb_secret_|SUPABASE_SECRET_KEY|VERTEX/.test(envFile.out)
+      && !platformSecrets.some((s) => envFile.out.includes(s)),
+    envFile.out.replace(/=.*/g, '=…'),
+  );
   await mustNotLeak('env 看不到平台金鑰', 'env');
   await mustNotLeak('讀不到 .env', `cat '${base}/.env'`);
   await mustNotLeak('symlink 指向 .env 也讀不到', `ln -sf '${base}/.env' ${WORKSPACE}/shared/link && cat ${WORKSPACE}/shared/link`);
-  await mustNotLeak('讀不到 runtime 的 /proc environ', 'for p in $(pgrep node); do cat /proc/$p/environ 2>/dev/null | tr "\\0" "\\n"; done');
-  const sudo = await sh(sprite, asAgent('sudo -n true'));
+  await mustNotLeak('讀不到 runtime 的 /proc environ', 'for p in $(pgrep node); do cat /proc/$p/environ 2>/dev/null | tr "\0" "\n"; done');
+  const sudo = await sh(asAgent('sudo -n true'));
   record('agent 不能 sudo', sudo.code !== 0, sudo.out);
   const sockCmd = 'curl -sf --max-time 3 --unix-socket /.sprite/api.sock http://sprite/v1/tasks';
-  const sock = await sh(sprite, asAgent(sockCmd));
-  record('agent 碰不到 /.sprite/api.sock（它能建立以 runtime 帳號執行的服務）', sock.code !== 0, sock.out);
+  if (hostName === 'sprite') {
+    const sock = await sh(asAgent(sockCmd));
+    record('agent 碰不到 /.sprite/api.sock（它能建立以 runtime 帳號執行的服務）', sock.code !== 0, sock.out);
+  }
   // 不只檢查 /.sprite/api.sock：找出沙盒看得到的每個 Unix socket，逐一試著呼叫內部 API
-  const anySock = await sh(sprite, asAgent(
-    'for s in $(find / \\( -path /proc -o -path /sys \\) -prune -o -type s -print 2>/dev/null); do ' +
+  const anySock = await sh(asAgent(
+    'for s in $(find / \( -path /proc -o -path /sys \) -prune -o -type s -print 2>/dev/null); do ' +
     'c=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 --unix-socket "$s" http://sprite/v1/tasks 2>/dev/null); ' +
     'echo "$s $c"; done',
   ));
   record('沙盒看得到的 socket 都連不上內部 API', !/ 2\d\d$/m.test(anySock.out), anySock.out);
-  const sockRuntime = await sh(sprite, sockCmd);
-  record('runtime 帳號仍然能用 /.sprite/api.sock（保持喚醒需要）', sockRuntime.code === 0, sockRuntime.out);
+  if (hostName === 'sprite') {
+    const sockRuntime = await sh(sockCmd);
+    record('runtime 帳號仍然能用 /.sprite/api.sock（保持喚醒需要）', sockRuntime.code === 0, sockRuntime.out);
+  }
 
-  const tools = await sh(sprite, asAgent('command -v node && command -v python3'));
+  const tools = await sh(asAgent('command -v node && command -v python3'));
   record('沙盒裡找得到 node 與 python3', tools.code === 0, tools.out);
-  const write = await sh(sprite, [
+  const write = await sh([
     // runtime 程序的 umask 是 002（main.ts），這裡比照
     `umask 002 && echo r > ${WORKSPACE}/shared/from-runtime`,
     asAgent(`echo a >> ${WORKSPACE}/shared/from-runtime && echo b > ${WORKSPACE}/shared/from-agent`),
@@ -95,7 +122,7 @@ try {
   ].join(' && '));
   record('runtime 與 agent 都能讀寫工作區', write.code === 0, write.out);
 
-  const kill = await sh(sprite, [
+  const kill = await sh([
     `setsid ${sandboxPrefix()} bash -c 'sleep 300 & sleep 300' &`,
     'pid=$!; sleep 1',
     'sudo -n -u agent -- kill -KILL -- -$pid; sleep 1',
@@ -106,7 +133,7 @@ try {
 
   // ---- 子專案 2：顧問之間隔離（兩位顧問 A、B，主管是 agent）----
   const userOf = (id: string) => `agent-${id.replace(/-/g, '').slice(0, 12)}`;
-  const adduser = (u: string, d: string) => sh(sprite, `sudo -n ${SANDBOX_ADDUSER} ${u} ${d}`);
+  const adduser = (u: string, d: string) => sh(`sudo -n ${SANDBOX_ADDUSER} ${u} ${d}`);
   const asUser = (u: string, cmd: string) =>
     `SANDBOX_PATH="$PATH" sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} ${u} bash -c ${JSON.stringify(cmd)}`;
   const idA = randomUUID();
@@ -120,10 +147,10 @@ try {
   }
   // runtime 同步 skill（runtime 的 umask 是 002）
   const skillsA = `${WORKSPACE}/skills/${idA}`;
-  await sh(sprite, `umask 002 && mkdir -p ${skillsA}/s && echo MARK-SOP-A > ${skillsA}/s/SKILL.md`);
-  const sk = await sh(sprite, asUser(A, `mkdir ${skillsA}/evil || mv ${skillsA}/s ${skillsA}/t`));
+  await sh(`umask 002 && mkdir -p ${skillsA}/s && echo MARK-SOP-A > ${skillsA}/s/SKILL.md`);
+  const sk = await sh(asUser(A, `mkdir ${skillsA}/evil || mv ${skillsA}/s ${skillsA}/t`));
   record('顧問 A 不能在自己的 skills 目錄建立或改名項目（runtime 解壓時無法被換成 symlink）', sk.code !== 0, sk.out);
-  const aw = await sh(sprite, asUser(A, [
+  const aw = await sh(asUser(A, [
     `echo MARK-WORK-A > ${dirA}/work.txt`,
     'echo MARK-TMP-A > /tmp/a.txt',
     'echo MARK-VARTMP-A > /var/tmp/a.txt',
@@ -131,7 +158,7 @@ try {
     `echo shared-a > ${WORKSPACE}/shared/from-a.txt`,
   ].join(' && ')));
   record('顧問 A 能寫自己的目錄、/tmp、/var/tmp、/dev/shm、/shared', aw.code === 0, aw.out);
-  const ar = await sh(sprite, asUser(A, `cat ${skillsA}/s/SKILL.md`));
+  const ar = await sh(asUser(A, `cat ${skillsA}/s/SKILL.md`));
   record('顧問 A 讀得到自己的 skill', ar.code === 0 && ar.out.trim() === 'MARK-SOP-A', JSON.stringify(ar));
   for (const [label, cmd] of [
     ['B 讀不到 A 的 skill', `cat ${skillsA}/s/SKILL.md`],
@@ -141,16 +168,16 @@ try {
     ['B 的 /var/tmp 裡沒有 A 的檔案', 'cat /var/tmp/a.txt'],
     ['B 的 /dev/shm 裡沒有 A 的檔案', 'cat /dev/shm/a.txt'],
   ] as const) {
-    const r = await sh(sprite, asUser(B, cmd));
+    const r = await sh(asUser(B, cmd));
     record(label, r.code !== 0 && !r.out.includes('MARK-'), r.out);
   }
-  const mgr = await sh(sprite, asUser('agent', `cat ${dirA}/work.txt`));
+  const mgr = await sh(asUser('agent', `cat ${dirA}/work.txt`));
   record('主管讀不到顧問的工作檔', mgr.code !== 0, mgr.out);
-  const shared = await sh(sprite, asUser(B, `cat ${WORKSPACE}/shared/from-a.txt && echo b >> ${WORKSPACE}/shared/from-a.txt`));
+  const shared = await sh(asUser(B, `cat ${WORKSPACE}/shared/from-a.txt && echo b >> ${WORKSPACE}/shared/from-a.txt`));
   record('B 讀得到也改得了 A 放在 /shared 的檔案', shared.code === 0 && shared.out.startsWith('shared-a'), shared.out);
-  const mk = await sh(sprite, asUser(B, `mkdir ${WORKSPACE}/agents/${randomUUID()}`));
+  const mk = await sh(asUser(B, `mkdir ${WORKSPACE}/agents/${randomUUID()}`));
   record('顧問不能在 /workspace/agents 建立項目', mk.code !== 0, mk.out);
-  const killA = await sh(sprite, [
+  const killA = await sh([
     `setsid ${asUser(A, 'sleep 300')} &`,
     'pid=$!; sleep 1',
     'echo "pgid=$pid"; ps -eo user,pid,pgid,stat,cmd | grep -E "[s]leep 300|[s]udo -n -E"',
@@ -168,19 +195,43 @@ try {
     ['adduser 拒絕多行目錄參數', `${A} "$(printf '%s\\n%s' ${dirA} /etc)"`],
     ['adduser 拒絕多行帳號參數', `"$(printf '%s\\n%s' ${A} root)" ${dirA}`],
   ] as const) {
-    const r = await sh(sprite, `sudo -n ${SANDBOX_ADDUSER} ${args}`);
+    const r = await sh(`sudo -n ${SANDBOX_ADDUSER} ${args}`);
     record(label, r.code !== 0, r.out);
   }
-  const badUser = await sh(sprite, `sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} root true`);
+  const badUser = await sh(`sudo -n -E -- unshare --mount --propagation private -- ${SANDBOX_WRAPPER} root true`);
   record('沙盒腳本拒絕 root 帳號', badUser.code !== 0, badUser.out);
   // 1-A 時期的顧問目錄：workspace 群組、裡面有 agent 擁有的檔案 → 轉換後主管讀不到、該顧問讀得到
   const idOld = randomUUID();
   const dirOld = `${WORKSPACE}/agents/${idOld}`;
-  await sh(sprite, `sudo mkdir ${dirOld} && sudo chown "$(id -un)":workspace ${dirOld} && sudo chmod 2770 ${dirOld} && echo old | sudo -u agent tee ${dirOld}/old.txt >/dev/null`);
+  await sh(`sudo mkdir ${dirOld} && sudo chown "$(id -un)":workspace ${dirOld} && sudo chmod 2770 ${dirOld} && echo old | sudo -u agent tee ${dirOld}/old.txt >/dev/null`);
   const conv = await adduser(userOf(idOld), dirOld);
-  const oldMgr = await sh(sprite, asUser('agent', `cat ${dirOld}/old.txt`));
-  const oldOwner = await sh(sprite, asUser(userOf(idOld), `cat ${dirOld}/old.txt`));
+  const oldMgr = await sh(asUser('agent', `cat ${dirOld}/old.txt`));
+  const oldOwner = await sh(asUser(userOf(idOld), `cat ${dirOld}/old.txt`));
   record('1-A 時期的目錄轉成顧問群組：主管讀不到、該顧問讀得到', conv.code === 0 && oldMgr.code !== 0 && oldOwner.out.trim() === 'old', `${conv.out} | ${oldMgr.out} | ${oldOwner.out}`);
+
+  // ---- 顧問帳號不能經機器上的其他管道切換成別的帳號 ----
+  const runtimeUser = (await sh('id -un')).out.split('\n').at(-1)!;
+  for (const target of [runtimeUser, 'root', B]) {
+    // 帳號若是空密碼，su 不經 PAM 提示就會成功；沒有 tty 時 su 會失敗，結果一樣是登入不了
+    const su = await sh(asUser(A, `su ${target} -c id </dev/null`));
+    record(`顧問帳號不能 su 成 ${target === runtimeUser ? `runtime 帳號 ${target}` : target}`, su.code !== 0 && !/uid=/.test(su.out), su.out);
+  }
+  if (hostName === 'e2b') {
+    // envd（E2B 在 VM 裡的管理程式，以 root 執行、聽 49983）：沒有 access token 就不能啟動程序
+    const mark = `/var/lib/agenthub/envd-probe-${randomUUID().slice(0, 8)}`;
+    const body = JSON.stringify({ process: { cmd: '/bin/sh', args: ['-c', `id > ${mark}`] } });
+    const envd = await sh(asUser(A, [
+      'curl -sS -m 5 -o /dev/null -w "health=%{http_code}\n" http://127.0.0.1:49983/health',
+      `curl -sS -m 5 -o /dev/null -w "start=%{http_code}\n" -u root: -H "Content-Type: application/json" -H "Connect-Protocol-Version: 1" -d '${body}' http://127.0.0.1:49983/process.Process/Start`,
+    ].join('; ')));
+    const ran = await sh(`sudo -n test -e ${mark} && echo created || echo absent`);
+    record('顧問帳號呼叫 envd 啟動程序被拒（401）', envd.out.includes('start=401') && ran.out.includes('absent'), `${envd.out} | ${ran.out}`);
+    // 沙盒內的 sshd 聽 22 埠：顧問帳號沒有金鑰，對方帳號也不能是空密碼
+    for (const target of [runtimeUser, 'root', B]) {
+      const ssh = await sh(asUser(A, `ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 ${target}@127.0.0.1 id </dev/null`));
+      record(`顧問帳號無法經 sshd 登入 ${target}（ssh -o BatchMode=yes 失敗）`, ssh.code !== 0 && !/uid=/.test(ssh.out), ssh.out);
+    }
+  }
 
   // ---- 雲端資料夾同步到 /shared：寫入以沙盒帳號 agent 執行，資料夾被換成 symlink 也寫不進顧問的私人目錄 ----
   // 與 packages/runtime/src/sync.ts 的 WRITE_SCRIPT 相同，改的時候兩邊一起改
@@ -200,23 +251,23 @@ try {
     const dirs = segs.slice(1).map((_, i) => segs.slice(0, i + 1).join('/'));
     const argv = ['-n', '-E', '--', 'unshare', '--mount', '--propagation', 'private', '--', SANDBOX_WRAPPER, 'agent', 'timeout', '-k', '5', '120', 'bash', '-c', SYNC_WRITE_SCRIPT, 'sync', file, ...dirs];
     const js = `const c=require('node:child_process').spawn('sudo',${JSON.stringify(argv)},{cwd:${JSON.stringify(`${WORKSPACE}/shared`)},env:{PATH:process.env.PATH,SANDBOX_PATH:process.env.PATH,HOME:'/home/agent'}});let o='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>o+=d);c.on('close',k=>console.log(o+'exit='+k));c.stdin.end(${JSON.stringify(content)});`;
-    return sh(sprite, `echo ${Buffer.from(js).toString('base64')} | base64 -d > /tmp/probe-sync.js && node /tmp/probe-sync.js; rm -f /tmp/probe-sync.js`);
+    return sh(`echo ${Buffer.from(js).toString('base64')} | base64 -d > /tmp/probe-sync.js && node /tmp/probe-sync.js; rm -f /tmp/probe-sync.js`);
   };
   const syncDir = `${WORKSPACE}/shared/我上傳的`;
   const first = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-1');
   // 先寫暫存檔（mktemp 建立的是 600）再改名：權限要改回跟直接建立的一樣，其他顧問才讀得到
-  const perm = await sh(sprite, `stat -c '%U:%G %a' '${syncDir}/brief.md'; ls -A '${syncDir}'`);
+  const perm = await sh(`stat -c '%U:%G %a' '${syncDir}/brief.md'; ls -A '${syncDir}'`);
   // 內容沒有結尾換行，不補 echo 的話 .bashrc 警告會接在同一行，被 clean 整行濾掉
-  const permB = await sh(sprite, asUser(B, `cat '${syncDir}/brief.md'; echo`));
+  const permB = await sh(asUser(B, `cat '${syncDir}/brief.md'; echo`));
   record(
     '同步寫入的檔案是 agent:workspace 664、不留暫存檔，其他顧問讀得到',
     perm.out.includes('agent:workspace 664') && !perm.out.includes('.agenthub-sync.') && permB.out.includes('MARK-SYNC-1'),
     `${perm.out} | ${permB.out}`,
   );
   // 顧問把同步下來的資料夾換成指向顧問 A 私人目錄的 symlink，下一次同步時 runtime 照樣寫入（上層不是真資料夾就重寫）
-  const swap = await sh(sprite, `sudo -n rm -rf '${syncDir}' && sudo -n ln -s ${dirA} '${syncDir}' && [ -L '${syncDir}' ] && echo swapped`);
+  const swap = await sh(`sudo -n rm -rf '${syncDir}' && sudo -n ln -s ${dirA} '${syncDir}' && [ -L '${syncDir}' ] && echo swapped`);
   const second = await syncWrite('我上傳的/brief.md', 'MARK-SYNC-2');
-  const restored = await sh(sprite, [
+  const restored = await sh([
     `[ -L '${syncDir}' ] && echo still-link`,
     `[ -d '${syncDir}' ] && [ ! -L '${syncDir}' ] && echo real-dir`,
     `sudo -n cat '${syncDir}/brief.md'; echo`,
@@ -230,16 +281,16 @@ try {
   );
   // 不經過還原邏輯、直接跟著 symlink 寫：沙盒帳號本身就沒有顧問 A 目錄的寫入權限
   const linkDir = `${WORKSPACE}/shared/probe-link-a`;
-  const link = await sh(sprite, `sudo -n ln -sfn ${dirA} ${linkDir} && [ -L ${linkDir} ] && echo linked`);
-  const through = await sh(sprite, asAgent(`echo MARK-EVIL > ${linkDir}/evil.txt`));
-  const evil = await sh(sprite, `sudo -n test -e ${dirA}/evil.txt && echo leaked || echo not-in-a; sudo -n rm -f ${linkDir}`);
+  const link = await sh(`sudo -n ln -sfn ${dirA} ${linkDir} && [ -L ${linkDir} ] && echo linked`);
+  const through = await sh(asAgent(`echo MARK-EVIL > ${linkDir}/evil.txt`));
+  const evil = await sh(`sudo -n test -e ${dirA}/evil.txt && echo leaked || echo not-in-a; sudo -n rm -f ${linkDir}`);
   // symlink 沒建成時寫入也會失敗（找不到目錄），所以要先確認前置條件，且失敗原因必須是權限不足
   record(
     '沙盒帳號跟著 /shared 裡的 symlink 也寫不進顧問 A 的目錄',
     link.out.includes('linked') && through.code !== 0 && through.out.includes('Permission denied') && evil.out.includes('not-in-a'),
     `${link.out} | ${through.out} | ${evil.out}`,
   );
-  // 各語言：/.sprite/bin 的包裝腳本要寫 languages_env，佈建時已由 runtime 帳號補齊；沙盒帳號每個都要能用（2026-10-30 前全部失敗）
+  // 各語言：Sprite 上 /.sprite/bin 的包裝腳本要寫 languages_env，佈建時已由 runtime 帳號補齊（2026-10-30 前全部失敗）；E2B 由範本內建。沙盒帳號每個都要能用
   for (const [tool, cmd, expect] of [
     ['python3', 'python3 --version', /Python 3\./],
     ['pip', 'pip --version', /^pip \d/m],
@@ -251,28 +302,41 @@ try {
     ['git', 'git --version', /git version/],
     ['curl', 'curl --version', /^curl \d/m],
   ] as const) {
-    const r = await sh(sprite, asAgent(`cd /tmp && ${cmd}`));
+    const r = await sh(asAgent(`cd /tmp && ${cmd}`));
     // 包裝腳本寫不進 languages_paths 時仍能執行，但會印 Permission denied 混進顧問的輸出，也算失敗
     record(`沙盒帳號能用 ${tool}`, r.code === 0 && expect.test(r.out) && !r.out.includes('Permission denied'), r.out);
   }
-  const np = await sh(sprite, asAgent('cd /tmp && python3 -c "import numpy, pandas; print(\'np-pd-ok\')"'));
+  const np = await sh(asAgent('cd /tmp && python3 -c "import numpy, pandas; print(\'np-pd-ok\')"'));
   record('沙盒帳號能 import 預裝的 numpy、pandas', np.out.includes('np-pd-ok'), np.out);
   // 顧問的 requirements.txt：runtime 以顧問帳號建 --system-site-packages 的虛擬環境再 pip install（見 runtime 的 requirements.ts）。
   // 照 runtime 的方式由 Node spawn、從 stdin 送內容（stdin 是 socket；2026-10-31 shell pipe 測過、runtime 卻 ENXIO）
   const install = 'cd /tmp && rm -rf v && python3 -m venv --system-site-packages v && cat > v/requirements.txt'
     + ' && timeout -k 5 180 v/bin/pip install --disable-pip-version-check -q -r v/requirements.txt && v/bin/python -c "import six, numpy; print(\'venv-ok\')"';
   const spawnJs = `const c=require('node:child_process').spawn('sudo',['-n','-E','--','unshare','--mount','--propagation','private','--','${SANDBOX_WRAPPER}','agent','bash','-c',${JSON.stringify(install)}],{cwd:'/',env:{PATH:process.env.PATH,SANDBOX_PATH:process.env.PATH,HOME:'/home/agent'}});let o='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>o+=d);c.on('close',()=>console.log(o));c.stdin.end('six\\n');`;
-  const venv = await sh(sprite, `echo ${Buffer.from(spawnJs).toString('base64')} | base64 -d > /tmp/probe-venv.js && node /tmp/probe-venv.js; rm -f /tmp/probe-venv.js`);
+  const venv = await sh(`echo ${Buffer.from(spawnJs).toString('base64')} | base64 -d > /tmp/probe-venv.js && node /tmp/probe-venv.js; rm -f /tmp/probe-venv.js`);
   record('沙盒帳號能建虛擬環境、安裝套件，並同時用到預裝的 numpy', venv.out.includes('venv-ok'), venv.out);
+  // npm --version 能跑不代表 npm 本身完整（E2B 範本曾因新舊 npm 檔案混在一起，install 一律失敗）
+  const npm = await sh(asAgent([
+    'cd /tmp && rm -rf n && mkdir n && cd n',
+    `printf '%s' '{"name":"n","version":"1.0.0","dependencies":{"is-number":"^7.0.0"}}' > package.json`,
+    'timeout -k 5 180 npm install --no-audit --no-fund',
+    `node -e "require('is-number'); console.log('npm-ok')"`,
+  ].join(' && ')));
+  record('沙盒帳號能用 npm 安裝套件', npm.out.includes('npm-ok'), npm.out);
   // 記憶體上限：沙盒腳本把 cgroup 根目錄的程序搬到 init 子群組，再替沙盒開 6 GiB 的群組
-  const cg = await sh(sprite, asAgent('cat /proc/self/cgroup /sys/fs/cgroup/agenthub-sandbox/memory.max'));
+  const cg = await sh(asAgent('cat /proc/self/cgroup /sys/fs/cgroup/agenthub-sandbox/memory.max'));
   record('沙盒程序在記憶體上限 6 GiB 的 cgroup 裡', cg.code === 0 && cg.out.includes('0::/agenthub-sandbox') && cg.out.includes('6442450944'), cg.out);
-  // 超過上限時核心只砍沙盒的程式；沒有群組時整個 Sprite 會停住再全部重啟（2026-11-03 實測）
-  const oom = await sh(sprite, asAgent('cd /tmp && python3 -c "b = [bytearray(100 * 1024 * 1024) for _ in range(1000)]"'));
-  const after = await sh(sprite, 'echo alive; grep oom_kill /sys/fs/cgroup/agenthub-sandbox/memory.events');
-  record('吃光記憶體的沙盒程式被砍，Sprite 照常回應', oom.code !== 0 && after.out.startsWith('alive') && /oom_kill [1-9]/.test(after.out), `${oom.out.slice(-200)} / ${after.out}`);
+  // 超過上限時核心只砍沙盒的程式；沒有群組時整個 Sprite 會停住再全部重啟（2026-11-03 實測）；E2B 同一套 cgroup 做法
+  const oom = await sh(asAgent('cd /tmp && python3 -c "b = [bytearray(100 * 1024 * 1024) for _ in range(1000)]"'));
+  const after = await sh('echo alive; grep oom_kill /sys/fs/cgroup/agenthub-sandbox/memory.events');
+  record('吃光記憶體的沙盒程式被砍，機器照常回應', oom.code !== 0 && after.out.startsWith('alive') && /oom_kill [1-9]/.test(after.out), `${oom.out.slice(-200)} / ${after.out}`);
 } finally {
-  await createSpriteHost().destroy(name, 'agenthub-').catch((e: Error) => console.error('刪除暫時 Sprite 失敗，請手動刪除', name, e.message));
+  // 依 claim 刪：E2B 在 create 回傳前失敗留下的沙盒也找得到
+  await host.destroy(claim, 'agenthub-').catch((e: unknown) => console.error('刪除暫時機器失敗，請手動刪除', claim, errorText(e)));
+  if (machine) {
+    const left = await host.status(machine).catch((e: unknown) => errorText(e));
+    record(`暫時機器 ${machine.name} 已刪除`, left === 'gone', left);
+  }
 }
 
 for (const r of results) console.log(`${r.pass ? 'PASS' : 'FAIL'}  ${r.check}${r.pass ? '' : `\n      ${r.detail}`}`);

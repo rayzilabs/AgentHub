@@ -5,9 +5,10 @@ import { strToU8, zipSync } from 'fflate';
 
 // 雲端資料夾端到端驗證（規格 docs/superpowers/specs/2026-11-03-cloud-folder-design.md §5）：
 // 上傳中文檔名 → 單一顧問交付 → 下載 → 改名搬移後舊 id 照樣下載 → 多顧問派工交付、顧問讀得到 /shared
-// → 刪除後回「檔案已刪除」→ 刪專案後 storage 清空。結束時刪掉專案、Sprite 與測試帳號。
+// → 刪除後回「檔案已刪除」→ 刪專案後 storage 清空、機器也不在。結束時刪掉專案、機器（Sprite 或 E2B）與測試帳號。
 // 用法：BASE_URL=https://… pnpm exec tsx scripts/e2e-cloud-folder.ts（預設 http://localhost:3000）
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
+const { hostFor, loadProjectMachine } = await import('@/lib/hosts');
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000';
 const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } });
 
@@ -176,7 +177,8 @@ try {
     record('刪除後下載回 404「檔案已刪除」', d3.status === 404 && 'error' in d3 && d3.error === '檔案已刪除', JSON.stringify(d3));
   }
 
-  // ---- 6. 刪專案後 storage 清空 ----
+  // ---- 6. 刪專案後 storage 清空、機器也不在 ----
+  const machine = await loadProjectMachine(admin, projectId!);
   const deleteRes = await raw(`/api/projects/${projectId}`, { method: 'DELETE' });
   const deletedId = projectId;
   projectId = undefined;
@@ -184,13 +186,16 @@ try {
   const leftFiles = await admin.storage.from('project-files').list(`${deletedId}/files`, { limit: 100 });
   record('刪除專案後 storage 沒有殘留', deleteRes.ok && (left.data ?? []).length === 0 && (leftFiles.data ?? []).length === 0,
     JSON.stringify({ status: deleteRes.status, left: left.data?.map((o) => o.name), files: leftFiles.data?.map((o) => o.name) }));
+  const machineLeft = machine && await hostFor(machine.host).status(machine).catch((e: unknown) => String(e));
+  record('刪除專案後機器也不在', !!machine && machineLeft === 'gone', `${machine?.host} ${machine?.name} ${machineLeft}`);
 
   for (const id of [writerId, reviewerId]) await admin.from('agent_templates').delete().eq('id', id);
 } finally {
-  // 中途失敗時照樣刪專案（會先刪 Sprite）；刪不掉就印出來，避免刪掉使用者後找不到它
+  // 中途失敗時照樣刪專案（會先刪機器）；刪不掉就印出機器，避免刪掉使用者後找不到它
   if (projectId) {
+    const m = await loadProjectMachine(admin, projectId).catch(() => null);
     const res = await fetch(`${BASE}/api/projects/${projectId}`, { method: 'DELETE', headers: authHeaders }).catch((e: unknown) => e);
-    if (!(res instanceof Response && res.ok)) console.error(`⚠ 刪除專案失敗，請手動刪除 Sprite agenthub-${projectId}`);
+    if (!(res instanceof Response && res.ok)) console.error(`⚠ 刪除專案失敗，請手動刪除機器（${m ? `${m.host} ${m.name}` : `claim agenthub-${projectId}`}）`);
   }
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) console.error(`⚠ 刪除測試使用者 ${email} 失敗：${error.message}`);

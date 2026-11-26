@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { strToU8, zipSync } from 'fflate';
 
-// 用 Bearer token 走完整條 API 流程：建立顧問 → 建立專案（Sprite）→ 開對話 → 多顧問討論。
+// 用 Bearer token 走完整條 API 流程：建立顧問 → 建立專案（機器在 Sprite 或 E2B）→ 開對話 → 多顧問討論 → 刪專案後機器也不在。
 // 用法：BASE_URL=https://… pnpm exec tsx scripts/smoke.ts（預設 http://localhost:3000）
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
+const { hostFor, loadProjectMachine } = await import('@/lib/hosts');
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000';
 const admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } });
 
@@ -98,11 +99,19 @@ try {
     }
     console.log('冒煙測試通過');
   } finally {
-    // 刪專案會先刪 Sprite；失敗時印出 Sprite 名稱，避免刪掉使用者後找不到它
+    // 刪專案會先刪機器：先記下機器，刪完確認它已不在；失敗時印出機器，避免刪掉使用者後找不到它
     if (projectId) {
+      const m = await loadProjectMachine(admin, projectId).catch(() => null);
+      const where = m ? `${m.host} ${m.name}` : `claim agenthub-${projectId}`;
       const res = await fetch(`${BASE}/api/projects/${projectId}`, { method: 'DELETE', headers: auth }).catch((e: unknown) => e);
-      if (res instanceof Response && res.ok) console.log('已刪除冒煙測試專案與 Sprite');
-      else console.error(`⚠ 刪除專案失敗，請手動刪除 Sprite agenthub-${projectId}：${res instanceof Response ? res.status : String(res)}`);
+      if (!(res instanceof Response && res.ok)) {
+        console.error(`⚠ 刪除專案失敗，請手動刪除機器（${where}）：${res instanceof Response ? res.status : String(res)}`);
+      } else if (m && (await hostFor(m.host).status(m).catch((e: unknown) => String(e))) !== 'gone') {
+        console.error(`⚠ 專案已刪除但機器還在，請手動刪除（${where}）`);
+        process.exitCode = 1;
+      } else {
+        console.log(`已刪除冒煙測試專案與機器（${where}）`);
+      }
     }
   }
 } finally {
