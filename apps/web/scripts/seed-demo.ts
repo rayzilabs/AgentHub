@@ -6,7 +6,7 @@ process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('../lib/supabase/admin');
 const { loadDemoAgents, publishDemoAgents } = await import('../lib/demo');
 const projects = await import('../lib/services/projects');
-const { provisionProject } = await import('../lib/sprites');
+const { provisionProject } = await import('../lib/project-runtime');
 
 const db = adminDb();
 const DEMO_PROJECT = '金融科技展 Demo';

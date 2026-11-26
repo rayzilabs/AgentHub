@@ -8,8 +8,8 @@ import { completeUpload, createUploadUrl } from '@/lib/services/files';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { seedUser, testDb } from './helpers';
 
-vi.mock('@/lib/sprites', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/sprites')>()),
+vi.mock('@/lib/project-runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/project-runtime')>()),
   destroyProjectSprite: async () => {},
 }));
 

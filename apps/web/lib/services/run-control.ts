@@ -4,7 +4,7 @@ import { signProjectToken } from '@/lib/platform-tokens';
 import { ALREADY_READ } from '@/lib/queue';
 import { askStop, markRunInterrupted } from '@/lib/run-liveness';
 import { runtimeAccessToken } from '@/lib/runtime-session';
-import { forwardChat } from '@/lib/sprites';
+import { forwardChat } from '@/lib/project-runtime';
 import type { Db } from '@/lib/supabase/admin';
 import { assertConsultantsUsable, type ProjectRow } from './projects';
 import { getOwnThread, type QueuedView } from './threads';

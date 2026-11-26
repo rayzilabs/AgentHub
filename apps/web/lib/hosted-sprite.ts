@@ -2,7 +2,7 @@ import { SpritesClient, type Sprite } from '@fly/sprites';
 import { env } from '@/lib/env';
 import { hostedSpriteName, type DeployState, type HostedSpriteOps, type HostedVersion } from '@/lib/services/hosted-mcp';
 import { deleteSpriteIfExists, findService, getOrCreateSprite, retryTransient } from '@/lib/hosts/sprite';
-import { shellQuote } from '@/lib/sprites';
+import { shellQuote } from '@/lib/project-runtime';
 
 const ROOT = '/srv/agenthub-mcp';
 const APP = `${ROOT}/app`;

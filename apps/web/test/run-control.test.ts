@@ -12,7 +12,7 @@ import { askStop, INTERRUPTED_ERROR } from '@/lib/run-liveness';
 import { addQueued, deleteQueued, editQueued, startQueuedRun, stopThreadRun } from '@/lib/services/run-control';
 import { createProject, type ProjectRow } from '@/lib/services/projects';
 import { createThread } from '@/lib/services/threads';
-import type { forwardChat } from '@/lib/sprites';
+import type { forwardChat } from '@/lib/project-runtime';
 import { seedUser, testDb } from './helpers';
 
 vi.mock('next/server', async (importOriginal) => ({

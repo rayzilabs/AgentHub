@@ -7,7 +7,7 @@ import { SpritesClient, type Sprite } from '@fly/sprites';
 
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 const { adminDb } = await import('@/lib/supabase/admin');
-const { destroyProjectSprite, installRuntime, SANDBOX_ADDUSER, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/sprites');
+const { destroyProjectSprite, installRuntime, SANDBOX_ADDUSER, SANDBOX_WRAPPER, WORKSPACE } = await import('@/lib/project-runtime');
 
 const runtimeObject = process.argv[2];
 if (!runtimeObject) throw new Error('請指定 runtime 物件名稱，例如 main-abc1234.js');

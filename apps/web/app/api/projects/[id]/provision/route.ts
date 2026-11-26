@@ -2,7 +2,7 @@ import { after } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { route } from '@/lib/http';
 import { getOwnProject, setSpriteState } from '@/lib/services/projects';
-import { provisionProject } from '@/lib/sprites';
+import { provisionProject } from '@/lib/project-runtime';
 import { adminDb } from '@/lib/supabase/admin';
 
 export const maxDuration = 300;

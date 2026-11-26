@@ -3,7 +3,7 @@ import { route } from '@/lib/http';
 import { deleteRuntimeAccount } from '@/lib/runtime-session';
 import { removeProjectStorage } from '@/lib/services/files';
 import { deleteOwnProject, getOwnProject, getProjectDetail } from '@/lib/services/projects';
-import { destroyProjectSprite, spriteName } from '@/lib/sprites';
+import { destroyProjectSprite, spriteName } from '@/lib/project-runtime';
 import { adminDb } from '@/lib/supabase/admin';
 
 type Ctx = { params: Promise<{ id: string }> };

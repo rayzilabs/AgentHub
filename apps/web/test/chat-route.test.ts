@@ -1,14 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { POST } from '@/app/api/threads/[id]/chat/route';
-import * as sprites from '@/lib/sprites';
+import * as sprites from '@/lib/project-runtime';
 import { createProject, hireAgent } from '@/lib/services/projects';
 import { createTemplate, publishTemplate } from '@/lib/services/templates';
 import { createThread } from '@/lib/services/threads';
 import { seedUser, testDb } from './helpers';
 
-vi.mock('@/lib/sprites', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/sprites')>()),
+vi.mock('@/lib/project-runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/project-runtime')>()),
   forwardChat: vi.fn(async () => new Response('ok')),
 }));
 

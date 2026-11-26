@@ -4,7 +4,7 @@ import { SpritesClient } from '@fly/sprites';
 process.loadEnvFile(fileURLToPath(new URL('../../../.env', import.meta.url)));
 
 const { adminDb } = await import('@/lib/supabase/admin');
-const { installRuntime, spriteName } = await import('@/lib/sprites');
+const { installRuntime, spriteName } = await import('@/lib/project-runtime');
 
 const db = adminDb();
 const client = new SpritesClient(process.env.FLY_SPRITES_TOKEN!);

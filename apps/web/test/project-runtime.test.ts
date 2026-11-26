@@ -1,7 +1,7 @@
 import type { Sprite } from '@fly/sprites';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpError } from '@/lib/http';
-import { forwardChat, installRuntime, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, shellQuote, spriteName, startRuntimeService } from '@/lib/sprites';
+import { forwardChat, installRuntime, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT, SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, shellQuote, spriteName, startRuntimeService } from '@/lib/project-runtime';
 import type { Db } from '@/lib/supabase/admin';
 
 const body = { thread_id: 't1', text: '你好' };
