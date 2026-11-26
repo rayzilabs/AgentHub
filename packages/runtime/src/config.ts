@@ -11,6 +11,8 @@ const EnvSchema = z.object({
   SHARED_ROOT: z.string().default('/shared'),
   /** 共用資料夾的同步紀錄：放在只有 runtime 帳號能讀寫的地方（Sprite 上是 /home/sprite/agenthub，700），顧問改不到 */
   SYNC_STATE_PATH: z.string().default(path.join(os.homedir(), 'agenthub', 'shared-sync.json')),
+  /** 跑在哪個平台上；決定對話中怎麼防休眠（installRuntime 寫入 .env） */
+  RUNTIME_HOST: z.enum(['sprite', 'e2b']).default('sprite'),
   SPRITE_API_SOCK: z.string().default('/.sprite/api.sock'),
   /** gemini-3.7-flash 官方 2027-01-28 下架，到時要再換 */
   MODEL_ID: z.string().default('gemini-3.7-flash'),

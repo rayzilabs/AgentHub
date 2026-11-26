@@ -155,3 +155,14 @@ export async function deleteQueued(db: Db, userId: string, threadId: string, id:
   if (error) throw error;
   if (data.length === 0) throw new HttpError(409, ALREADY_READ);
 }
+
+/** runtime 對話中定期呼叫：E2B 專案延長沙盒 5 分鐘，Sprite 專案（靠 Tasks API）不做事 */
+export async function extendForKeepalive(
+  db: Db,
+  projectId: string,
+  hosts: (n: HostName) => RuntimeHost = hostFor,
+): Promise<{ ok: true; state?: Liveness }> {
+  const m = await loadProjectMachine(db, projectId);
+  if (!m || m.host !== 'e2b') return { ok: true };
+  return { ok: true, state: await hosts(m.host).extend(m, E2B_TIMEOUT_MS.project) };
+}

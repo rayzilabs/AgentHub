@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { POST as keepalivePost } from '@/app/api/runtime/keepalive/route';
 import { POST as continuePost } from '@/app/api/runtime/threads/[id]/continue/route';
 import { DELETE as queuedDelete, PATCH as queuedPatch } from '@/app/api/threads/[id]/queue/[queuedId]/route';
 import { POST as queuePost } from '@/app/api/threads/[id]/queue/route';
@@ -10,7 +11,7 @@ import type { Machine } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import { signProjectToken } from '@/lib/platform-tokens';
 import { askStop, INTERRUPTED_ERROR } from '@/lib/run-liveness';
-import { addQueued, deleteQueued, editQueued, forwardToRuntime, startQueuedRun, stopThreadRun } from '@/lib/services/run-control';
+import { addQueued, deleteQueued, editQueued, extendForKeepalive, forwardToRuntime, startQueuedRun, stopThreadRun } from '@/lib/services/run-control';
 import { createProject, type ProjectRow } from '@/lib/services/projects';
 import { createThread } from '@/lib/services/threads';
 import { type forwardChat, RUNTIME_GONE } from '@/lib/project-runtime';
@@ -485,5 +486,28 @@ describe('路由', () => {
     const token = signProjectToken(project.id, SECRET);
     const res = await continuePost(request({ authorization: `Bearer ${token}` }), ctx(thread.id));
     expect(res.status).toBe(200);
+  });
+});
+
+describe('keepalive', () => {
+  it('路由：通行證錯 401', async () => {
+    const res = await keepalivePost(request({ authorization: 'Bearer nope' }), undefined);
+    expect(res.status).toBe(401);
+  });
+
+  it('E2B 專案呼叫 extend 5 分鐘；Sprite 專案不呼叫', async () => {
+    const { project } = await setup();
+    await db.from('projects').update({ host: 'e2b', sprite_name: 'sbx-k', sprite_url: 'https://8080-sbx-k.e2b.app', host_token: 'tk' })
+      .eq('id', project.id).throwOnError();
+    const e2b = fakeRuntimeHost('e2b');
+    expect(await extendForKeepalive(db, project.id, () => e2b)).toEqual({ ok: true, state: 'running' });
+    expect(e2b.extend).toHaveBeenCalledExactlyOnceWith(
+      { host: 'e2b', name: 'sbx-k', url: 'https://8080-sbx-k.e2b.app', token: 'tk' }, 300_000,
+    );
+
+    const sprite = await setup();
+    const spriteHost = fakeRuntimeHost('sprite');
+    expect(await extendForKeepalive(db, sprite.project.id, () => spriteHost)).toEqual({ ok: true });
+    expect(spriteHost.extend).not.toHaveBeenCalled();
   });
 });

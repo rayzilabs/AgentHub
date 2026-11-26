@@ -112,6 +112,7 @@ export function testConfig(projectId: string, roots: Roots): Config {
     PLATFORM_URL: 'https://p.test',
     AGENTS_ROOT: roots.agentsRoot,
     SHARED_ROOT: roots.sharedRoot,
+    RUNTIME_HOST: 'sprite',
     SPRITE_API_SOCK: roots.sock,
     SYNC_STATE_PATH: roots.syncState,
     MODEL_ID: 'mock',

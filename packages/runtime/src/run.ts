@@ -229,7 +229,10 @@ export async function startRun(
   };
   activeRuns.set(runId, requestStop);
 
-  const keepAlive = await startKeepAlive(config.SPRITE_API_SOCK, `run-${runId}`);
+  const keepAlive = await startKeepAlive({
+    host: config.RUNTIME_HOST, taskName: `run-${runId}`, socketPath: config.SPRITE_API_SOCK,
+    platformUrl: config.PLATFORM_URL, platformToken: req.platformToken,
+  });
   const runTimeoutMs = deps.runTimeoutMs ?? RUN_TIMEOUT_MS;
   const clock = createRunClock(Date.now(), runTimeoutMs);
   // 時間到先通知 agent 中止；工具或串流卡住、中止沒有效果時，再過一段時間強制收尾

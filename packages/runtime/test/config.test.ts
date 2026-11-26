@@ -19,4 +19,10 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...env, MODEL_FALLBACKS: ' a , b ' }).MODEL_FALLBACKS).toEqual(['a', 'b']);
     expect(loadConfig({ ...env, MODEL_FALLBACKS: '' }).MODEL_FALLBACKS).toEqual([]);
   });
+
+  it('RUNTIME_HOST 預設 sprite，只接受 sprite 或 e2b', () => {
+    expect(loadConfig(env).RUNTIME_HOST).toBe('sprite');
+    expect(loadConfig({ ...env, RUNTIME_HOST: 'e2b' }).RUNTIME_HOST).toBe('e2b');
+    expect(() => loadConfig({ ...env, RUNTIME_HOST: 'other' })).toThrow();
+  });
 });
