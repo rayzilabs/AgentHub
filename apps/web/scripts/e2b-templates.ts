@@ -9,10 +9,17 @@ const { E2B_TEMPLATES, createE2bHost } = await import('@/lib/hosts/e2b');
 const apiKey = env.e2bApiKey;
 
 // 基底映像的 node 在 /usr/local（sudo 的 secure_path 也含此處），直接以官方 v22 LTS 覆蓋
-const INSTALL_NODE22 = `set -e
-v=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -o 'node-v22[0-9.]*-linux-x64.tar.gz' | head -1)
-curl -fsSL "https://nodejs.org/dist/latest-v22.x/$v" | tar -xz -C /usr/local --strip-components=1 --exclude='*.md' --exclude=LICENSE
-node -v | grep -q '^v22\.'`;
+const INSTALL_NODE22 = `set -euo pipefail
+base=https://nodejs.org/dist/latest-v22.x
+cd /tmp
+curl -fsSL "$base/SHASUMS256.txt" -o SHASUMS256.txt
+line=$(grep -E ' node-v22[0-9.]*-linux-x64[.]tar[.]gz$' SHASUMS256.txt | head -1)
+test -n "$line"
+curl -fsSL "$base/\${line##* }" -o node.tar.gz
+echo "\${line%% *}  node.tar.gz" | sha256sum -c -
+tar -xzf node.tar.gz -C /usr/local --strip-components=1 --exclude='*.md' --exclude=LICENSE
+rm -f node.tar.gz SHASUMS256.txt
+node -v | grep -q '^v22[.]'`;
 
 const base = () => Template().fromBaseImage().setUser('root').runCmd(INSTALL_NODE22);
 
@@ -32,8 +39,8 @@ const specs: Spec[] = [
     cpuCount: 2,
     memoryMB: 8192,
     checks: [
-      ['node 22', 'node -v | grep -q "^v22\."'],
-      ['node 22（sudo -u user）', 'sudo -n -u user -H -- node -v | grep -q "^v22\."'],
+      ['node 22', 'node -v | grep -q "^v22[.]"'],
+      ['node 22（sudo -u user）', 'sudo -n -u user -H -- node -v | grep -q "^v22[.]"'],
       ['npm', 'npm --version'],
       ['python3', 'python3 --version'],
       ['pip', 'pip --version || pip3 --version'],
@@ -52,7 +59,7 @@ const specs: Spec[] = [
     cpuCount: 1,
     memoryMB: 2048,
     checks: [
-      ['node 22', 'node -v | grep -q "^v22\."'],
+      ['node 22', 'node -v | grep -q "^v22[.]"'],
       ['python3', 'python3 --version'],
       ['pip', 'pip --version || pip3 --version'],
     ],
