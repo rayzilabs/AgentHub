@@ -28,7 +28,7 @@ export type MemoryView = {
   name: string; description: string; type: string; content: string; updated_at: string;
 };
 
-const STALE_RUN_MS = 20 * 60_000;
+export const STALE_RUN_MS = 20 * 60_000;
 
 export async function listThreads(db: Db, userId: string, projectId: string): Promise<ThreadRow[]> {
   await getOwnProject(db, userId, projectId);

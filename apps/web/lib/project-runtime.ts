@@ -232,6 +232,24 @@ export async function restartRuntime(host: RuntimeHost, m: Machine, projectId: s
   await waitForHealth(host, m, projectId);
 }
 
+/**
+ * 在 host 上建立專案的機器（opts.existing 有給就沿用）、裝 runtime、等 /health 回本專案 id，回傳這台機器。
+ * 不改資料列；opts.created 在新機器建好、開始安裝前呼叫。佈建與搬遷共用。
+ */
+export async function bringUpProject(
+  db: Db, host: RuntimeHost, projectId: string,
+  opts: { existing?: Machine | null; created?: (m: Machine) => Promise<void> } = {},
+): Promise<Machine> {
+  let m = opts.existing ?? null;
+  if (!m) {
+    m = await host.create(spriteName(projectId), 'project');
+    await opts.created?.(m);
+  }
+  await installRuntime(db, host, m, projectId);
+  await waitForHealth(host, m, projectId);
+  return m;
+}
+
 export async function provisionProject(db: Db, projectId: string, hosts: (n: HostName) => RuntimeHost = hostFor): Promise<void> {
   try {
     await setSpriteState(db, projectId, { sprite_status: 'provisioning', sprite_error: null });
@@ -240,14 +258,11 @@ export async function provisionProject(db: Db, projectId: string, hosts: (n: Hos
     const host = hosts(row.host as HostName);
     // E2B 重建後名稱、網址、通行證都會換，舊沙盒還在（含暫停）就沿用；Sprite 以固定名稱取得或建立
     const existing = row.host === 'e2b' ? projectMachine(row) : null;
-    let m = existing && (await host.status(existing)) !== 'gone' ? existing : null;
-    if (!m) {
-      m = await host.create(spriteName(projectId), 'project');
+    await bringUpProject(db, host, projectId, {
+      existing: existing && (await host.status(existing)) !== 'gone' ? existing : null,
       // 建好就寫回：之後的步驟失敗時，刪除專案或重新建立都找得到這台
-      await setSpriteState(db, projectId, { sprite_name: m.name, sprite_url: m.url, host_token: m.token });
-    }
-    await installRuntime(db, host, m, projectId);
-    await waitForHealth(host, m, projectId);
+      created: (m) => setSpriteState(db, projectId, { sprite_name: m.name, sprite_url: m.url, host_token: m.token }),
+    });
     await setSpriteState(db, projectId, { sprite_status: 'ready' });
   } catch (e) {
     console.error('[provision]', projectId, e);

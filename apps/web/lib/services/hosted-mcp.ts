@@ -107,7 +107,7 @@ async function updateVersion(db: Db, id: string, from: string, patch: Partial<Ho
 }
 
 /** 不含 AGENTHUB_MCP_URL：各台 Sprite 的網址不同，由呼叫端補上（建立 Sprite 前還不知道網址，由 provision 補） */
-async function hostedEnv(db: Db, templateId: string, mcpName: string): Promise<Record<string, string>> {
+export async function hostedEnv(db: Db, templateId: string, mcpName: string): Promise<Record<string, string>> {
   const { data, error } = await db.rpc('get_hosted_mcp_secrets', { p_template_id: templateId, p_mcp_name: mcpName });
   if (error) throw error;
   const out: Record<string, string> = {};
@@ -218,6 +218,14 @@ export async function startDeploy(db: Db, userId: string, versionId: string): Pr
   return updateVersion(db, version.id, 'pending', { status: 'deploying', deploy_started_at: new Date().toISOString() });
 }
 
+/** 部署完成後以這張創作者通行證呼叫 tools/list，確認程式能回應 */
+export function deployCheckToken(templateId: string, m: Machine): string {
+  return signCreatorToken(
+    { iss: env.platformUrl, aud: `${m.url}/mcp`, sub: 'deploy-check', project_id: 'deploy-check', template_id: templateId },
+    env.mcpSigningKey,
+  );
+}
+
 export async function syncVersion(db: Db, versionId: string, ops: HostedOps, now = Date.now()): Promise<HostedVersion> {
   let version = await loadVersion(db, versionId);
   if (version.status !== 'deploying') return version;
@@ -270,13 +278,9 @@ export async function syncVersion(db: Db, versionId: string, ops: HostedOps, now
   }
 
   await ops.startService(m, state.start);
-  const token = signCreatorToken(
-    { iss: env.platformUrl, aud: `${m.url}/mcp`, sub: 'deploy-check', project_id: 'deploy-check', template_id: version.template_id },
-    env.mcpSigningKey,
-  );
   let tools: { name: string; description?: string }[];
   try {
-    tools = await ops.listTools(m, token);
+    tools = await ops.listTools(m, deployCheckToken(version.template_id, m));
   } catch (e) {
     // 程式可能還在啟動；下次讀取再試，超過 10 分鐘會標成逾時
     const reason = errorText(e);
