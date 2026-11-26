@@ -63,7 +63,7 @@ def verify(token):
                       options={"require": ["exp", "iss", "aud", "sub"]})
 
 
-# 平台的 Sprite 網址不固定，來源由通行證把關，不做 Host 檢查
+# 平台代管機器的網址不固定，來源由通行證把關，不做 Host 檢查
 app = PlatformAuth(server.streamable_http_app(
     streamable_http_path="/mcp", stateless_http=True, json_response=True,
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)))

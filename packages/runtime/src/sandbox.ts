@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 
-/** 佈建時安裝的沙盒腳本（內容在 apps/web/lib/sprites.ts 的 SANDBOX_WRAPPER_SCRIPT） */
+/** 佈建時安裝的沙盒腳本（內容在 apps/web/lib/project-runtime.ts 的 SANDBOX_WRAPPER_SCRIPT） */
 export const SANDBOX_WRAPPER = '/usr/local/bin/agenthub-sandbox';
 
 /** 以沙盒執行時保留的環境變數；其他（含平台金鑰）一律不帶 */
@@ -136,7 +136,7 @@ export async function checkSandboxUser(user: string): Promise<{ ok: true } | { o
   return r.code === 0 ? { ok: true } : { ok: false, error: r.stderr.trim() || `結束碼 ${r.code}` };
 }
 
-/** 佈建時安裝的顧問帳號腳本（內容在 apps/web/lib/sprites.ts 的 SANDBOX_ADDUSER_SCRIPT） */
+/** 佈建時安裝的顧問帳號腳本（內容在 apps/web/lib/project-runtime.ts 的 SANDBOX_ADDUSER_SCRIPT） */
 export const SANDBOX_ADDUSER = '/usr/local/bin/agenthub-sandbox-adduser';
 
 /** 每位顧問一個 Linux 帳號，以 uid 隔開彼此的 skill 與工作目錄 */

@@ -24,9 +24,9 @@
 | 元件 | 是什麼 | 給誰用 | 持有的權限 |
 |---|---|---|---|
 | Vercel（`apps/web`） | 網頁與 `/api/*` | 使用者的瀏覽器 | 平台金鑰（只在伺服器端） |
-| runtime（`packages/runtime`） | 每個專案一台 Sprite 上的平台程式：組 agent、呼叫模型、執行工具、寫回進度 | 平台本身，使用者不會直接碰到 | 目標：只限自己專案的短期通行證（見第 4 節） |
-| 沙盒 | 同一台 Sprite 上，agent 執行 bash、讀寫檔案的工作區 | agent（間接：創作者的腳本在這裡跑、租用者的檔案放這裡） | 目標：沒有任何平台金鑰 |
-| 遠端 MCP server | 創作者的腳本與資料，透過 MCP 提供工具；創作者自己架或平台代管（各自一台專用 Sprite） | agent 經平台閘道 `/api/mcp/<顧問id>/<MCP 名稱>` 呼叫 | 創作者自己的資料與金鑰；只接受平台簽發的創作者通行證（子專案 3） |
+| runtime（`packages/runtime`） | 每個專案一台機器（E2B 沙盒或 Sprite，`projects.host` 記錄）上的平台程式：組 agent、呼叫模型、執行工具、寫回進度 | 平台本身，使用者不會直接碰到 | 目標：只限自己專案的短期通行證（見第 4 節） |
+| 沙盒 | 同一台機器上，agent 執行 bash、讀寫檔案的工作區 | agent（間接：創作者的腳本在這裡跑、租用者的檔案放這裡） | 目標：沒有任何平台金鑰 |
+| 遠端 MCP server | 創作者的腳本與資料，透過 MCP 提供工具；創作者自己架或平台代管（各自一台專用機器，`hosted_mcp_versions.host` 記錄） | agent 經平台閘道 `/api/mcp/<顧問id>/<MCP 名稱>` 呼叫 | 創作者自己的資料與金鑰；只接受平台簽發的創作者通行證（子專案 3） |
 | 平台閘道（Vercel） | 驗證專案通行證、簽創作者通行證、轉送、記用量 | runtime | 簽章私鑰 `MCP_SIGNING_KEY`、`RUNTIME_TOKEN_SECRET` |
 
 ## 3. 誰看得到什麼
@@ -41,10 +41,10 @@
 
 | 規則 | 狀態 |
 |---|---|
-| 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
+| 沙盒拿不到平台金鑰 | ✅ 2026-10-13 子專案 1-A 上線，所有既有 Sprite 已重新佈建並逐台驗證；E2B 沙盒（2026-11-27）以 `probe-sandbox.ts --host e2b` 驗證 |
 | 平台金鑰外洩時，影響只限一個專案 | ✅ 1-C（2026-10-14）：Sprite 上已無平台金鑰；舊金鑰曾存在 Sprite 與開發電腦上，待輪換 |
 | 顧問之間讀不到彼此的 skill 與工作目錄；主管只讀得到 `/shared`；每個帳號有私人 `/tmp` | ✅ 2026-10-14 子專案 2 上線，所有既有 Sprite 已重新佈建並逐台驗證 |
-| 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進 Sprite；取消租用後立即無法呼叫 | ✅ 自己架（3a，2026-10-14）；平台代管（3b，2026-10-15）：代管 Sprite 上只有該 MCP 的程式與創作者金鑰 |
+| 創作者的腳本與資料留在遠端 MCP；創作者 MCP 的網址與金鑰不進機器；取消租用後立即無法呼叫 | ✅ 自己架（3a，2026-10-14）；平台代管（3b，2026-10-15）：代管機器上只有該 MCP 的程式與創作者金鑰 |
 | 瀏覽器只收到工具摘要（動作、描述、時間），不收原始指令與輸出（派工卡片、討論發言） | ✅ 2026-10-13 |
 | 單一顧問模式下，主管／顧問本身的原始工具輸入輸出仍會隨串流送到瀏覽器 | ⏳ 已知缺口 |
 | 雲端資料夾（2026-11-03）：使用者只看得到自己專案的檔案；顧問只能用 `deliver_file` 交付到自己專案、自己的資料夾底下，交付前以該顧問的沙盒帳號讀檔（讀不到就交不出去）；runtime 不能刪改使用者的檔案 | 🚧 2026-11-04 實作完成，待上線 |
@@ -85,12 +85,12 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `ensure_folder`、`register_project_file` | | | | | 只有 `service_role` 能執行（網頁上傳、舊檔搬移） |
 | Storage `project-files` | 列出、下載、簽 1 小時網址 | 只能新增到 `<自己專案 id>/files/` 底下 | ❌ | ❌ | 只限 `<自己專案 id>/` 資料夾；使用者上傳由網頁處理。新增是給交付用的（`runtime_insert_project_files`），不能覆蓋或刪除；bucket 單檔上限 50 MB，runtime 另限單檔 50 MB、每次 run 合計 200 MB。簽名網址只給 `read_file` 確認過與上傳版本逐位元組相同的圖片，只送往 Vertex（模型依網址自己下載），不給顧問、不寫進資料庫（2026-10-30） |
 | Storage `runtime` | ❌ | ❌ | ❌ | ❌ | 安裝時由 Vercel 給一次性下載連結 |
-| Storage `mcp-bundles` | ❌ | ❌ | ❌ | ❌ | 創作者上傳的代管 MCP 套件；部署時由 Vercel 給代管 Sprite 一次性下載連結（3b） |
-| 模型（Vertex） | 透過 Vercel 代理呼叫 | | | | Sprite 不放 Vertex 金鑰；可設每專案用量上限 |
+| Storage `mcp-bundles` | ❌ | ❌ | ❌ | ❌ | 創作者上傳的代管 MCP 套件；部署時由 Vercel 給代管機器一次性下載連結（3b） |
+| 模型（Vertex） | 透過 Vercel 代理呼叫 | | | | 機器不放 Vertex 金鑰；可設每專案用量上限 |
 
 新增功能需要 runtime 多一項權限時：先改這張表，再改 migration。
 
-## 5. Sprite 裡的帳號與檔案（子專案 1-A）
+## 5. 機器裡的帳號與檔案（子專案 1-A）
 
 | 帳號 | 用途 | sudo |
 |---|---|---|
@@ -125,11 +125,19 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - runtime 的 `GET /runs/:id`（2026-10-30）：平台確認 run 是否還活著。以平台附上的資料庫通行證查這個 run，RLS 只放行本專案，查得到才回答 `{ active }`，否則 401。平台的請求要帶 Fly 驗證（`authorization`，Fly 驗證後拿掉）。限制：runtime 被砍時沙盒裡若還有指令在跑，Sprite 要等它們結束才重啟 runtime，期間判斷不了（2026-10-31 實測）。
 - runtime 的 `POST /runs/:id/stop`（2026-11-05）：使用者按停止時平台呼叫，驗證方式與 `GET /runs/:id` 相同，查得到才中止，回答 `{ stopped }`。
 
+- E2B 沙盒（2026-11-27，細節見 `docs/superpowers/specs/2026-11-25-e2b-runtime-host-design.md`）：帳號與目錄規則同上，但 runtime 與服務以 `user` 帳號執行，沒有 `/.sprite/api.sock`；服務由 `agenthub-svc` 看守迴圈管理（迴圈以 root 跑、指令降權成 `user`）。
+  - 每台沙盒建立時執行 `E2B_LOCKDOWN_SCRIPT`：鎖掉 root 與 `user` 的密碼、`/usr/local` 改 root 所有。E2B 範本裡的帳號原本是空密碼、sshd 允許空密碼登入，顧問帳號可 `su root`（2026-11-26 驗收時發現）；範本建置時做的鎖定會被 E2B 最後一步還原，所以改在每台建立時鎖，範本裡也移除了 sshd。
+  - envd（E2B 在 VM 裡以 root 跑的管理程式）需要 access token，顧問帳號不帶 token 啟動程序會得到 401；驗收腳本固定檢查這項，E2B 改版時才發現得到。
+  - 已知：`rpcbind` 仍聽 `:111`，目前沒有處理。
+  - 流量通行證（`e2b-traffic-access-token`，每台各一個）只存在 `projects.host_token`／`hosted_mcp_versions.host_token`，`service_role` 才讀得到，不進 `PROJECT_COLUMNS`、不送瀏覽器，runtime 沒有資料庫權限讀它。`E2B_API_KEY` 只放 Vercel 與營運者本機 `.env`；runtime 的 `.env` 只多一個 `RUNTIME_HOST`。
+  - 存活：E2B 的逾時不看進來的流量，runtime 每 2 分鐘以專案通行證 POST `/api/runtime/keepalive`，平台延長沙盒；這個路由只接受專案通行證，延長的是該專案自己的沙盒。
+  - 平台刪除或暫停 E2B 沙盒前，先用 `metadata.app === 'agenthub'` 確認是本平台的（取代 Sprite 的名稱前綴檢查）。
+
 **驗收**：在真的 Sprite 上，以 agent 身分嘗試以下動作，全部都必須失敗：`env` 看到金鑰、`cat ~/agenthub/.env`、`read_file` 讀 `.env`、建立指向 `.env` 的 symlink 後讀取、讀 runtime 程序的 `/proc/<pid>/environ`、`sudo -n true`、存取 `/.sprite/api.sock`。另外 runtime 帳號要仍能使用 `/.sprite/api.sock`（保持喚醒），沙盒裡要找得到 node 與 python3。腳本：`apps/web/scripts/probe-sandbox.ts`（2026-10-13 12 項全部通過）。2026-11-04 加上雲端資料夾同步：把 `/shared` 裡的資料夾換成指向顧問私人目錄的 symlink 後照 runtime 的方式同步，必須還原成真的資料夾、沒有寫進顧問目錄；以 `agent` 直接跟著 symlink 寫也必須失敗（尚未在 Sprite 上跑）。
 
-## 5b. 平台代管 MCP 的 Sprite（子專案 3b）
+## 5b. 平台代管 MCP 的機器（子專案 3b）
 
-每個代管 MCP 版本一台 Sprite（`agenthub-mcp-<版本 id 去掉連字號後前 12 碼>`），上面只有這個 MCP 的程式與創作者金鑰，沒有任何平台金鑰。
+每個代管 MCP 版本一台機器（E2B 沙盒或 Sprite，`agenthub-mcp-<版本 id 去掉連字號後前 12 碼>`），上面只有這個 MCP 的程式與創作者金鑰，沒有任何平台金鑰。
 
 | 帳號 | 用途 | sudo |
 |---|---|---|
@@ -145,11 +153,14 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 ```
 
 - 執行路徑：`sudo unshare --mount` → `/usr/local/bin/agenthub-mcp-run` 確認在獨立的掛載命名空間、用 `/dev/null` 蓋掉 `/.sprite/api.sock` → `setpriv` 降權成 `mcp` → `env -i` 清空環境 → 降權**之後**才載入 `env.sh`。
-- 閘道以平台的 Sprites token 通過 Fly 驗證（Fly 驗證後拿掉 `Authorization`，到不了程式），`X-AgentHub-Token` 帶創作者通行證；程式以 `AGENTHUB_MCP_URL` 為 `aud` 驗證。
+- 閘道的邊緣驗證依執行環境：Sprite 以平台的 Sprites token 通過 Fly 驗證（Fly 驗證後拿掉 `Authorization`）；E2B 不送 `Authorization`，改帶這台自己的 `e2b-traffic-access-token`。兩種都用 `X-AgentHub-Token` 帶創作者通行證；程式以 `AGENTHUB_MCP_URL` 為 `aud` 驗證。
+- 原則：**平台共用的憑證（Fly token、E2B API key）不能到達程式；E2B 每台自己的通行證可以。** E2B 會把通行證標頭原封不動轉進沙盒（實測），創作者的程式看得到自己那台的通行證，但它只能開自己那台，拿不到別台的、也拿不到平台金鑰（2026-11-26 決定）。
 - 下架由資料庫函式 `retire_hosted_mcp_version` 鎖住版本後檢查有沒有專案在用，與 `hire_agent`（對版本 `for share`）互斥。
-- 代管程式可以連外；背景程式在 Sprite 休眠時會被暫停。營運者可用 `apps/web/scripts/hosted-mcp.ts disable <版本 id>` 停用。
+- 代管程式可以連外；背景程式在機器休眠（Sprite）或暫停（E2B）時會被暫停。E2B 版本的沙盒建立時逾時 15 分鐘，之後由閘道的請求延長。營運者可用 `apps/web/scripts/hosted-mcp.ts disable <版本 id>` 停用。
 
-**驗收**：`apps/web/scripts/probe-hosted-mcp.ts` 以真的 Sprite 部署 Python 與 Node 範本，以 `mcp` 身分嘗試讀部署腳本、存取 `/.sprite/api.sock`、改寫 `env.sh`、`sudo -n true` 都必須失敗；`Authorization` 不能到達程式；金鑰更新後重啟生效（2026-10-15 25 項全部通過）。
+**驗收**：`apps/web/scripts/probe-hosted-mcp.ts [--host sprite|e2b]`（預設 e2b）以真的機器部署 Python 與 Node 範本，以 `mcp` 身分嘗試讀部署腳本、存取 `/.sprite/api.sock`（Sprite）、改寫 `env.sh`、`sudo -n true` 都必須失敗；金鑰更新後重啟生效（Sprite 2026-10-15 25 項全部通過；Sprite 路徑這一輪沒有在真的 Fly 上重跑，只有單元測試）。憑證檢查依執行環境：
+- Sprite：`Authorization`（Fly token）不能到達程式。
+- E2B：程式的環境與收到的標頭裡看不到 Fly token、E2B API key、平台金鑰，也看不到另一台對照沙盒的通行證；這台自己的通行證打得開這台、拿去連對照沙盒會被 E2B 邊緣擋下（403）。缺少任一台的通行證時記為失敗，不略過。
 
 ## 6. 子專案進度
 
@@ -165,7 +176,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 - 單一顧問模式的原始工具輸入輸出會送到瀏覽器（見第 3 節）。
 - 組織（2026-11-09）：單一顧問模式下，一般組織成員在串流裡仍看得到原始工具輸入輸出（例如用 `read_file` 讀 SKILL.md），與第 3 節「單一顧問模式下……原始工具輸入輸出仍會隨串流送到瀏覽器」是同一個已知缺口；規格 §6 接受目前不修。
 - 組織（2026-11-09）：成員離開或範本下架時，已經開始的 run 會繼續使用它載入的組織顧問（包含該 run 內新的派工與討論，直到 run 的時間上限）；只有遠端 MCP 呼叫會立刻被擋。下一則訊息開始新的 run 才會被擋。
-- 組織（2026-11-09）刪除帳號時的組織顧問：組織設定 `creator_deleted_action` 決定做顧問的人刪帳號時怎麼處理他的組織範本，由 `profiles` 的 before delete trigger（`transfer_org_templates_on_profile_delete`，`auth.admin.deleteUser` 經 `auth.users` → `profiles` 的 cascade 也會觸發）執行。預設 `transfer`：`creator_id` 改成該組織最早加入（`joined_at` 最早）的另一位管理員，範本狀態不變，成員的副本照常可用；`delete`：照 `creator_id` 的 cascade 跟著刪除。`transfer` 但組織沒有其他管理員時一律刪除。代管 MCP 版本跟著範本走：轉移時留著，刪除時一起刪（其 Sprite 變孤兒，成員的副本改顯示「已下架」）。公開市集的範本一律跟著刪除。
+- 組織（2026-11-09）刪除帳號時的組織顧問：組織設定 `creator_deleted_action` 決定做顧問的人刪帳號時怎麼處理他的組織範本，由 `profiles` 的 before delete trigger（`transfer_org_templates_on_profile_delete`，`auth.admin.deleteUser` 經 `auth.users` → `profiles` 的 cascade 也會觸發）執行。預設 `transfer`：`creator_id` 改成該組織最早加入（`joined_at` 最早）的另一位管理員，範本狀態不變，成員的副本照常可用；`delete`：照 `creator_id` 的 cascade 跟著刪除。`transfer` 但組織沒有其他管理員時一律刪除。代管 MCP 版本跟著範本走：轉移時留著，刪除時一起刪（其機器變孤兒，成員的副本改顯示「已下架」）。公開市集的範本一律跟著刪除。
 - 組織（2026-11-09）：`org_instance_problem` 給 `authenticated` 執行（`agent_instances` 的 policy 要用）。任何帶 `authenticated` JWT 的人都能呼叫，不只 runtime 帳號，網站使用者用自己的 Supabase 登入通行證直接打 PostgREST 也可以。知道專案 id 與組織 id 就能問出「這個專案的擁有者是不是那個組織的成員」，知道範本 id 與組織 id 就能問出「那個範本是不是該組織已上架的範本」。只回答是或否，不洩漏名稱與內容；id 都是隨機 uuid，網站也不會把別人的專案 id 給出去。
 - 組織（2026-11-09 實測，`runtime-access.test.ts`「Storage 下載快取只限同一張通行證」）：Storage 的下載有快取，以**通行證**為單位。runtime 被擋之前用某張通行證下載過的 skill zip，被擋之後用**同一張**通行證還下載得到（實測至少 5 秒；多久沒測，推測最長到通行證過期，目前 1 小時）。以下都照 policy 拒絕：別的專案的通行證（即使 A 剛下載過）、同一個 runtime 帳號重新登入拿到的新通行證、從沒下載過的通行證，以及 `list`。所以快取不會讓跨專案或跨租用者拿到檔案，影響只在「被擋前已經拿過這個 zip 的同一台 runtime」。而 skill 檔案在租用後本來就已裝在專案的 Sprite 上，真正擋呼叫的是「runtime 讀不到這位顧問」，不靠 zip 下載不到。
 - 平台代管 MCP：`mcp-bundles` 尚未設檔案大小上限（大小在開始部署時檢查）。閘道對 `tools/call` 不重送（先以不帶通行證的 HEAD 叫醒 Sprite），失敗版本與孤兒套件由 Vercel 每日排程清理（需設定 `CRON_SECRET`）。

@@ -11,7 +11,7 @@ Production：https://agenthub-kappa-pink.vercel.app
 - **上架顧問**：創作者填寫名稱、介紹、system prompt，上傳 skill zip，設定需要的 MCP 工具後發布到市集。市集只公開介紹，不會露出 system prompt、skill 檔與 MCP 連線設定。
 - **一鍵啟用**：啟用時只複製 system prompt、skills 和 MCP 設定；執行環境與記憶都是專案自己的。MCP 需要金鑰時由使用者填寫。
 - **單一顧問**：直接對話，回覆即時串流。顧問可以讀寫專案檔案（包括看懂上傳到專案的圖片）、執行指令，會把你說過的事實、偏好與指示分類記下，並自己更新或刪除過時的記憶（記憶只屬於這個專案）。
-- **雲端資料夾**：專案側欄是這個專案的資料夾，導覽列的「我的雲端」集中列出所有專案。可以上傳、下載、改名、搬移、刪除檔案，也能自己開資料夾；這些動作都在每個項目的 ⋯ 選單裡，點檔名可以直接下載。使用者上傳的預設放在「我上傳的」，要放到其他資料夾就從該資料夾的 ⋯ 選「上傳檔案到這裡」；每位顧問交付的放在以顧問名稱命名的資料夾。資料夾裡的檔案所有顧問都讀得到（同步到 Sprite 的 `/workspace/shared`，保持同樣的結構）。
+- **雲端資料夾**：專案側欄是這個專案的資料夾，導覽列的「我的雲端」集中列出所有專案。可以上傳、下載、改名、搬移、刪除檔案，也能自己開資料夾；這些動作都在每個項目的 ⋯ 選單裡，點檔名可以直接下載。使用者上傳的預設放在「我上傳的」，要放到其他資料夾就從該資料夾的 ⋯ 選「上傳檔案到這裡」；每位顧問交付的放在以顧問名稱命名的資料夾。資料夾裡的檔案所有顧問都讀得到（同步到機器的 `/workspace/shared`，保持同樣的結構）。
 - **交付檔案**：顧問做好報告、圖表、表格後用 `deliver_file` 工具交付，檔案會出現在雲端資料夾，該則回覆也直接有下載按鈕（多顧問時派工卡片與討論發言各自顯示，主管的最終回覆底下列出這次交付的所有檔案）。改名或搬移後舊回覆的按鈕照樣能下載，刪除後顯示「檔案已刪除」。
 - **組織**：團隊可以建立組織、邀請成員（成員邀請的人要管理員核准），組織成員能上架只給組織內使用的顧問，在市集的「我的組織的顧問」區塊租用，不會公開。成員被移出組織後，專案裡的組織顧問從下一則訊息起無法使用，重新加入即恢復。
 - **資料說明**：顧問回答用到數字時，會註明資料來源與資料截至哪一天；用了工具以外的資料或自己的假設會明講。
@@ -20,7 +20,7 @@ Production：https://agenthub-kappa-pink.vercel.app
   - **召開討論**：第一輪所有顧問同時發言，之後依序回應，最多 3 輪；全員表態「同意」就提早結束。主管最後依「各面向建議／共識方案／仍有分歧」寫總結。
   - 整合回覆時只用顧問回報的數字，並保留顧問寫的資料來源、截至日期、假設與免責聲明（可以精簡，不會刪掉）。
 - **回覆格式**：Markdown、表格與數學式（KaTeX，`$...$`、`$$...$$`）。金額裡的 `$`（例如 `$225`、`NT$ 1,000`）照原樣顯示，不會被當成數學式。
-- **執行進度**：狀態列顯示經過時間與目前動作，串流中斷改輪詢時也看得到進度（每 5 秒存一次）。agent 環境的程序中途被砍或重啟時，輪詢會直接問 Sprite，確認這次回覆已不在執行就標成「執行環境中斷」，不必等 20 分鐘。
+- **執行進度**：狀態列顯示經過時間與目前動作，串流中斷改輪詢時也看得到進度（每 5 秒存一次）。agent 環境的程序中途被砍或重啟時，輪詢會直接問執行環境，確認這次回覆已不在執行就標成「執行環境中斷」，不必等 20 分鐘。
 - **停止與排隊**（仿 Claude Code）：執行中可以按停止或按 Esc，這一輪結束並標示「已由你中斷」，已完成的步驟與已寫出的內容會保留，下一則訊息會從中斷處接手。執行中也可以再傳訊息，訊息會先排隊，畫面上可以編輯或刪除。agent 做完當下這一步就會讀到排隊的訊息，不會中斷這一輪；排隊太晚、這一輪已經沒有下一步時，等這輪正常結束後自動開下一輪，關掉分頁也一樣。停止或失敗時不會自動送出，排隊的訊息會放回輸入框。
 - **時間預算**：每次 run 最長 15 分鐘。第 11 分鐘起顧問不再用工具、主管不再派工或開討論，改為整理已有結果；第 13 分鐘顧問強制停止，已寫出的內容交給主管，畫面上標示逾時或提前收尾。顧問與主管每次最多 30 步，最後一步不能再用工具，必須根據已有結果回覆；只用了工具、沒有寫出文字的回覆算失敗。
 - **深淺色**：預設淺色，不跟系統設定；導覽列右上角的按鈕可以切換深色，選擇會記在瀏覽器裡。
@@ -30,25 +30,26 @@ Production：https://agenthub-kappa-pink.vercel.app
 ```
 瀏覽器 ──▶ Vercel（Next.js：頁面 + /api/*）──▶ Supabase（Postgres、Auth、Storage）
                      │
-                     └─ 轉送對話 ──▶ Fly Sprite（每個專案一台）
+                     └─ 轉送對話 ──▶ E2B 沙盒或 Fly Sprite（每個專案一台）
                                        └─ agent runtime（Hono + Vercel AI SDK）
                                             ├─ 模型：Vercel 代理 /api/runtime/model ──▶ Google Vertex AI（Gemini）
                                             ├─ 資料庫：以專案專用 runtime 帳號直連 Supabase
                                             ├─ 工具：bash、檔案、交付檔案、記憶、MCP
                                             └─ 主管工具：派工、召開討論
 
-Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP 名稱> ──▶ 創作者自己架的 MCP server
-                                                                      └─▶ 平台代管的 MCP（每個版本一台 Sprite）
+機器裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP 名稱> ──▶ 創作者自己架的 MCP server
+                                                                      └─▶ 平台代管的 MCP（每個版本一台機器）
 ```
 
 - 瀏覽器只呼叫 Vercel 的 `/api/*`；例外是上傳檔案時直接 PUT 到 Storage 的簽名網址，以及下載時拿到的 60 秒簽名連結。檔案一律存在 `project-files/<專案id>/files/<檔案id>`，資料夾與檔名記在 `project_folders`、`project_files`，改名、搬移只改資料表。Supabase 的資料表全部開啟 RLS：Vercel 用 secret key 存取；runtime 用專案專用帳號的通行證，policy 只放行自己專案需要的欄位與動作。
-- 建立專案時，Vercel 會建立一台 Sprite、從 Storage 下載 `runtime/main.js` 並註冊成服務。Sprite 閒置會休眠，收到請求時自動喚醒。
+- 每個專案跑在一台「機器」上，機器是 E2B 沙盒或 Fly Sprite（`projects.host`，平台代管 MCP 版本同樣有 `hosted_mcp_versions.host`），新建的預設是環境變數 `DEFAULT_RUNTIME_HOST`（預設 `e2b`）。建立專案時，Vercel 會建立機器、從 Storage 下載 `runtime/main.js` 並註冊成服務。閒置的機器會休眠（Sprite）或暫停（E2B），收到請求時自動喚醒。兩家的差異收在 `apps/web/lib/hosts/`；Sprite 路徑保留作為切換回去的退路，目前只有單元測試涵蓋。
+- E2B 沙盒的逾時不看進來的流量：runtime 在對話中每 2 分鐘呼叫平台的 `/api/runtime/keepalive`，平台延長沙盒 5 分鐘；Hobby 方案連續執行 1 小時會被強制暫停（不是刪除，下一個請求會喚醒）。機器確認已不存在時，專案顯示「agent 環境已不存在，請重新建立」，重新佈建即可重建。每台沙盒的流量通行證只存在伺服器端，不會送到瀏覽器。
 - runtime 把對話串流同時送回瀏覽器和寫進資料庫，瀏覽器斷線不會遺失結果；串流中斷時前端改成輪詢。
-- 排隊訊息存在 `queued_messages`。一輪結束時還有排隊訊息，runtime 會呼叫平台的 `/api/runtime/threads/:id/continue`，由平台重新簽發通行證再開下一輪，因為 runtime 手上的通行證撐不完下一輪。這個呼叫要在取消 Sprite 的 keepalive 登記之前送出，否則 Sprite 一閒置就會休眠，請求會卡到有人叫醒它為止。被中斷的一輪在歷史裡只留步驟描述與已寫出的文字，不帶工具的原始輸出。
+- 排隊訊息存在 `queued_messages`。一輪結束時還有排隊訊息，runtime 會呼叫平台的 `/api/runtime/threads/:id/continue`，由平台重新簽發通行證再開下一輪，因為 runtime 手上的通行證撐不完下一輪。這個呼叫要在取消 keepalive 登記之前送出，否則機器一閒置就會休眠或暫停，請求會卡到有人叫醒它為止。被中斷的一輪在歷史裡只留步驟描述與已寫出的文字，不帶工具的原始輸出。
 - agent 代為執行的指令與 stdio MCP 都在沙盒帳號裡跑，每位顧問一個帳號，拿不到平台金鑰，也讀不到其他顧問的檔案。權限規則見 [安全模型](docs/security-model.md)。
 - 每次 run 開始前，runtime 依資料表把雲端資料夾同步到 `/workspace/shared`，同時準備各顧問的 skill 與套件、讀取金鑰；寫入與刪除以沙盒帳號執行，同步紀錄放在顧問碰不到的 `~/agenthub/shared-sync.json`。顧問交付時，runtime 以該顧問的帳號讀檔，只能新增到自己專案的 `files/` 底下，再呼叫 `deliver_project_file` 登記到該顧問的資料夾。
-- 創作者自己架的 MCP 一律經過平台閘道：Vercel 轉送對話時附上 20 分鐘的專案通行證，閘道驗證後改簽 5 分鐘的創作者通行證轉送，並記錄每次工具呼叫的用量。創作者的網址不會進 Sprite。
-- 不會架 server 的創作者可以上傳 MCP 套件給平台代管：每個版本部署到一台專用 Sprite，程式以沒有 sudo 的帳號在沙盒裡跑，機器上只有這個 MCP 的程式與創作者自己的金鑰。租用時鎖定當時最新的已發布版本，發布新版本不影響既有專案。
+- 創作者自己架的 MCP 一律經過平台閘道：Vercel 轉送對話時附上 20 分鐘的專案通行證，閘道驗證後改簽 5 分鐘的創作者通行證轉送，並記錄每次工具呼叫的用量。創作者的網址不會進機器。
+- 不會架 server 的創作者可以上傳 MCP 套件給平台代管：每個版本部署到一台專用機器，程式以沒有 sudo 的帳號在沙盒裡跑，機器上只有這個 MCP 的程式與創作者自己的金鑰。租用時鎖定當時最新的已發布版本，發布新版本不影響既有專案。
 
 完整設計見 [技術規格](docs/superpowers/specs/2026-10-02-agenthub-mvp-design.md)。
 
@@ -58,11 +59,11 @@ Sprite 裡的 remote 型 MCP ──▶ Vercel 閘道 /api/mcp/<顧問id>/<MCP �
 apps/web/              Next.js 網站與 API（部署到 Vercel）
   app/                 頁面與 /api 路由
   components/          工作區 UI（對話、派工卡片、討論畫面）
-  lib/                 服務層、Supabase、Sprite 管理、表單驗證
+  lib/                 服務層、Supabase、執行環境（`hosts/`：E2B、Sprite）管理、表單驗證
   demo/agents/         Demo 用的三位金融顧問
   demo/business-agents/ 只上架到市集的非金融顧問（法務、人資、行銷）
-  scripts/             seed、冒煙測試、更新所有 Sprite 的 runtime、平台代管 MCP 的驗收與營運
-packages/runtime/      跑在 Sprite 裡的 agent runtime（打包成單一 main.js）
+  scripts/             seed、冒煙測試、更新所有機器的 runtime、換執行環境（`move-host.ts`）、E2B 範本、沙盒與平台代管 MCP 的驗收與營運
+packages/runtime/      跑在機器（E2B 沙盒或 Sprite）裡的 agent runtime（打包成單一 main.js）
 supabase/
   migrations/          資料表、RPC、Storage bucket
   tests/               pgTAP 測試
@@ -78,7 +79,7 @@ docs/superpowers/      規格、實作計畫、production 驗證紀錄
 - Node.js 24 以上、pnpm 12（`corepack enable`）
 - [Supabase CLI](https://supabase.com/docs/guides/cli)（只用來推 migration 和跑資料庫測試，不需要本機 Supabase）
 - Docker：只有 `pnpm db:test` 需要
-- 帳號：Supabase 雲端專案、Fly Sprites token、Vertex AI express mode API key
+- 帳號：Supabase 雲端專案、E2B API key（預設執行環境）、Fly Sprites token（只有用 Sprite 時需要）、Vertex AI express mode API key
 
 ### 環境變數
 
@@ -89,13 +90,15 @@ docs/superpowers/      規格、實作計畫、production 驗證紀錄
 | `SUPABASE_URL` | Supabase 專案網址 |
 | `SUPABASE_PUBLISHABLE_KEY` | `sb_publishable_…`，登入用 |
 | `SUPABASE_SECRET_KEY` | `sb_secret_…`，伺服器端存取資料庫與 Storage |
+| `E2B_API_KEY` | 建立、管理 E2B 沙盒；在 Vercel 與本機 `.env`（營運腳本用），不進 runtime 與沙盒 |
+| `DEFAULT_RUNTIME_HOST` | 選填，`sprite` 或 `e2b`，預設 `e2b`。新專案與新的代管 MCP 版本用哪個執行環境；已存在的不受影響（用 `move-host.ts` 搬） |
 | `FLY_SPRITES_TOKEN` | 建立、管理 Sprite |
-| `VERTEX_API_EXPRESS_MODE_KEY` | Vertex AI express mode 金鑰；只在 Vercel，由模型代理使用，不進 Sprite |
+| `VERTEX_API_EXPRESS_MODE_KEY` | Vertex AI express mode 金鑰；只在 Vercel，由模型代理使用，不進機器 |
 | `RUNTIME_TOKEN_SECRET` | 簽專案通行證（HS256，至少 32 個字元的隨機值；太短視為未設定）。**必填**：runtime 用它呼叫模型（平台代理）與 remote 型 MCP，沒設定時對話回 503 |
 | `MCP_SIGNING_KEY` | 簽創作者通行證的 ES256 私鑰（P-256，PKCS8 PEM）；公鑰公開在 `/.well-known/jwks.json` |
 | `MCP_SIGNING_KEY_PREVIOUS` | 選填。輪換金鑰時放舊私鑰，公鑰網址會新舊並列，創作者端快取的舊公鑰仍能驗證 |
-| `CRON_SECRET` | 只在 Vercel 設定。每日排程 `/api/cron/hosted-cleanup`（清理失敗的代管 Sprite 與孤兒套件）用它驗證；沒設定時排程路由回 503 |
-| `PLATFORM_URL` | 選填。寫進 Sprite 的平台網址，runtime 用它連閘道；預設是 production 網址 |
+| `CRON_SECRET` | 只在 Vercel 設定。每日排程 `/api/cron/hosted-cleanup`（清理失敗的代管機器與孤兒套件）用它驗證；沒設定時排程路由回 503 |
+| `PLATFORM_URL` | 選填。寫進機器的平台網址，runtime 用它連閘道；預設是 production 網址 |
 
 `RUNTIME_TOKEN_SECRET` 必填；`MCP_SIGNING_KEY`、`MCP_SIGNING_KEY_PREVIOUS`、`PLATFORM_URL` 只有用到 remote 型 MCP 時才需要。產生金鑰：
 
@@ -113,13 +116,13 @@ pnpm install
 supabase link --project-ref <project-ref>
 pnpm db:push
 
-# 打包 runtime 並上傳到 Storage（建立專案時 Sprite 會下載它）
+# 打包 runtime 並上傳到 Storage（建立專案時機器會下載它）
 pnpm -F @agenthub/runtime publish-runtime
 
 pnpm -F @agenthub/web dev   # http://localhost:3000
 ```
 
-本機網站一樣會建立真的 Sprite，並連到同一個雲端資料庫。
+本機網站一樣會建立真的機器（預設 E2B 沙盒），並連到同一個雲端資料庫。
 
 ## 測試
 
@@ -134,13 +137,15 @@ pnpm exec tsx scripts/smoke.ts                                            # 打�
 BASE_URL=https://agenthub-kappa-pink.vercel.app pnpm exec tsx scripts/smoke.ts  # 打 production
 ```
 
-冒煙測試會建立並刪除一台真的 Sprite，全程約 3 分鐘。
+冒煙測試會建立並刪除一台真的機器，全程約 3 分鐘。
 
-改了平台代管 MCP 的沙盒或部署腳本（`apps/web/lib/hosted-sprite.ts`）後，用真的 Sprite 驗收：
+改了平台代管 MCP 的沙盒或部署腳本（`apps/web/lib/hosted-runtime.ts`）後，用真的機器驗收：
+
+`--host sprite|e2b` 選執行環境，預設 e2b。
 
 ```bash
 cd apps/web
-pnpm exec tsx scripts/probe-hosted-mcp.ts            # 部署 Python 與 Node 範本，逐項檢查隔離與功能，結束時全部刪除
+pnpm exec tsx scripts/probe-hosted-mcp.ts            # [--host sprite|e2b] 部署 Python 與 Node 範本，逐項檢查隔離與功能，結束時全部刪除
 pnpm exec tsx scripts/probe-hosted-mcp.ts python     # 只跑其中一個
 ```
 
@@ -152,18 +157,18 @@ Vercel 專案的 Root Directory 是 `apps/web`，區域 `sin1`，環境變數同
 
 push 到 `main` 會自動部署到 production。
 
-### runtime（Sprite）
+### runtime（E2B 沙盒或 Sprite）
 
 ```bash
 pnpm -F @agenthub/runtime publish-runtime              # 上傳 runtime/main.js 與 runtime/main-<commit>.js
-cd apps/web && pnpm exec tsx scripts/redeploy-runtime.ts  # 更新所有已就緒專案的 Sprite 並重啟服務
+cd apps/web && pnpm exec tsx scripts/redeploy-runtime.ts  # 更新所有已就緒專案的機器（依各專案的 host）並重啟服務
 ```
 
 新建立的專案會自動用最新的 `runtime/main.js`。
 
 `redeploy-runtime.ts` 會重啟每個專案的 runtime，執行中的對話會被中斷。執行前先確認 `runs` 沒有 `status = 'running'` 的資料列。
 
-上線前可以先只上傳帶版本號的檔案，在臨時 Sprite 上驗收沙盒隔離與共用資料夾同步，結束時會刪掉那台 Sprite：
+上線前可以先只上傳帶版本號的檔案，在臨時機器上驗收沙盒隔離與共用資料夾同步，結束時會刪掉那台機器（`--host sprite|e2b`，預設 e2b）：
 
 ```bash
 pnpm -F @agenthub/runtime publish-runtime --versioned-only  # 只上傳 runtime/main-<commit>.js，不影響新專案
@@ -171,6 +176,16 @@ cd apps/web && pnpm exec tsx scripts/probe-sandbox.ts main-<commit>.js
 ```
 
 舊制專案檔案（放在 `project-files/<專案id>/` 第一層）用 `pnpm exec tsx scripts/migrate-project-files.ts` 搬進雲端資料夾的「我上傳的」，可以重複執行。網站部署、搬移、redeploy 要接著做完，順序見[雲端資料夾實作計畫](docs/superpowers/plans/2026-11-03-cloud-folder.md)的 Task 9。
+
+### E2B 範本與換執行環境
+
+```bash
+cd apps/web
+pnpm exec tsx scripts/e2b-templates.ts                                         # 建 agenthub-runtime（2 vCPU／8 GiB）與 agenthub-mcp（1 vCPU／2 GiB）範本
+pnpm exec tsx scripts/move-host.ts --to <sprite|e2b> --project <專案 id>       # 搬一個專案；--version <版本 id> 搬一個代管 MCP 版本；--all 全部（一次一台）
+```
+
+範本只能用這支腳本重建；既有沙盒不會自動換範本。`move-host.ts` 不帶顧問寫在自己工作目錄、沒有交付到雲端資料夾的檔案；有進行中對話的專案會跳過。機器確認已不存在時，也用它（目標同一個執行環境）重新部署。
 
 ### 資料庫
 
@@ -181,7 +196,7 @@ cd apps/web && pnpm exec tsx scripts/probe-sandbox.ts main-<commit>.js
 ```bash
 cd apps/web
 pnpm exec tsx scripts/hosted-mcp.ts disable <版本 id>   # 停用：停掉程式，閘道改回 503（濫用或費用異常時）
-pnpm exec tsx scripts/hosted-mcp.ts cleanup-failed      # 刪除失敗超過 24 小時、以及下架後沒刪成功的代管 Sprite（Vercel 每天也會自動執行）
+pnpm exec tsx scripts/hosted-mcp.ts cleanup-failed      # 刪除失敗超過 24 小時、以及下架後沒刪成功的代管機器（Vercel 每天也會自動執行）
 ```
 
 ## Demo 資料
@@ -240,15 +255,15 @@ description: 用 5P 架構評估中小企業授信案件
 
 ## 已知限制
 
-- **Sprite 上沒有平台金鑰**：runtime 用專案專用帳號的通行證存取資料庫、模型走平台代理（見 [安全模型](docs/security-model.md)）。舊金鑰曾存在 Sprite 上，尚待輪換。沒有上架審核和限流。
+- **機器上沒有平台金鑰**：runtime 用專案專用帳號的通行證存取資料庫、模型走平台代理（見 [安全模型](docs/security-model.md)）。舊金鑰曾存在 Sprite 上，尚待輪換。沒有上架審核和限流。
 - **遠端 MCP 單次工具呼叫最長 300 秒**。
 - **平台代管 MCP**：部署最長 10 分鐘、套件最大 50 MB、每個 MCP 最多 3 個已發布版本、每位創作者最多 10 台代管機器。代管機器休眠時，工具呼叫前會先叫醒（多約 0.4 秒），工具呼叫本身不重送。
 - **每次 run 最長 15 分鐘**：快到時會收尾並交出部分結果，不保證完成所有派工。
 - **對話串流最長 300 秒**（Vercel Hobby 上限）：較長的多輪討論會在中途改成輪詢，輪詢時一樣看得到進度。
-- **Sprite 冷啟動**：休眠中的 Sprite 第一次回應會慢幾秒；新專案約 40 秒就緒。
+- **冷啟動**：休眠（Sprite）或暫停（E2B）中的機器第一次回應會慢幾秒；新專案約 40 秒就緒。
 - **顧問的指令合計最多 6 GB 記憶體**：所有顧問（含主管）的指令共用一個 6 GiB 的 cgroup，超過時核心砍掉其中的程式，顧問會收到「記憶體超過上限」的提示；runtime 與 agent 環境不受影響。
 - **runtime 重啟會清掉顧問的程序**：agent 環境的程序不論怎麼結束，都先砍掉所有沙盒帳號的程序再重啟（不然 Sprite 要等那些程序結束才重啟），顧問留在背景執行的程式也會一起結束。
-- **雲端資料夾**：單檔最大 50 MB、每次回覆交付合計最多 200 MB；檔名與資料夾名 1～100 字，超過 255 bytes 的中文長檔名不會同步到 Sprite。同步每次最多 5 分鐘，沒同步完的檔案下次 run 再補。沒有資源回收筒，刪了就沒了。
+- **雲端資料夾**：單檔最大 50 MB、每次回覆交付合計最多 200 MB；檔名與資料夾名 1～100 字，超過 255 bytes 的中文長檔名不會同步到機器。同步每次最多 5 分鐘，沒同步完的檔案下次 run 再補。沒有資源回收筒，刪了就沒了。
 - **顧問套件第一次對話較慢**：skill 有 `requirements.txt` 時，第一次對話前要先安裝（各顧問同時裝，也和雲端資料夾同步同時進行，最多 180 秒）。
 
 ## 文件
