@@ -25,6 +25,12 @@ export const env = {
   },
   /** Vercel 排程呼叫 /api/cron/* 時帶的密鑰；未設定時排程路由一律拒絕 */
   get cronSecret() { return process.env.CRON_SECRET || undefined; },
+  /** 新專案與新代管版本預設跑在哪個執行環境；未設定時用 e2b */
+  get defaultRuntimeHost(): 'sprite' | 'e2b' {
+    const value = process.env.DEFAULT_RUNTIME_HOST || 'e2b';
+    if (value !== 'sprite' && value !== 'e2b') throw new Error(`DEFAULT_RUNTIME_HOST 只能是 sprite 或 e2b，目前是 ${value}`);
+    return value;
+  },
   get mcpSigningKey() { return required('MCP_SIGNING_KEY'); },
   /** 輪換簽章金鑰時，舊私鑰在這裡放一段時間，讓公鑰網址新舊並列 */
   get mcpSigningKeyPrevious() { return process.env.MCP_SIGNING_KEY_PREVIOUS || undefined; },

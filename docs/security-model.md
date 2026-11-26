@@ -58,7 +58,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 
 | 資料 | 讀 | 新增 | 修改 | 刪除 | 限制 |
 |---|---|---|---|---|---|
-| `auth.users`、`profiles`、`projects` | ❌ | ❌ | ❌ | ❌ | runtime 用不到 |
+| `auth.users`、`profiles`、`projects` | ❌ | ❌ | ❌ | ❌ | runtime 用不到；`projects.host` 記錄執行環境（sprite／e2b），`host_token` 不進瀏覽器（不在 `PROJECT_COLUMNS`） |
 | `agent_templates` | 只能讀 `creator_id` | ❌ | ❌ | ❌ | 只限自己專案租用的範本；policy 查的是 `agent_instances`，被擋的組織顧問的範本跟著濾掉 |
 | `agent_instances` | ✅ | ❌ | ❌ | ❌ | 自己專案，且組織顧問（`org_id` 不是 null）要通過 `org_instance_problem`（專案擁有者仍是該組織成員、範本仍上架），否則讀不到 |
 | `instance_secrets`／Vault | 只能透過 `get_project_secrets` | ❌ | ❌ | ❌ | 函式本身檢查只能取自己專案 |
@@ -70,7 +70,7 @@ runtime 不再持有平台金鑰。每個專案在 Supabase Auth 有一個系統
 | `usage_events` | ❌ | ✅ | ❌ | ❌ | 只能新增；計費帳本不能被竄改或偷看 |
 | `remote_mcp_targets` | ❌ | ❌ | ❌ | ❌ | 創作者 MCP 的網址／代管版本；只有閘道（`service_role`）讀得到（子專案 3） |
 | `mcp_usage` | ❌ | ❌ | ❌ | ❌ | 由閘道寫入；runtime 不碰（子專案 3） |
-| `hosted_mcp_versions` | ❌ | ❌ | ❌ | ❌ | 平台代管 MCP 的版本、Sprite 名稱與網址；只有 Vercel（`service_role`）讀寫（3b） |
+| `hosted_mcp_versions` | ❌ | ❌ | ❌ | ❌ | 平台代管 MCP 的版本、Sprite 名稱與網址、執行環境 `host` 與 `host_token`；只有 Vercel（`service_role`）讀寫（3b） |
 | `hosted_mcp_secrets`／Vault | ❌ | ❌ | ❌ | ❌ | 創作者給代管 MCP 的金鑰；只透過 `set_hosted_mcp_secret`／`get_hosted_mcp_secrets`，只有 `service_role` 能執行（3b） |
 | `project_runtime_accounts` | ❌ | ❌ | ❌ | ❌ | runtime 帳號的密碼與通行證快取；只有 Vercel（`service_role`）讀得到 |
 | `organizations` | ❌ | ❌ | ❌ | ❌ | 組織；只有 Vercel（`service_role`）讀寫 |

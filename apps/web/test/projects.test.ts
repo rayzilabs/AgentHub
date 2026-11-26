@@ -33,6 +33,23 @@ async function publishedTemplate(creatorId: string, fields: Record<string, unkno
 }
 
 describe('projects service', () => {
+  it('新專案記錄 DEFAULT_RUNTIME_HOST；專案資料不含 host_token', async () => {
+    const owner = await seedUser(db);
+    const saved = process.env.DEFAULT_RUNTIME_HOST;
+    try {
+      process.env.DEFAULT_RUNTIME_HOST = 'sprite';
+      const a = await createProject(db, owner.id, 'a');
+      expect(a.host).toBe('sprite');
+      expect('host_token' in a).toBe(false);
+      delete process.env.DEFAULT_RUNTIME_HOST;
+      expect((await createProject(db, owner.id, 'b')).host).toBe('e2b');
+      process.env.DEFAULT_RUNTIME_HOST = 'e2b';
+      expect((await createProject(db, owner.id, 'c')).host).toBe('e2b');
+    } finally {
+      if (saved === undefined) delete process.env.DEFAULT_RUNTIME_HOST; else process.env.DEFAULT_RUNTIME_HOST = saved;
+    }
+  });
+
   it('建立、列出、只有擁有者看得到', async () => {
     const owner = await seedUser(db);
     const other = await seedUser(db);

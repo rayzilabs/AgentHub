@@ -68,6 +68,11 @@ do $$ begin
   exception when insufficient_privilege then null;
   end;
   begin
+    perform host_token from public.projects;
+    assert false, '不能讀專案的 host_token';
+  exception when insufficient_privilege then null;
+  end;
+  begin
     perform 1 from public.project_runtime_accounts;
     assert false, '不能讀 runtime 帳號表';
   exception when insufficient_privilege then null;

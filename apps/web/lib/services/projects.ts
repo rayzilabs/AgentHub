@@ -1,3 +1,5 @@
+import { defaultHost } from '@/lib/hosts';
+import type { HostName } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import type { SkillMeta } from '@/lib/skills-zip';
 import type { Db } from '@/lib/supabase/admin';
@@ -10,6 +12,7 @@ export type ProjectRow = {
   sprite_url: string | null;
   sprite_status: 'provisioning' | 'ready' | 'error';
   sprite_error: string | null;
+  host: HostName;
   created_at: string;
 };
 
@@ -29,7 +32,7 @@ export type ThreadRow = { id: string; project_id: string; title: string; created
 
 export type ProjectDetail = { project: ProjectRow; agents: AgentSummary[]; threads: ThreadRow[] };
 
-export const PROJECT_COLUMNS = 'id, owner_id, name, sprite_name, sprite_url, sprite_status, sprite_error, created_at';
+export const PROJECT_COLUMNS = 'id, owner_id, name, sprite_name, sprite_url, sprite_status, sprite_error, host, created_at';
 export const THREAD_COLUMNS = 'id, project_id, title, created_at';
 
 export async function listProjects(db: Db, userId: string): Promise<ProjectRow[]> {
@@ -39,7 +42,7 @@ export async function listProjects(db: Db, userId: string): Promise<ProjectRow[]
 }
 
 export async function createProject(db: Db, userId: string, name: string): Promise<ProjectRow> {
-  const { data, error } = await db.from('projects').insert({ owner_id: userId, name }).select(PROJECT_COLUMNS).single();
+  const { data, error } = await db.from('projects').insert({ owner_id: userId, name, host: defaultHost() }).select(PROJECT_COLUMNS).single();
   if (error) throw error;
   return data as ProjectRow;
 }

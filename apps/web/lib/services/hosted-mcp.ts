@@ -2,6 +2,8 @@ import { env } from '@/lib/env';
 import { HttpError } from '@/lib/http';
 import { signCreatorToken } from '@/lib/platform-tokens';
 import { MAX_ZIP_BYTES, RETIRABLE } from '@/lib/hosted-ui';
+import { defaultHost } from '@/lib/hosts';
+import type { HostName } from '@/lib/hosts/types';
 import { errorText } from '@/lib/sprites';
 import type { Db } from '@/lib/supabase/admin';
 import { getEditableTemplate, publishedVersionCount } from './templates';
@@ -20,6 +22,7 @@ const isReservedKey = (key: string) => key === 'PORT' || key.startsWith('AGENTHU
 export type HostedVersion = {
   id: string; template_id: string; mcp_name: string; version: number; status: string;
   bundle_path: string; sprite_name: string | null; sprite_url: string | null; tools: unknown[]; log_tail: string;
+  host: HostName; host_token: string | null;
   deploy_started_at: string | null; created_at: string; published_at: string | null;
 };
 
@@ -180,7 +183,7 @@ export async function createVersion(
   const version = Math.max(0, ...rows.map((r) => r.version as number)) + 1;
   const bundlePath = `${templateId}/${mcpName}/${version}.zip`;
   const { data, error: insertError } = await db.from('hosted_mcp_versions')
-    .insert({ template_id: templateId, mcp_name: mcpName, version, status: 'pending', bundle_path: bundlePath })
+    .insert({ template_id: templateId, mcp_name: mcpName, version, status: 'pending', bundle_path: bundlePath, host: defaultHost() })
     .select('*').single();
   if (insertError?.code === '23505') throw new HttpError(409, '已有版本正在部署');
   if (insertError) throw insertError;
