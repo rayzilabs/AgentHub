@@ -11,9 +11,16 @@ import { seedUser, testDb } from './helpers';
 vi.mock('@/lib/project-runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/project-runtime')>()),
   destroyProjectMachine: async () => {},
+  provisionProject: vi.fn(async () => {}),
+}));
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: (fn: () => unknown) => { void fn(); },
 }));
 
 const { DELETE: deleteProjectRoute } = await import('@/app/api/projects/[id]/route');
+const { POST: provisionRoute } = await import('@/app/api/projects/[id]/provision/route');
+const { provisionProject } = await import('@/lib/project-runtime');
 
 const db = testDb();
 
@@ -48,6 +55,33 @@ describe('projects service', () => {
     } finally {
       if (saved === undefined) delete process.env.DEFAULT_RUNTIME_HOST; else process.env.DEFAULT_RUNTIME_HOST = saved;
     }
+  });
+
+  it('重新準備：已經在準備中就不再排一次佈建（E2B 每次建立都是新沙盒，重疊會留下孤兒）', async () => {
+    const owner = await seedUser(db);
+    const p = await createProject(db, owner.id, 'p');
+    const client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_PUBLISHABLE_KEY!, { auth: { persistSession: false } });
+    const { data: session, error } = await client.auth.signInWithPassword(owner);
+    if (error) throw error;
+    const provision = () => provisionRoute(
+      new Request('https://p.test/api', { method: 'POST', headers: { authorization: `Bearer ${session.session!.access_token}` } }),
+      { params: Promise.resolve({ id: p.id }) },
+    );
+    const mocked = vi.mocked(provisionProject);
+    mocked.mockClear();
+
+    // 新專案一建立就是 provisioning（建立時已排過佈建）
+    expect((await provision()).status).toBe(200);
+    expect(mocked).not.toHaveBeenCalled();
+
+    await setSpriteState(db, p.id, { sprite_status: 'error', sprite_error: '失敗' });
+    expect((await provision()).status).toBe(200);
+    expect(mocked).toHaveBeenCalledExactlyOnceWith(expect.anything(), p.id);
+    expect(await getOwnProject(db, owner.id, p.id)).toMatchObject({ sprite_status: 'provisioning', sprite_error: null });
+
+    // 第二次請求時狀態已是 provisioning：不再排
+    expect((await provision()).status).toBe(200);
+    expect(mocked).toHaveBeenCalledOnce();
   });
 
   it('建立、列出、只有擁有者看得到', async () => {

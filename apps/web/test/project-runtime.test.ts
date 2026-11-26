@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { env } from '@/lib/env';
 import { loadProjectMachine } from '@/lib/hosts';
+import { createE2bHost } from '@/lib/hosts/e2b';
 import type { Machine } from '@/lib/hosts/types';
 import { HttpError } from '@/lib/http';
 import {
-  forwardChat, installRuntime, provisionProject, RUNTIME_SUPERVISOR, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT,
+  destroyProjectMachine, forwardChat, installRuntime, provisionProject, RUNTIME_SUPERVISOR, RUNTIME_SUPERVISOR_SCRIPT, runtimeEnvFile, SANDBOX_ADDUSER_SCRIPT,
   SANDBOX_WRAPPER_SCRIPT, sandboxSetupScript, shellQuote, spriteName, startRuntimeService,
 } from '@/lib/project-runtime';
 import { createProject } from '@/lib/services/projects';
@@ -149,6 +150,32 @@ describe('startRuntimeService', () => {
     const host = fakeRuntimeHost('e2b');
     await startRuntimeService(host, e2bMachine, '/home/user/agenthub');
     expect(host.startService).toHaveBeenCalledExactlyOnceWith(e2bMachine, { name: 'runtime', cmd: RUNTIME_SUPERVISOR, args: ['/home/user/agenthub'], httpPort: 8080 });
+  });
+});
+
+describe('destroyProjectMachine', () => {
+  it('E2B：依 claim 刪掉同名的全部沙盒（含並行佈建留下的孤兒），不只資料列上那台', async () => {
+    vi.stubEnv('E2B_API_KEY', 'test-e2b-key');
+    const claim = spriteName('p1');
+    const items = [
+      { sandboxId: 'sbx-1', metadata: { app: 'agenthub', kind: 'project', claim } },
+      { sandboxId: 'sbx-orphan', metadata: { app: 'agenthub', kind: 'project', claim } },
+    ];
+    const pager = { hasNext: true, nextItems: vi.fn(async () => { pager.hasNext = false; return items; }) };
+    const sdk = { kill: vi.fn().mockResolvedValue(true), list: vi.fn(() => pager), getInfo: vi.fn(), setTimeout: vi.fn(), create: vi.fn(), connect: vi.fn() };
+
+    await destroyProjectMachine(e2bMachine, 'p1', 'e2b', () => createE2bHost(sdk as never));
+
+    expect(sdk.list).toHaveBeenCalledWith(expect.objectContaining({ query: { metadata: { app: 'agenthub', claim } } }));
+    expect(sdk.kill.mock.calls.map((c) => c[0])).toEqual(['sbx-1', 'sbx-orphan']);
+    vi.unstubAllEnvs();
+  });
+
+  it('Sprite：刪資料列上的名稱；沒有機器時用固定名稱', async () => {
+    const host = fakeRuntimeHost('sprite');
+    await destroyProjectMachine(spriteMachine, 'p1', 'sprite', () => host);
+    await destroyProjectMachine(null, 'p2', 'sprite', () => host);
+    expect(host.destroy.mock.calls).toEqual([['agenthub-p1', 'agenthub-'], ['agenthub-p2', 'agenthub-']]);
   });
 });
 

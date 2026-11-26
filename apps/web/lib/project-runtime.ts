@@ -255,10 +255,15 @@ export async function provisionProject(db: Db, projectId: string, hosts: (n: Hos
   }
 }
 
-/** m 為 null（還沒寫回機器）時以 spriteName 當 claim，刪掉 host 上可能建到一半的機器；已不在算成功 */
-export async function destroyProjectMachine(m: Machine | null, projectId: string, host: HostName | undefined = m?.host): Promise<void> {
+/**
+ * 刪除專案的機器；已不在算成功。E2B 一律依 claim（spriteName）刪掉同名的全部沙盒，
+ * 連並行佈建或寫回前失敗留下、沒記在資料列上的也清掉。Sprite 的名稱就是 claim，沒有機器時同樣用它。
+ */
+export async function destroyProjectMachine(
+  m: Machine | null, projectId: string, host: HostName | undefined = m?.host, hosts: (n: HostName) => RuntimeHost = hostFor,
+): Promise<void> {
   if (!host) throw new Error('刪除機器需要指定執行環境');
-  await hostFor(host).destroy(m?.name ?? spriteName(projectId), 'agenthub-');
+  await hosts(host).destroy(host === 'sprite' && m ? m.name : spriteName(projectId), 'agenthub-');
 }
 
 export async function forwardChat(
