@@ -17,7 +17,7 @@ const { adminDb } = await import('@/lib/supabase/admin');
 const { env } = await import('@/lib/env');
 const { publicJwk, signCreatorToken } = await import('@/lib/platform-tokens');
 const { createTemplate } = await import('@/lib/services/templates');
-const { createHostedSpriteOps, HOSTED_RUN, listToolsOver } = await import('@/lib/hosted-sprite');
+const { createHostedSpriteOps, HOSTED_RUN, listToolsOver } = await import('@/lib/hosted-runtime');
 const hosted = await import('@/lib/services/hosted-mcp');
 
 const runtimes = process.argv.slice(2).length ? process.argv.slice(2) : ['python', 'node'];

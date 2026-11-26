@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { listToolsOver } from '@/lib/hosted-sprite';
+import { listToolsOver } from '@/lib/hosted-runtime';
 import { parseMcpJson } from '@/lib/services/hosted-mcp';
 import { publicJwk, signCreatorToken } from '@/lib/platform-tokens';
 import { createPayrollEngine, getAvailableYears } from '../demo/hosted-mcp/taiwan-payroll/packages/core/src/index';

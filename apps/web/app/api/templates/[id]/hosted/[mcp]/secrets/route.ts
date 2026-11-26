@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireUser } from '@/lib/auth';
-import { createHostedSpriteOps } from '@/lib/hosted-sprite';
+import { createHostedSpriteOps } from '@/lib/hosted-runtime';
 import { readJson, route } from '@/lib/http';
 import { listHostedSecretKeys, setHostedSecrets } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';

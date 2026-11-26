@@ -8,7 +8,7 @@ const hoisted = vi.hoisted(() => ({
   afterTasks: [] as (() => unknown)[],
 }));
 
-vi.mock('@/lib/hosted-sprite', () => ({
+vi.mock('@/lib/hosted-runtime', () => ({
   createHostedSpriteOps: () => ({
     provision: async () => { hoisted.calls.push('provision'); return { spriteName: 'agenthub-mcp-fake', spriteUrl: 'https://fake.sprites.app' }; },
     readState: async () => { hoisted.calls.push('readState'); return { phase: 'installing', log: 'pip' }; },

@@ -37,7 +37,7 @@ async function main(): Promise<void> {
   if (args.cmd === 'disable') {
     await disable(db, args.id);
   } else {
-    const { createHostedSpriteOps } = await import('@/lib/hosted-sprite');
+    const { createHostedSpriteOps } = await import('@/lib/hosted-runtime');
     const { cleanupFailed } = await import('@/lib/services/hosted-mcp');
     const done = await cleanupFailed(db, createHostedSpriteOps());
     console.log(done.length ? `已刪除：${done.join(', ')}` : '沒有需要清理的 Sprite');

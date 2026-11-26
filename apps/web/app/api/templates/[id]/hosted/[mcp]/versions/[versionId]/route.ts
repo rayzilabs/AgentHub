@@ -1,5 +1,5 @@
 import { requireUser } from '@/lib/auth';
-import { createHostedSpriteOps } from '@/lib/hosted-sprite';
+import { createHostedSpriteOps } from '@/lib/hosted-runtime';
 import { route } from '@/lib/http';
 import { getVersion, publicVersion, retireVersion, syncVersion } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';

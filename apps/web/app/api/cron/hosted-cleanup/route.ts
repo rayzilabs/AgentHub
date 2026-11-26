@@ -1,5 +1,5 @@
 import { env } from '@/lib/env';
-import { createHostedSpriteOps } from '@/lib/hosted-sprite';
+import { createHostedSpriteOps } from '@/lib/hosted-runtime';
 import { HttpError, route } from '@/lib/http';
 import { cleanupFailed, removeOrphanBundles } from '@/lib/services/hosted-mcp';
 import { adminDb } from '@/lib/supabase/admin';
